@@ -1,10 +1,11 @@
 mod app;
-mod data;
+mod bootstrap;
+mod features;
+mod infrastructure;
 mod ui;
 
 use std::io;
 
 fn main() -> io::Result<()> {
-    ratatui::run(|terminal| app::App::default().run(terminal))
+    ratatui::run(|terminal| bootstrap::demo_app().run(terminal))
 }
-
