@@ -1,3 +1,5 @@
+pub mod assistant;
+pub mod instrument;
 pub mod markets;
 pub mod news;
 pub mod overview;

@@ -5,8 +5,8 @@ use crossterm::event::KeyEvent;
 
 pub use input::InputMode;
 pub use workspace::{
-    CommandInvocation, Workspace, WorkspaceDescriptor, WorkspaceId, WorkspaceNavigationItem,
-    WorkspaceRegistry,
+    AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor, WorkspaceId,
+    WorkspaceNavigationItem, WorkspaceRegistry,
 };
 
 pub struct App {
@@ -52,6 +52,10 @@ impl App {
 
     pub fn advance_tick(&mut self) {
         self.ticks = self.ticks.wrapping_add(1);
+        let intents = self.workspaces.poll_intents();
+        for intent in intents {
+            self.apply_intent(intent);
+        }
     }
 
     /// Applies a key press to application state without performing terminal I/O.
@@ -108,6 +112,32 @@ impl App {
         self.command.clear();
         self.input_mode = InputMode::Navigation;
     }
+
+    fn apply_intent(&mut self, intent: AppIntent) {
+        match intent {
+            AppIntent::ActivateWorkspace { target } => {
+                if let Some(id) = self.workspaces.resolve_target(&target) {
+                    self.active_workspace = id;
+                }
+            }
+            AppIntent::BringWorkspaceForward { target } => {
+                if let Some(id) = self.workspaces.resolve_target(&target) {
+                    self.workspaces.bring_forward(id);
+                    self.active_workspace = id;
+                }
+            }
+            AppIntent::DispatchCommand { command, origin } => {
+                let destination = self.workspaces.resolve_command(&command);
+                if destination == Some(origin) {
+                    return;
+                }
+                if let Some(id) = self.workspaces.dispatch_command(&command) {
+                    self.active_workspace = id;
+                }
+            }
+            AppIntent::RestoreWorkspaceOrder => self.workspaces.restore_order(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -118,7 +148,10 @@ mod tests {
     use super::*;
     use crate::{
         bootstrap,
-        features::{portfolio::ID as PORTFOLIO, security::ID as SECURITY},
+        features::{
+            assistant::ID as ASSISTANT, news::ID as NEWS, overview::ID as OVERVIEW,
+            portfolio::ID as PORTFOLIO, security::ID as SECURITY,
+        },
     };
 
     #[test]
@@ -188,6 +221,46 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
 
         assert_eq!(app.input_mode, InputMode::Navigation);
+    }
+
+    #[test]
+    fn app_intents_reorder_focus_and_restore_workspaces() {
+        let mut app = bootstrap::demo_app();
+
+        app.apply_intent(AppIntent::BringWorkspaceForward { target: "news".to_owned() });
+        assert_eq!(app.active_workspace(), NEWS);
+        assert_eq!(
+            app.workspaces.navigation_items().next().map(|item| item.id),
+            Some(NEWS)
+        );
+
+        app.apply_intent(AppIntent::RestoreWorkspaceOrder);
+        assert_eq!(
+            app.workspaces.navigation_items().next().map(|item| item.id),
+            Some(OVERVIEW)
+        );
+    }
+
+    #[test]
+    fn unknown_ai_targets_cannot_change_application_state() {
+        let mut app = bootstrap::demo_app();
+        let initial = app.active_workspace();
+
+        app.apply_intent(AppIntent::ActivateWorkspace { target: "shell".to_owned() });
+
+        assert_eq!(app.active_workspace(), initial);
+    }
+
+    #[test]
+    fn feature_intents_cannot_dispatch_commands_back_to_their_origin() {
+        let mut app = bootstrap::demo_app();
+
+        app.apply_intent(AppIntent::DispatchCommand {
+            command: "AI repeat forever".to_owned(),
+            origin: ASSISTANT,
+        });
+
+        assert_eq!(app.active_workspace(), OVERVIEW);
     }
 
     struct TestWorkspace {

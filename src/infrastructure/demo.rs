@@ -79,13 +79,21 @@ impl MarketsQuery for DemoData {
 }
 
 impl SecurityQuery for DemoData {
-    fn load_security(&self, _symbol: &str) -> SecuritySnapshot {
+    fn load_security(&self, symbol: &str) -> SecuritySnapshot {
+        let (symbol, name, last, absolute_change, percent_change) =
+            match symbol.split_whitespace().next().unwrap_or("AAPL").to_ascii_uppercase().as_str() {
+                "MSFT" => ("MSFT US EQUITY", "MICROSOFT CORP", "512.44", "+3.81", "+0.75%"),
+                "NVDA" => ("NVDA US EQUITY", "NVIDIA CORP", "184.92", "+4.26", "+2.36%"),
+                "META" => ("META US EQUITY", "META PLATFORMS", "738.10", "+8.42", "+1.15%"),
+                "SPY" => ("SPY US ETF", "SPDR S&P 500 ETF", "653.28", "+4.13", "+0.64%"),
+                _ => ("AAPL US EQUITY", "APPLE INC", "205.30", "+1.72", "+0.84%"),
+            };
         SecuritySnapshot {
-            symbol: "AAPL US EQUITY",
-            name: "APPLE INC",
-            last: "205.30",
-            absolute_change: "+1.72",
-            percent_change: "+0.84%",
+            symbol,
+            name,
+            last,
+            absolute_change,
+            percent_change,
             session_summary: "OPEN 203.41  HIGH 205.64  LOW 202.72  VOLUME 41.82M",
             price_series: &SECURITY_PRICE,
         }

@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{Workspace, WorkspaceDescriptor},
+    app::{CommandInvocation, Workspace, WorkspaceDescriptor},
     ui::{
         components::{render_pairs, render_table, styled_row, terminal_block},
         theme::{AMBER, CYAN, GREEN, MUTED},
@@ -33,6 +33,23 @@ impl SecurityWorkspace {
 impl Workspace for SecurityWorkspace {
     fn descriptor(&self) -> WorkspaceDescriptor {
         WorkspaceDescriptor { id: ID, label: "SECURITY", hotkey: 's', commands: &["SEC", "AAPL", "EQUITY"] }
+    }
+
+    fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
+        let mut subject = if matches!(invocation.function.as_str(), "SEC" | "EQUITY") {
+            invocation.args.clone()
+        } else {
+            let mut tokens = vec![invocation.function.clone()];
+            tokens.extend(invocation.args.clone());
+            tokens
+        };
+        if subject.last().is_some_and(|token| token.eq_ignore_ascii_case("EQUITY")) {
+            subject.pop();
+        }
+        if !subject.is_empty() {
+            self.symbol = subject.join(" ");
+        }
+        true
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
