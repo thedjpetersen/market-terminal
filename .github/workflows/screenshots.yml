@@ -1,0 +1,22 @@
+name: Screenshot Gallery
+on:
+  push:
+    paths:
+      - .github/workflows/screenshots.yml
+      - Cargo.toml
+      - examples/capture_gallery.rs
+      - src/**
+  workflow_dispatch:
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run --example capture_gallery -- target/screenshots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: market-terminal-screenshots
+          path: target/screenshots/*.png
+          if-no-files-found: error

@@ -25,6 +25,22 @@ Use the labeled navigation keys, or type a function such as `MON`, `CHART`,
 `SHEET`, `FIND`, or `ASK` into the command bar. All displayed market values are
 deterministic demo data.
 
+## Experience gallery
+
+These captures are generated from the native Ratatui render buffer at a
+consistent 160 × 48 terminal size. They are application output, not design
+mockups.
+
+| Research overview | Live-style market monitor |
+| --- | --- |
+| ![Research overview with performance, holdings, news, and market context](docs/screenshots/overview.png) | ![Cross-asset market monitor with configurable quote columns and data-quality states](docs/screenshots/monitor.png) |
+| **Comparative charting** | **Spreadsheet workspace** |
+| ![Normalized multi-instrument chart with moving average and volume](docs/screenshots/charting.png) | ![Keyboard-first spreadsheet with formulas and market-linked cells](docs/screenshots/spreadsheet.png) |
+| **Alerts register** | **OpenRouter AI command plane** |
+| ![Debounced local alert rules with lifecycle and audit state](docs/screenshots/alerts.png) | ![OpenRouter assistant for analysis and validated workspace control](docs/screenshots/assistant.png) |
+| **Instrument discovery** | **Security research** |
+| ![Ranked canonical instrument search results](docs/screenshots/find.png) | ![Single-security quote, chart, fundamentals, estimates, and news](docs/screenshots/security.png) |
+
 ## Run locally
 
 Install Rust, then:
