@@ -32,7 +32,9 @@ pub(super) fn navigation_action(key: KeyEvent) -> NavigationAction {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => NavigationAction::Quit,
         KeyCode::Char('/') | KeyCode::Char(':') => NavigationAction::OpenCommand,
-        KeyCode::Char(character) if character.is_ascii_alphabetic() => {
+        KeyCode::Char(character)
+            if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
             NavigationAction::Hotkey(character.to_ascii_lowercase())
         }
         _ => NavigationAction::Delegate,
@@ -48,5 +50,22 @@ pub(super) fn command_action(key: KeyEvent) -> CommandAction {
             CommandAction::Append(character)
         }
         _ => CommandAction::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn navigation_routes_registered_non_alphabetic_hotkeys() {
+        let key = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE);
+        assert_eq!(navigation_action(key), NavigationAction::Hotkey('1'));
+    }
+
+    #[test]
+    fn navigation_does_not_route_modified_characters_as_hotkeys() {
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT);
+        assert_eq!(navigation_action(key), NavigationAction::Delegate);
     }
 }

@@ -8,8 +8,9 @@ use crate::{
         overview::{OverviewQuery, OverviewWorkspace, ID as OVERVIEW},
         portfolio::{PortfolioQuery, PortfolioWorkspace},
         security::{SecurityQuery, SecurityWorkspace},
+        spreadsheet::{SpreadsheetMarketData, SpreadsheetWorkspace},
     },
-    infrastructure::DemoData,
+    infrastructure::{DemoData, DemoSpreadsheetMarketData},
 };
 
 pub fn demo_app() -> App {
@@ -19,6 +20,8 @@ pub fn demo_app() -> App {
     let security_query: Arc<dyn SecurityQuery> = data.clone();
     let portfolio_query: Arc<dyn PortfolioQuery> = data.clone();
     let news_query: Arc<dyn NewsQuery> = data;
+    let spreadsheet_market_data: Arc<dyn SpreadsheetMarketData> =
+        Arc::new(DemoSpreadsheetMarketData);
 
     let workspaces = WorkspaceRegistry::new(vec![
         Box::new(OverviewWorkspace::new(overview_query)),
@@ -26,6 +29,7 @@ pub fn demo_app() -> App {
         Box::new(SecurityWorkspace::new(security_query)),
         Box::new(PortfolioWorkspace::new(portfolio_query)),
         Box::new(NewsWorkspace::new(news_query)),
+        Box::new(SpreadsheetWorkspace::new(spreadsheet_market_data)),
     ]);
     App::new(workspaces, OVERVIEW)
 }

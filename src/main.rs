@@ -1,11 +1,7 @@
-mod app;
-mod bootstrap;
-mod features;
-mod infrastructure;
-mod ui;
-
 use std::io;
 
+use market_terminal::{bootstrap, runtime};
+
 fn main() -> io::Result<()> {
-    ratatui::run(|terminal| bootstrap::demo_app().run(terminal))
+    ratatui::run(|terminal| runtime::run(bootstrap::demo_app(), terminal))
 }

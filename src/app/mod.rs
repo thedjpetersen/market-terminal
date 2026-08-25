@@ -1,15 +1,13 @@
 mod input;
 mod workspace;
 
-use std::{io, time::Duration};
-
-use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
-use ratatui::DefaultTerminal;
-
-use crate::ui;
+use crossterm::event::KeyEvent;
 
 pub use input::InputMode;
-pub use workspace::{Workspace, WorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
+pub use workspace::{
+    CommandInvocation, Workspace, WorkspaceDescriptor, WorkspaceId, WorkspaceNavigationItem,
+    WorkspaceRegistry,
+};
 
 pub struct App {
     pub(crate) active_workspace: WorkspaceId,
@@ -32,22 +30,35 @@ impl App {
         }
     }
 
-    pub fn run(mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
-        while !self.should_quit {
-            terminal.draw(|frame| ui::render(frame, &self))?;
-            if event::poll(Duration::from_millis(180))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind == KeyEventKind::Press {
-                        self.on_key(key);
-                    }
-                }
-            }
-            self.ticks = self.ticks.wrapping_add(1);
-        }
-        Ok(())
+    pub fn active_workspace(&self) -> WorkspaceId {
+        self.active_workspace
     }
 
-    fn on_key(&mut self, key: KeyEvent) {
+    pub fn input_mode(&self) -> InputMode {
+        self.input_mode
+    }
+
+    pub fn command(&self) -> &str {
+        &self.command
+    }
+
+    pub fn ticks(&self) -> u64 {
+        self.ticks
+    }
+
+    pub fn should_quit(&self) -> bool {
+        self.should_quit
+    }
+
+    pub fn advance_tick(&mut self) {
+        self.ticks = self.ticks.wrapping_add(1);
+    }
+
+    /// Applies a key press to application state without performing terminal I/O.
+    ///
+    /// Keeping input handling independent of the runtime makes the application
+    /// state machine directly usable from integration tests and alternate hosts.
+    pub fn handle_key(&mut self, key: KeyEvent) {
         if input::is_force_quit(key) {
             self.should_quit = true;
             return;
@@ -71,24 +82,27 @@ impl App {
             return;
         }
 
+        // The active feature owns navigation-mode input first. This is essential
+        // for editors and other modal workspaces whose keystrokes may overlap
+        // application navigation and command-palette bindings.
+        if self.workspaces.handle_key(self.active_workspace, key) {
+            return;
+        }
+
         match input::navigation_action(key) {
             input::NavigationAction::Quit => self.should_quit = true,
             input::NavigationAction::OpenCommand => self.input_mode = InputMode::Command,
             input::NavigationAction::Hotkey(character) => {
                 if let Some(id) = self.workspaces.resolve_hotkey(character) {
                     self.active_workspace = id;
-                } else {
-                    self.workspaces.handle_key(self.active_workspace, key);
                 }
             }
-            input::NavigationAction::Delegate => {
-                self.workspaces.handle_key(self.active_workspace, key);
-            }
+            input::NavigationAction::Delegate => {}
         }
     }
 
     fn execute_command(&mut self) {
-        if let Some(id) = self.workspaces.resolve_command(&self.command) {
+        if let Some(id) = self.workspaces.dispatch_command(&self.command) {
             self.active_workspace = id;
         }
         self.command.clear();
@@ -99,6 +113,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::{layout::Rect, Frame};
 
     use super::*;
     use crate::{
@@ -109,20 +124,87 @@ mod tests {
     #[test]
     fn hotkeys_switch_workspaces() {
         let mut app = bootstrap::demo_app();
-        app.on_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
         assert_eq!(app.active_workspace, PORTFOLIO);
     }
 
     #[test]
     fn command_palette_switches_workspaces() {
         let mut app = bootstrap::demo_app();
-        app.on_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
         for character in "aapl us".chars() {
-            app.on_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
         }
-        app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.active_workspace, SECURITY);
         assert!(app.command.is_empty());
         assert_eq!(app.input_mode, InputMode::Navigation);
+    }
+
+    struct CapturingWorkspace;
+
+    const CAPTURING: WorkspaceId = WorkspaceId::new("capturing");
+
+    impl Workspace for CapturingWorkspace {
+        fn descriptor(&self) -> WorkspaceDescriptor {
+            WorkspaceDescriptor {
+                id: CAPTURING,
+                label: "CAPTURING",
+                hotkey: 'c',
+                commands: &["CAPTURE"],
+            }
+        }
+
+        fn render(&self, _frame: &mut Frame, _area: Rect) {}
+
+        fn handle_key(&mut self, key: KeyEvent) -> bool {
+            matches!(key.code, KeyCode::Char('p') | KeyCode::Char('/'))
+        }
+    }
+
+    #[test]
+    fn active_workspace_can_capture_global_hotkey() {
+        let registry = WorkspaceRegistry::new(vec![
+            Box::new(CapturingWorkspace),
+            Box::new(TestWorkspace {
+                id: PORTFOLIO,
+                hotkey: 'p',
+            }),
+        ]);
+        let mut app = App::new(registry, CAPTURING);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+
+        assert_eq!(app.active_workspace, CAPTURING);
+    }
+
+    #[test]
+    fn active_workspace_can_capture_command_palette_key() {
+        let mut app = App::new(
+            WorkspaceRegistry::new(vec![Box::new(CapturingWorkspace)]),
+            CAPTURING,
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+
+        assert_eq!(app.input_mode, InputMode::Navigation);
+    }
+
+    struct TestWorkspace {
+        id: WorkspaceId,
+        hotkey: char,
+    }
+
+    impl Workspace for TestWorkspace {
+        fn descriptor(&self) -> WorkspaceDescriptor {
+            WorkspaceDescriptor {
+                id: self.id,
+                label: "TEST",
+                hotkey: self.hotkey,
+                commands: &["PORT"],
+            }
+        }
+
+        fn render(&self, _frame: &mut Frame, _area: Rect) {}
     }
 }

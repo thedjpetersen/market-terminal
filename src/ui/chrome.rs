@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
-    style::{Style, Stylize},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
@@ -63,14 +63,13 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
 
 pub fn render_navigation(frame: &mut Frame, area: Rect, app: &App) {
     let mut spans = Vec::new();
-    for (index, descriptor) in app.workspaces.descriptors().enumerate() {
-        let text = format!(
-            " {} {} [{}] ",
-            index + 1,
-            descriptor.label,
-            descriptor.hotkey.to_ascii_uppercase()
-        );
-        let style = if descriptor.id == app.active_workspace {
+    for (index, item) in app.workspaces.navigation_items().enumerate() {
+        let shortcut = item
+            .hotkey
+            .map(|hotkey| format!(" [{}]", hotkey.to_ascii_uppercase()))
+            .unwrap_or_default();
+        let text = format!(" {} {}{} ", index + 1, item.label, shortcut);
+        let style = if item.id == app.active_workspace {
             Style::new().bg(CYAN).fg(BG).bold()
         } else {
             Style::new().fg(INK)
@@ -91,8 +90,8 @@ pub fn render_footer(frame: &mut Frame, area: Rect) {
         Paragraph::new(Line::from(vec![
             Span::styled(" Q/ESC ", AMBER),
             Span::raw("QUIT   "),
-            Span::styled("G/M/S/P/N ", AMBER),
-            Span::raw("WORKSPACES   "),
+            Span::styled("[KEY] ", AMBER),
+            Span::raw("FAVORITES   "),
             Span::styled("/ ", AMBER),
             Span::raw("COMMAND   "),
             Span::styled("↑↓/JK ", AMBER),
