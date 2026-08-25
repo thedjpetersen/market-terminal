@@ -46,6 +46,27 @@ on that concrete adapter.
 No root router match, shared screen state, or central data trait needs to be
 edited. The registry validates duplicate IDs and hotkeys at startup.
 
+## AI command plane
+
+The Assistant bounded context owns conversation state and an
+`AssistantGateway` port. The OpenRouter adapter lives in `infrastructure` and
+uses the standardized chat-completions/tool-calling API. Requests run on a
+background worker; the render/input loop only polls a channel.
+
+Model output never receives an `App` reference. It is translated into the
+closed `AppIntent` vocabulary and revalidated by `WorkspaceRegistry`:
+
+```text
+user prompt -> AssistantGateway -> OpenRouter tool call
+            -> UiAction -> AppIntent -> exact registry resolution -> shell update
+```
+
+The allowed mutations are workspace focus, navigation promotion, existing
+command dispatch, and default-order restoration. Unknown tools, malformed
+arguments, unknown targets, and unknown commands are rejected. Credentials are
+read from the process environment by the infrastructure adapter and are not
+stored in feature state, conversation history, logs, or model context.
+
 ## Growth path
 
 The next structural steps are intentionally additive:
@@ -53,6 +74,7 @@ The next structural steps are intentionally additive:
 - split `DemoData` into live quote, reference-data, news, and portfolio
   adapters;
 - add an internal event bus for streaming updates and cross-feature intents;
+- evolve `AppIntent` into a bounded event bus with acknowledgement and tracing;
 - add caching, retries, entitlements, and observability as infrastructure
   decorators around feature ports;
 - move bounded contexts into workspace crates when build times or team

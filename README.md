@@ -14,9 +14,12 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 - Security — quote, price chart, fundamentals, analyst consensus, and news
 - Portfolio — positions, allocation, attribution, scenarios, and activity
 - News — headline browser, story reader, and live movers
+- Spreadsheet — formulas, ranges, dependency evaluation, and market refresh
+- AI — OpenRouter-backed analysis and natural-language workspace control
+- Find — canonical instrument identity and ranked symbol/company discovery
 
-Use `G`, `M`, `S`, `P`, and `N` to navigate, or type a function into the command
-bar. All displayed values are deterministic demo data.
+Use `G`, `M`, `S`, `P`, `N`, `A`, and `F` to navigate, or type a function into
+the command bar. All displayed market values are deterministic demo data.
 
 ## Run locally
 
@@ -37,6 +40,25 @@ Create a release binary:
 ```bash
 cargo build --release
 ```
+
+## OpenRouter AI
+
+The `AI`/`ASK` workspace runs inference on a background thread so slow provider
+requests never block terminal input or rendering. Configure it with environment
+variables before launching:
+
+```bash
+export OPENROUTER_API_KEY="your-key"
+export OPENROUTER_MODEL="openrouter/auto" # optional; this is the default
+cargo run --release
+```
+
+Press `A`, type a question, and press Enter. You can also issue a direct command
+such as `AI bring portfolio forward and open it`. The model can request only
+four validated UI operations: focus a registered workspace, bring a registered
+workspace to the front, dispatch an existing terminal command, or restore the
+default workspace order. It cannot execute shell commands, read credentials,
+submit trades, or mutate arbitrary application state.
 
 ## Design constraints
 
@@ -61,7 +83,10 @@ src/
 │   ├── markets/     domain + port + workspace
 │   ├── security/    domain + port + workspace
 │   ├── portfolio/   domain + port + workspace
-│   └── news/        domain + port + workspace
+│   ├── news/        domain + port + workspace
+│   ├── instrument/  canonical identity + search port + discovery workspace
+│   ├── spreadsheet/ workbook domain + application + presentation
+│   └── assistant/   AI conversation domain + provider port + workspace
 ├── infrastructure/ adapters implementing feature-owned ports
 ├── ui/              theme, terminal chrome, and reusable visual primitives
 └── bootstrap.rs     dependency injection and feature registration

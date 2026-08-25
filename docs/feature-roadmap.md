@@ -12,6 +12,20 @@ ports, the application kernel knows only the `Workspace` contract, shared UI is
 domain-free, and `bootstrap.rs` is the composition root. A bounded context may
 move to its own crate later without changing its public vocabulary.
 
+## Delivery status
+
+- **Complete:** workspace registry, exact command aliases, input capture,
+  package-by-feature boundaries, feature-owned ports, and the native spreadsheet
+  foundation.
+- **Complete:** first AI command-plane slice with an OpenRouter adapter,
+  non-blocking requests, conversation workspace, and a closed set of validated
+  UI intents for focus, navigation promotion, command dispatch, and layout reset.
+- **Complete:** first Instrument Master/Search slice with canonical IDs, ranked
+  symbol and company lookup, typed instrument kinds, and navigation from search
+  results into Security Research.
+- **Next:** shared quote/history contracts and a configurable market monitor,
+  followed by persistent layouts and spreadsheet save/export.
+
 ## Product principles
 
 - **Keyboard first.** Every workflow has a short, documented command and can be

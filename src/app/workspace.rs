@@ -49,6 +49,19 @@ pub struct WorkspaceNavigationItem {
     pub hotkey: Option<char>,
 }
 
+/// The only application-level mutations a feature may request.
+///
+/// Keeping these intents small and validated at the registry boundary lets
+/// features (including AI-backed features) coordinate the shell without
+/// importing or mutating `App` directly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppIntent {
+    ActivateWorkspace { target: String },
+    BringWorkspaceForward { target: String },
+    DispatchCommand { command: String, origin: WorkspaceId },
+    RestoreWorkspaceOrder,
+}
+
 pub trait Workspace: Send {
     fn descriptor(&self) -> WorkspaceDescriptor;
     fn render(&self, frame: &mut Frame, area: Rect);
@@ -68,10 +81,14 @@ pub trait Workspace: Send {
 
     /// Favorites appear in the top navigation even when they have no hotkey.
     fn is_favorite(&self) -> bool { false }
+
+    /// Polls asynchronous feature work and returns validated shell requests.
+    fn poll_intents(&mut self) -> Vec<AppIntent> { Vec::new() }
 }
 
 pub struct WorkspaceRegistry {
     entries: Vec<Box<dyn Workspace>>,
+    default_order: Vec<WorkspaceId>,
     aliases: HashMap<String, WorkspaceId>,
     hotkeys: HashMap<char, WorkspaceId>,
 }
@@ -79,7 +96,8 @@ pub struct WorkspaceRegistry {
 impl WorkspaceRegistry {
     pub fn new(entries: Vec<Box<dyn Workspace>>) -> Self {
         let (aliases, hotkeys) = Self::build_indexes(&entries);
-        Self { entries, aliases, hotkeys }
+        let default_order = entries.iter().map(|entry| entry.descriptor().id).collect();
+        Self { entries, default_order, aliases, hotkeys }
     }
 
     pub fn descriptors(&self) -> impl Iterator<Item = WorkspaceDescriptor> + '_ {
@@ -138,6 +156,44 @@ impl WorkspaceRegistry {
             .iter_mut()
             .find(|entry| entry.descriptor().id == id)
             .is_some_and(|workspace| workspace.handle_key(key))
+    }
+
+    pub fn poll_intents(&mut self) -> Vec<AppIntent> {
+        self.entries
+            .iter_mut()
+            .flat_map(|workspace| workspace.poll_intents())
+            .collect()
+    }
+
+    /// Resolves a model/user-facing target against IDs, labels, and exact
+    /// command aliases. No fuzzy or substring matching is allowed here.
+    pub fn resolve_target(&self, target: &str) -> Option<WorkspaceId> {
+        let normalized = target.trim().to_ascii_uppercase();
+        self.entries
+            .iter()
+            .find_map(|workspace| {
+                let descriptor = workspace.descriptor();
+                (descriptor.id.as_str().eq_ignore_ascii_case(&normalized)
+                    || descriptor.label.eq_ignore_ascii_case(&normalized))
+                .then_some(descriptor.id)
+            })
+            .or_else(|| self.aliases.get(&normalized).copied())
+    }
+
+    pub fn bring_forward(&mut self, id: WorkspaceId) {
+        if let Some(index) = self.entries.iter().position(|entry| entry.descriptor().id == id) {
+            let workspace = self.entries.remove(index);
+            self.entries.insert(0, workspace);
+        }
+    }
+
+    pub fn restore_order(&mut self) {
+        self.entries.sort_by_key(|entry| {
+            self.default_order
+                .iter()
+                .position(|id| *id == entry.descriptor().id)
+                .unwrap_or(usize::MAX)
+        });
     }
 
     fn build_indexes(
