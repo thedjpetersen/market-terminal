@@ -11,7 +11,10 @@ use ratatui::{
 
 use crate::{
     app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
-    features::market_data::{DataQuality, MarketDataQuery, Price, QuoteSnapshot, Quantity},
+    features::market_data::{
+        DataQuality, MarketDataError, MarketDataQuery, Price, QuoteSnapshot, QuoteSubscription,
+        QuoteSubscriptionRequest, Quantity, SubscriptionMetrics,
+    },
     ui::{
         components::terminal_block,
         theme::{AMBER, BG, CYAN, GREEN, INK, MUTED, RED, YELLOW},
@@ -62,6 +65,7 @@ pub struct WatchlistWorkspace {
     selected: usize,
     column_preset: ColumnPreset,
     status: String,
+    subscription: Option<Box<dyn QuoteSubscription>>,
     pending_intents: Vec<AppIntent>,
 }
 
@@ -81,9 +85,11 @@ impl WatchlistWorkspace {
             selected: 0,
             column_preset: ColumnPreset::Configured,
             status: String::new(),
+            subscription: None,
             pending_intents: Vec::new(),
         };
         workspace.refresh();
+        workspace.start_subscription();
         workspace
     }
 
@@ -94,6 +100,7 @@ impl WatchlistWorkspace {
             self.selected = 0;
             self.column_preset = ColumnPreset::Configured;
             self.refresh();
+            self.start_subscription();
         } else {
             self.status = format!("WATCHLIST NOT FOUND: {display_name}");
         }
@@ -127,7 +134,66 @@ impl WatchlistWorkspace {
                 self.status = format!("{} QUOTES LOADED", self.rows.len());
             }
             Err(error) => {
-                self.status = error.to_string();
+                self.status = if self.rows.is_empty() {
+                    error.to_string()
+                } else {
+                    format!("LAST KNOWN GOOD · {error}")
+                };
+            }
+        }
+    }
+
+    fn start_subscription(&mut self) {
+        if let Some(subscription) = &mut self.subscription {
+            subscription.cancel();
+        }
+        self.subscription = None;
+        let instruments = self
+            .definition
+            .items
+            .iter()
+            .map(|item| item.instrument_id.clone())
+            .collect::<Vec<_>>();
+        if instruments.is_empty() {
+            return;
+        }
+        let request = QuoteSubscriptionRequest::new(instruments, self.definition.items.len())
+            .expect("non-empty watchlist has non-zero stream capacity");
+        match self.market_data.subscribe_quotes(request) {
+            Ok(subscription) => self.subscription = Some(subscription),
+            Err(MarketDataError::Unsupported(_)) => {}
+            Err(error) => self.status = format!("SNAPSHOT MODE · {error}"),
+        }
+    }
+
+    fn poll_subscription(&mut self) {
+        let Some(subscription) = &mut self.subscription else {
+            return;
+        };
+        let id = subscription.id();
+        let result = subscription.drain();
+        let metrics = subscription.metrics();
+        match result {
+            Ok(updates) if updates.is_empty() => {}
+            Ok(updates) => {
+                let updates = updates
+                    .into_iter()
+                    .map(|update| (update.snapshot.instrument_id.clone(), update.snapshot))
+                    .collect::<HashMap<_, _>>();
+                for row in &mut self.rows {
+                    if let Some(snapshot) = updates.get(&row.item.instrument_id) {
+                        row.quote = Some(snapshot.clone());
+                    }
+                }
+                self.sort_rows();
+                self.status = stream_status(id.value(), metrics);
+            }
+            Err(MarketDataError::Cancelled) => {
+                self.subscription = None;
+                self.status = "STREAM CANCELLED · LAST KNOWN GOOD".to_owned();
+            }
+            Err(error) => {
+                self.status = format!("STREAM DEGRADED · LAST KNOWN GOOD · {error}");
             }
         }
     }
@@ -234,7 +300,10 @@ impl Workspace for WatchlistWorkspace {
         }
     }
 
-    fn poll_intents(&mut self) -> Vec<AppIntent> { std::mem::take(&mut self.pending_intents) }
+    fn poll_intents(&mut self) -> Vec<AppIntent> {
+        self.poll_subscription();
+        std::mem::take(&mut self.pending_intents)
+    }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
         let areas = Layout::vertical([
@@ -295,6 +364,21 @@ impl Workspace for WatchlistWorkspace {
             areas[2],
         );
     }
+}
+
+impl Drop for WatchlistWorkspace {
+    fn drop(&mut self) {
+        if let Some(subscription) = &mut self.subscription {
+            subscription.cancel();
+        }
+    }
+}
+
+fn stream_status(id: u64, metrics: SubscriptionMetrics) -> String {
+    format!(
+        "LIVE #{id} · RX {} COALESCED {} DROPPED {}",
+        metrics.received, metrics.coalesced, metrics.dropped
+    )
 }
 
 fn compare_rows(left: &MonitorRow, right: &MonitorRow, field: SortField) -> Ordering {
@@ -435,8 +519,8 @@ fn quality_counts(rows: &[MonitorRow]) -> (usize, usize, usize) {
 mod tests {
     use super::*;
     use crate::features::market_data::{
-        CanonicalInstrumentId, HistoryRequest, MarketDataError, Percent, PriceBar, PriceChange,
-        UtcTimestamp,
+        CacheStatus, CanonicalInstrumentId, DataProvenance, HistoryRequest, Percent, PriceBar,
+        PriceChange, ProviderId, UtcTimestamp,
     };
 
     struct StubMarketData;
@@ -463,6 +547,13 @@ mod tests {
                     volume: Some(Quantity::new(1_000 + index as u64)),
                     as_of: UtcTimestamp::new("2026-08-25T20:00:00Z"),
                     quality: DataQuality::RealTime,
+                    provenance: DataProvenance {
+                        provider: ProviderId::new("stub"),
+                        source_timestamp: UtcTimestamp::new("2026-08-25T20:00:00Z"),
+                        received_at: UtcTimestamp::new("2026-08-25T20:00:01Z"),
+                        sequence: Some(index as u64),
+                        cache_status: CacheStatus::Live,
+                    },
                 })
                 .collect())
         }

@@ -1,9 +1,14 @@
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex,
+};
 
 use crate::features::{
     market_data::{
-        CanonicalInstrumentId, DataQuality, HistoryRequest, MarketDataError, MarketDataQuery,
-        Percent, Price, PriceBar, PriceChange, Quantity, QuoteSnapshot, UtcTimestamp,
+        CacheStatus, CancellationToken, CanonicalInstrumentId, CoalescingQuoteBuffer,
+        DataProvenance, DataQuality, HistoryRequest, MarketDataError, MarketDataQuery, Percent,
+        Price, PriceBar, PriceChange, ProviderId, Quantity, QuoteSnapshot, QuoteSubscription,
+        QuoteSubscriptionRequest, QuoteUpdate, SubscriptionId, SubscriptionMetrics, UtcTimestamp,
     },
     watchlist::{
         MonitorColumn, SortDirection, SortField, SortSpec, WatchlistCatalog,
@@ -18,10 +23,13 @@ use crate::features::{
 /// (or another query) advances the replay.
 pub struct DemoMarketDataReplay {
     cursor: Mutex<usize>,
+    next_subscription_id: AtomicU64,
 }
 
 impl DemoMarketDataReplay {
-    pub fn new() -> Self { Self { cursor: Mutex::new(0) } }
+    pub fn new() -> Self {
+        Self { cursor: Mutex::new(0), next_subscription_id: AtomicU64::new(1) }
+    }
 
     #[cfg(test)]
     fn cursor(&self) -> usize { *self.cursor.lock().expect("replay cursor poisoned") }
@@ -50,8 +58,10 @@ impl MarketDataQuery for DemoMarketDataReplay {
                     .quotes
                     .iter()
                     .find(|quote| quote.id == instrument_id.as_str())
-                    .map(|quote| quote.snapshot(frame.as_of))
-                    .unwrap_or_else(|| unavailable_quote(instrument_id.clone(), frame.as_of))
+                    .map(|quote| quote.snapshot(frame.as_of, frame_index as u64))
+                    .unwrap_or_else(|| {
+                        unavailable_quote(instrument_id.clone(), frame.as_of, frame_index as u64)
+                    })
             })
             .collect())
     }
@@ -98,6 +108,60 @@ impl MarketDataQuery for DemoMarketDataReplay {
             })
             .collect())
     }
+
+    fn subscribe_quotes(
+        &self,
+        request: QuoteSubscriptionRequest,
+    ) -> Result<Box<dyn QuoteSubscription>, MarketDataError> {
+        let id = SubscriptionId::new(self.next_subscription_id.fetch_add(1, Ordering::Relaxed));
+        let mut buffer = CoalescingQuoteBuffer::new(request.capacity())?;
+        // Seed both finite frames. Per-instrument coalescing makes the newest
+        // replay value observable while exercising overload behavior.
+        for (frame_index, frame) in REPLAY_FRAMES.iter().enumerate() {
+            for instrument_id in request.instruments() {
+                let snapshot = frame
+                    .quotes
+                    .iter()
+                    .find(|quote| quote.id == instrument_id.as_str())
+                    .map(|quote| quote.snapshot(frame.as_of, frame_index as u64))
+                    .unwrap_or_else(|| {
+                        unavailable_quote(instrument_id.clone(), frame.as_of, frame_index as u64)
+                    });
+                buffer.push(QuoteUpdate { snapshot });
+            }
+        }
+        Ok(Box::new(DemoQuoteSubscription {
+            id,
+            cancellation: CancellationToken::default(),
+            buffer,
+        }))
+    }
+}
+
+struct DemoQuoteSubscription {
+    id: SubscriptionId,
+    cancellation: CancellationToken,
+    buffer: CoalescingQuoteBuffer,
+}
+
+impl QuoteSubscription for DemoQuoteSubscription {
+    fn id(&self) -> SubscriptionId { self.id }
+
+    fn drain(&mut self) -> Result<Vec<QuoteUpdate>, MarketDataError> {
+        if self.cancellation.is_cancelled() {
+            return Err(MarketDataError::Cancelled);
+        }
+        Ok(self.buffer.drain())
+    }
+
+    fn cancel(&mut self) {
+        self.cancellation.cancel();
+        self.buffer.clear();
+    }
+
+    fn is_cancelled(&self) -> bool { self.cancellation.is_cancelled() }
+
+    fn metrics(&self) -> SubscriptionMetrics { self.buffer.metrics() }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -135,7 +199,8 @@ struct ReplayQuote {
 }
 
 impl ReplayQuote {
-    fn snapshot(self, as_of: &str) -> QuoteSnapshot {
+    fn snapshot(self, as_of: &str, sequence: u64) -> QuoteSnapshot {
+        let timestamp = UtcTimestamp::new(as_of);
         QuoteSnapshot {
             instrument_id: CanonicalInstrumentId::new(self.id),
             symbol: self.symbol.to_owned(),
@@ -148,8 +213,15 @@ impl ReplayQuote {
             bid: self.bid.map(Price::new),
             ask: self.ask.map(Price::new),
             volume: self.volume.map(Quantity::new),
-            as_of: UtcTimestamp::new(as_of),
+            as_of: timestamp.clone(),
             quality: self.quality,
+            provenance: DataProvenance {
+                provider: ProviderId::new("demo-replay"),
+                source_timestamp: timestamp.clone(),
+                received_at: timestamp,
+                sequence: Some(sequence),
+                cache_status: CacheStatus::Live,
+            },
         }
     }
 }
@@ -213,7 +285,12 @@ const fn replay_quote(
     }
 }
 
-fn unavailable_quote(instrument_id: CanonicalInstrumentId, as_of: &str) -> QuoteSnapshot {
+fn unavailable_quote(
+    instrument_id: CanonicalInstrumentId,
+    as_of: &str,
+    sequence: u64,
+) -> QuoteSnapshot {
+    let timestamp = UtcTimestamp::new(as_of);
     QuoteSnapshot {
         symbol: instrument_id.as_str().to_ascii_uppercase(),
         instrument_id,
@@ -223,8 +300,15 @@ fn unavailable_quote(instrument_id: CanonicalInstrumentId, as_of: &str) -> Quote
         bid: None,
         ask: None,
         volume: None,
-        as_of: UtcTimestamp::new(as_of),
+        as_of: timestamp.clone(),
         quality: DataQuality::Unavailable,
+        provenance: DataProvenance {
+            provider: ProviderId::new("demo-replay"),
+            source_timestamp: timestamp.clone(),
+            received_at: timestamp,
+            sequence: Some(sequence),
+            cache_status: CacheStatus::Live,
+        },
     }
 }
 
@@ -339,5 +423,31 @@ mod tests {
         let macro_list = DemoWatchlistCatalog.load_watchlist(Some("macro")).expect("macro list");
         assert_eq!(macro_list.id, "macro");
         assert_eq!(macro_list.items[0].instrument_id.as_str(), "index:spx");
+    }
+
+    #[test]
+    fn stream_is_bounded_coalesced_and_cancellable() {
+        let replay = DemoMarketDataReplay::new();
+        let request = QuoteSubscriptionRequest::new(
+            vec![
+                CanonicalInstrumentId::new("us:xnas:aapl"),
+                CanonicalInstrumentId::new("us:xnas:msft"),
+            ],
+            2,
+        )
+        .expect("request");
+        let mut subscription = replay.subscribe_quotes(request).expect("subscription");
+
+        let metrics = subscription.metrics();
+        assert_eq!(metrics.received, 4);
+        assert_eq!(metrics.coalesced, 2);
+        let updates = subscription.drain().expect("updates");
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0].snapshot.last, Some(Price::new(205.36)));
+        assert_eq!(updates[0].snapshot.provenance.sequence, Some(1));
+
+        subscription.cancel();
+        assert!(subscription.is_cancelled());
+        assert_eq!(subscription.drain(), Err(MarketDataError::Cancelled));
     }
 }

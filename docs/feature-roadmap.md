@@ -36,8 +36,24 @@ move to its own crate later without changing its public vocabulary.
 - **Complete:** first Alerts slice with price/move rules, deterministic replay,
   consecutive-match debouncing, idempotency, enable/disable, acknowledgement,
   audit state, and explicitly simulated local delivery.
-- **Next:** persistence, incremental spreadsheet recalculation, richer formulas,
-  and live provider adapters.
+- **Complete:** bounded typed commands with quoting, escaping, structured long
+  options, strict alias resolution, and size/token limits.
+- **Complete:** crash-safe local persistence contracts and adapter with schema
+  migration, previous-valid-generation recovery, bounded payloads, safe feature
+  document identities, and durable shell layout/recent-command restoration.
+- **Complete:** incremental spreadsheet recalculation with dependency and
+  reverse-dependency indexes plus comparison, conditional, logical, text,
+  counting, rounding, and exact lookup functions.
+- **Complete:** first resilient quote-streaming slice with bounded per-instrument
+  coalescing, cancellation, drop metrics, provenance, freshness/LKG caching,
+  retry/rate-limit policies, and monitor fallback behavior.
+- **Complete:** expanded Security Research and News/Events workflows with
+  canonical instrument links, financial/estimate/ownership/filing/peer views,
+  filters, read/bookmark state, story detail, economic calendar, and validated
+  cross-workspace intents.
+- **Next:** cross-sheet references and copy/fill translation, spreadsheet
+  financial functions and async states, feature-document workbook persistence,
+  real licensed provider adapters, and performance/golden-snapshot gates.
 
 ## Product principles
 

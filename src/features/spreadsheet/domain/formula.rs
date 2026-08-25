@@ -5,6 +5,7 @@ use super::{CellAddress, CellRange};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(f64),
+    Text(String),
     Reference(CellAddress),
     Range(CellRange),
     Unary { operator: UnaryOperator, operand: Box<Expr> },
@@ -24,6 +25,12 @@ pub enum BinaryOperator {
     Subtract,
     Multiply,
     Divide,
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +39,17 @@ pub enum AggregateFunction {
     Average,
     Minimum,
     Maximum,
+    Count,
+    CountA,
+    If,
+    And,
+    Or,
+    Not,
+    Concat,
+    Length,
+    Absolute,
+    Round,
+    XLookup,
 }
 
 pub fn parse_formula(input: &str) -> Result<Expr, FormulaError> {
@@ -58,6 +76,32 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression(&mut self) -> Result<Expr, FormulaError> {
+        let mut expression = self.parse_additive()?;
+        loop {
+            self.skip_whitespace();
+            let operator = if self.consume("<=") {
+                Some(BinaryOperator::LessThanOrEqual)
+            } else if self.consume(">=") {
+                Some(BinaryOperator::GreaterThanOrEqual)
+            } else if self.consume("<>") {
+                Some(BinaryOperator::NotEqual)
+            } else if self.consume("=") {
+                Some(BinaryOperator::Equal)
+            } else if self.consume("<") {
+                Some(BinaryOperator::LessThan)
+            } else if self.consume(">") {
+                Some(BinaryOperator::GreaterThan)
+            } else {
+                None
+            };
+            let Some(operator) = operator else { break };
+            let right = self.parse_additive()?;
+            expression = Expr::Binary { left: Box::new(expression), operator, right: Box::new(right) };
+        }
+        Ok(expression)
+    }
+
+    fn parse_additive(&mut self) -> Result<Expr, FormulaError> {
         let mut expression = self.parse_term()?;
         loop {
             self.skip_whitespace();
@@ -112,6 +156,7 @@ impl<'a> Parser<'a> {
                 self.expect(')')?;
                 Ok(expression)
             }
+            Some('"') => self.parse_text(),
             Some(character) if character.is_ascii_digit() || character == '.' => self.parse_number(),
             Some(character) if character.is_ascii_alphabetic() || character == '$' => self.parse_name_or_reference(),
             Some(_) => Err(self.error("expected a number, cell reference, function, or parenthesized expression")),
@@ -136,6 +181,29 @@ impl<'a> Parser<'a> {
             .parse::<f64>()
             .map(Expr::Number)
             .map_err(|_| self.error("invalid number"))
+    }
+
+    fn parse_text(&mut self) -> Result<Expr, FormulaError> {
+        self.advance();
+        let mut value = String::new();
+        loop {
+            match self.peek() {
+                Some('"') => {
+                    self.advance();
+                    if self.peek() == Some('"') {
+                        self.advance();
+                        value.push('"');
+                    } else {
+                        return Ok(Expr::Text(value));
+                    }
+                }
+                Some(character) => {
+                    self.advance();
+                    value.push(character);
+                }
+                None => return Err(self.error("unterminated text literal")),
+            }
+        }
     }
 
     fn parse_name_or_reference(&mut self) -> Result<Expr, FormulaError> {
@@ -193,6 +261,17 @@ impl<'a> Parser<'a> {
             "AVG" | "AVERAGE" => AggregateFunction::Average,
             "MIN" => AggregateFunction::Minimum,
             "MAX" => AggregateFunction::Maximum,
+            "COUNT" => AggregateFunction::Count,
+            "COUNTA" => AggregateFunction::CountA,
+            "IF" => AggregateFunction::If,
+            "AND" => AggregateFunction::And,
+            "OR" => AggregateFunction::Or,
+            "NOT" => AggregateFunction::Not,
+            "CONCAT" | "CONCATENATE" => AggregateFunction::Concat,
+            "LEN" => AggregateFunction::Length,
+            "ABS" => AggregateFunction::Absolute,
+            "ROUND" => AggregateFunction::Round,
+            "XLOOKUP" => AggregateFunction::XLookup,
             _ => return Err(self.error("unknown function")),
         };
         self.expect('(')?;
@@ -219,6 +298,15 @@ impl<'a> Parser<'a> {
             Ok(())
         } else {
             Err(self.error(&format!("expected '{expected}'")))
+        }
+    }
+
+    fn consume(&mut self, expected: &str) -> bool {
+        if self.source[self.position..].starts_with(expected) {
+            self.position += expected.len();
+            true
+        } else {
+            false
         }
     }
 
@@ -286,5 +374,25 @@ mod tests {
     fn parser_rejects_unknown_functions_and_trailing_input() {
         assert!(parse_formula("NOPE(A1)").is_err());
         assert!(parse_formula("1 + 2 hello").is_err());
+    }
+
+    #[test]
+    fn parser_accepts_comparisons_text_and_richer_functions() {
+        let expression = parse_formula("=IF(A1 >= 10, CONCAT(\"large \"\"position\"\"\", A1), \"small\")").unwrap();
+        let Expr::Function { function, arguments } = expression else { panic!("expected function") };
+        assert_eq!(function, AggregateFunction::If);
+        assert!(matches!(
+            arguments[0],
+            Expr::Binary { operator: BinaryOperator::GreaterThanOrEqual, .. }
+        ));
+        assert!(matches!(
+            arguments[1],
+            Expr::Function { function: AggregateFunction::Concat, .. }
+        ));
+    }
+
+    #[test]
+    fn parser_reports_unterminated_text() {
+        assert!(parse_formula("=\"unterminated").is_err());
     }
 }

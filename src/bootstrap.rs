@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use crate::{
     app::{App, WorkspaceRegistry},
@@ -19,7 +19,7 @@ use crate::{
     infrastructure::{
         DemoAlertsReplay, DemoChartHistory, DemoData, DemoInstrumentSearch,
         DemoMarketDataReplay, DemoSpreadsheetMarketData, DemoWatchlistCatalog,
-        OpenRouterConfig, OpenRouterGateway,
+        LocalPersistence, OpenRouterConfig, OpenRouterGateway,
     },
 };
 
@@ -69,4 +69,23 @@ pub fn demo_app() -> App {
         Box::new(SpreadsheetWorkspace::new(spreadsheet_market_data)),
     ]);
     App::new(workspaces, OVERVIEW)
+}
+
+/// Builds the interactive application with durable shell state enabled.
+pub fn persistent_app() -> App {
+    let repository = Arc::new(LocalPersistence::new(default_state_directory()));
+    demo_app().with_session_repository(repository)
+}
+
+pub fn default_state_directory() -> PathBuf {
+    if let Some(path) = std::env::var_os("MARKET_TERMINAL_STATE_DIR") {
+        return PathBuf::from(path);
+    }
+    if let Some(path) = std::env::var_os("XDG_STATE_HOME") {
+        return PathBuf::from(path).join("market-terminal");
+    }
+    if let Some(path) = std::env::var_os("HOME") {
+        return PathBuf::from(path).join(".local/state/market-terminal");
+    }
+    PathBuf::from(".market-terminal")
 }

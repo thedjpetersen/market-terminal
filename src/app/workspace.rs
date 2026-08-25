@@ -3,6 +3,10 @@ use std::collections::{HashMap, HashSet};
 use crossterm::event::KeyEvent;
 use ratatui::{layout::Rect, Frame};
 
+pub(super) const MAX_COMMAND_BYTES: usize = 4_096;
+const MAX_COMMAND_TOKENS: usize = 64;
+const MAX_COMMAND_TOKEN_BYTES: usize = 512;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WorkspaceId(&'static str);
 
@@ -33,13 +37,144 @@ pub struct CommandInvocation {
     pub args: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandArgument {
+    Positional(String),
+    Option { name: String, value: Option<String> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandParseError {
+    Empty,
+    TooLong,
+    TooManyTokens,
+    TokenTooLong,
+    UnterminatedQuote,
+    TrailingEscape,
+    InvalidFunction(String),
+    InvalidOption(String),
+}
+
 impl CommandInvocation {
     pub fn parse(command: &str) -> Option<Self> {
-        let mut tokens = command.split_whitespace();
-        let function = tokens.next()?.to_ascii_uppercase();
-        let args = tokens.map(ToOwned::to_owned).collect();
-        Some(Self { function, args })
+        Self::try_parse(command).ok()
     }
+
+    pub fn try_parse(command: &str) -> Result<Self, CommandParseError> {
+        if command.len() > MAX_COMMAND_BYTES {
+            return Err(CommandParseError::TooLong);
+        }
+        let mut tokens = tokenize_command(command)?;
+        if tokens.is_empty() {
+            return Err(CommandParseError::Empty);
+        }
+        let function = tokens.remove(0).to_ascii_uppercase();
+        if function.is_empty()
+            || !function
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+        {
+            return Err(CommandParseError::InvalidFunction(function));
+        }
+        Ok(Self { function, args: tokens })
+    }
+
+    /// Returns a typed view over positional values and GNU-style long options.
+    ///
+    /// Feature command handlers can adopt this without changing the stable raw
+    /// argument representation used by existing workspaces.
+    pub fn typed_arguments(&self) -> Result<Vec<CommandArgument>, CommandParseError> {
+        self.args
+            .iter()
+            .map(|argument| {
+                let Some(option) = argument.strip_prefix("--") else {
+                    return Ok(CommandArgument::Positional(argument.clone()));
+                };
+                let (name, value) = option
+                    .split_once('=')
+                    .map_or((option, None), |(name, value)| (name, Some(value.to_owned())));
+                if name.is_empty()
+                    || !name.chars().all(|character| {
+                        character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+                    })
+                {
+                    return Err(CommandParseError::InvalidOption(argument.clone()));
+                }
+                Ok(CommandArgument::Option {
+                    name: name.to_ascii_lowercase(),
+                    value,
+                })
+            })
+            .collect()
+    }
+}
+
+fn tokenize_command(command: &str) -> Result<Vec<String>, CommandParseError> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut token_started = false;
+
+    for character in command.chars() {
+        if escaped {
+            current.push(character);
+            escaped = false;
+            token_started = true;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            token_started = true;
+            continue;
+        }
+        if let Some(delimiter) = quote {
+            if character == delimiter {
+                quote = None;
+            } else {
+                current.push(character);
+            }
+            token_started = true;
+            continue;
+        }
+        if matches!(character, '\'' | '"') {
+            quote = Some(character);
+            token_started = true;
+        } else if character.is_whitespace() {
+            if token_started {
+                push_command_token(&mut tokens, &mut current)?;
+                token_started = false;
+            }
+        } else {
+            current.push(character);
+            token_started = true;
+        }
+    }
+
+    if escaped {
+        return Err(CommandParseError::TrailingEscape);
+    }
+    if quote.is_some() {
+        return Err(CommandParseError::UnterminatedQuote);
+    }
+    if token_started {
+        push_command_token(&mut tokens, &mut current)?;
+    }
+    Ok(tokens)
+}
+
+fn push_command_token(
+    tokens: &mut Vec<String>,
+    current: &mut String,
+) -> Result<(), CommandParseError> {
+    if current.len() > MAX_COMMAND_TOKEN_BYTES {
+        return Err(CommandParseError::TokenTooLong);
+    }
+    if tokens.len() == MAX_COMMAND_TOKENS {
+        return Err(CommandParseError::TooManyTokens);
+    }
+    tokens.push(std::mem::take(current));
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,6 +258,10 @@ impl WorkspaceRegistry {
             let descriptor = workspace.descriptor();
             Some(WorkspaceNavigationItem { id: descriptor.id, label: descriptor.label, hotkey })
         })
+    }
+
+    pub fn workspace_order(&self) -> Vec<WorkspaceId> {
+        self.entries.iter().map(|entry| entry.descriptor().id).collect()
     }
 
     pub fn resolve_hotkey(&self, hotkey: char) -> Option<WorkspaceId> {
@@ -210,6 +349,28 @@ impl WorkspaceRegistry {
     pub fn restore_order(&mut self) {
         self.entries.sort_by_key(|entry| {
             self.default_order
+                .iter()
+                .position(|id| *id == entry.descriptor().id)
+                .unwrap_or(usize::MAX)
+        });
+    }
+
+    /// Applies a durable workspace order while preserving newly registered
+    /// workspaces and ignoring stale identifiers from older installations.
+    pub fn apply_workspace_order(&mut self, requested: &[String]) {
+        let mut order = Vec::new();
+        for persisted_id in requested {
+            if let Some(id) = self.entries.iter().find_map(|entry| {
+                let id = entry.descriptor().id;
+                id.as_str().eq_ignore_ascii_case(persisted_id).then_some(id)
+            }) {
+                if !order.contains(&id) {
+                    order.push(id);
+                }
+            }
+        }
+        self.entries.sort_by_key(|entry| {
+            order
                 .iter()
                 .position(|id| *id == entry.descriptor().id)
                 .unwrap_or(usize::MAX)
@@ -335,6 +496,44 @@ mod tests {
                 args: vec!["US".to_owned(), "Equity".to_owned()],
             })
         );
+    }
+
+    #[test]
+    fn command_parser_preserves_quoted_subjects_and_typed_options() {
+        let invocation = CommandInvocation::try_parse(
+            r#"chart "BRK B US" --period=1Y --normalize"#,
+        )
+        .expect("valid command");
+
+        assert_eq!(invocation.function, "CHART");
+        assert_eq!(invocation.args, ["BRK B US", "--period=1Y", "--normalize"]);
+        assert_eq!(
+            invocation.typed_arguments().expect("valid options"),
+            vec![
+                CommandArgument::Positional("BRK B US".to_owned()),
+                CommandArgument::Option {
+                    name: "period".to_owned(),
+                    value: Some("1Y".to_owned()),
+                },
+                CommandArgument::Option { name: "normalize".to_owned(), value: None },
+            ]
+        );
+    }
+
+    #[test]
+    fn command_parser_rejects_malformed_or_unbounded_input() {
+        assert_eq!(
+            CommandInvocation::try_parse("CHART 'unterminated"),
+            Err(CommandParseError::UnterminatedQuote)
+        );
+        assert_eq!(
+            CommandInvocation::try_parse("CHART trailing\\"),
+            Err(CommandParseError::TrailingEscape)
+        );
+        assert!(matches!(
+            CommandInvocation::try_parse(&"A".repeat(MAX_COMMAND_BYTES + 1)),
+            Err(CommandParseError::TooLong)
+        ));
     }
 
     #[test]

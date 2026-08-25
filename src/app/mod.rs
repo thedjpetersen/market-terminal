@@ -2,12 +2,17 @@ mod events;
 mod input;
 mod workspace;
 
+use std::{collections::BTreeMap, sync::Arc};
+
 use crossterm::event::KeyEvent;
+
+use crate::features::persistence::{SessionState, SessionStateRepository};
 
 pub use input::InputMode;
 pub use events::{EventBus, EventEnvelope, EventTopic, SubscriptionId, SubscriptionMetrics};
 pub use workspace::{
-    AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor, WorkspaceId,
+    AppIntent, CommandArgument, CommandInvocation, CommandParseError, Workspace,
+    WorkspaceDescriptor, WorkspaceId,
     ShellContext, WorkspaceNavigationItem, WorkspaceRegistry,
 };
 
@@ -18,6 +23,9 @@ pub struct App {
     pub(crate) ticks: u64,
     pub(crate) workspaces: WorkspaceRegistry,
     events: EventBus,
+    persistence: Option<Arc<dyn SessionStateRepository>>,
+    persistence_error: Option<String>,
+    recent_commands: Vec<String>,
     should_quit: bool,
 }
 
@@ -31,8 +39,39 @@ impl App {
             ticks: 0,
             workspaces,
             events: EventBus::default(),
+            persistence: None,
+            persistence_error: None,
+            recent_commands: Vec::new(),
             should_quit: false,
         }
+    }
+
+    /// Attaches durable shell state and restores the last valid layout.
+    ///
+    /// Persistence failures never prevent the terminal from starting. The
+    /// adapter retains a previous valid generation, while the shell exposes a
+    /// diagnostic for status surfaces and continues with defaults.
+    pub fn with_session_repository(
+        mut self,
+        repository: Arc<dyn SessionStateRepository>,
+    ) -> Self {
+        match repository.load() {
+            Ok(Some(state)) => {
+                self.workspaces.apply_workspace_order(state.workspace_order());
+                if let Some(active) = state
+                    .active_workspace()
+                    .and_then(|target| self.workspaces.resolve_target(target))
+                {
+                    self.active_workspace = active;
+                }
+                self.recent_commands = state.recent_commands().to_vec();
+            }
+            Ok(None) => {}
+            Err(error) => self.persistence_error = Some(error.to_string()),
+        }
+        self.persistence = Some(repository);
+        self.workspaces.update_shell_context(self.active_workspace);
+        self
     }
 
     pub fn active_workspace(&self) -> WorkspaceId {
@@ -53,6 +92,14 @@ impl App {
 
     pub fn should_quit(&self) -> bool {
         self.should_quit
+    }
+
+    pub fn persistence_error(&self) -> Option<&str> {
+        self.persistence_error.as_deref()
+    }
+
+    pub fn recent_commands(&self) -> &[String] {
+        &self.recent_commands
     }
 
     pub fn events(&self) -> &EventBus { &self.events }
@@ -90,7 +137,9 @@ impl App {
                 }
                 input::CommandAction::Execute => self.execute_command(),
                 input::CommandAction::Append(character) => {
-                    self.command.push(character.to_ascii_uppercase());
+                    if self.command.len() + character.len_utf8() <= workspace::MAX_COMMAND_BYTES {
+                        self.command.push(character.to_ascii_uppercase());
+                    }
                 }
                 input::CommandAction::None => {}
             }
@@ -110,6 +159,7 @@ impl App {
             input::NavigationAction::Hotkey(character) => {
                 if let Some(id) = self.workspaces.resolve_hotkey(character) {
                     self.active_workspace = id;
+                    self.persist_session();
                 }
             }
             input::NavigationAction::Delegate => {}
@@ -117,14 +167,23 @@ impl App {
     }
 
     fn execute_command(&mut self) {
-        if let Some(id) = self.workspaces.dispatch_command(&self.command) {
+        let command = self.command.trim().to_owned();
+        if let Some(id) = self.workspaces.dispatch_command(&command) {
             self.active_workspace = id;
+        }
+        if !command.is_empty() && command.len() <= 512 {
+            self.recent_commands.retain(|recent| recent != &command);
+            self.recent_commands.insert(0, command);
+            self.recent_commands.truncate(100);
         }
         self.command.clear();
         self.input_mode = InputMode::Navigation;
+        self.persist_session();
     }
 
     fn apply_intent(&mut self, intent: AppIntent) {
+        let previous_active = self.active_workspace;
+        let previous_order = self.workspaces.workspace_order();
         match intent {
             AppIntent::ActivateWorkspace { target } => {
                 if let Some(id) = self.workspaces.resolve_target(&target) {
@@ -148,11 +207,38 @@ impl App {
             }
             AppIntent::RestoreWorkspaceOrder => self.workspaces.restore_order(),
         }
+        if previous_active != self.active_workspace
+            || previous_order != self.workspaces.workspace_order()
+        {
+            self.persist_session();
+        }
+    }
+
+    fn persist_session(&mut self) {
+        let Some(repository) = self.persistence.clone() else {
+            return;
+        };
+        let state = SessionState::new(
+            Some(self.active_workspace.as_str().to_owned()),
+            self.workspaces
+                .workspace_order()
+                .into_iter()
+                .map(|id| id.as_str().to_owned())
+                .collect(),
+            self.recent_commands.clone(),
+            BTreeMap::new(),
+        );
+        self.persistence_error = match state {
+            Ok(state) => repository.save(&state).err().map(|error| error.to_string()),
+            Err(error) => Some(error.to_string()),
+        };
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{layout::Rect, Frame};
 
@@ -161,6 +247,7 @@ mod tests {
         bootstrap,
         features::{
             assistant::ID as ASSISTANT, news::ID as NEWS, overview::ID as OVERVIEW,
+            persistence::{PersistenceError, SessionState},
             portfolio::ID as PORTFOLIO, security::ID as SECURITY,
         },
     };
@@ -183,6 +270,16 @@ mod tests {
         assert_eq!(app.active_workspace, SECURITY);
         assert!(app.command.is_empty());
         assert_eq!(app.input_mode, InputMode::Navigation);
+    }
+
+    #[test]
+    fn command_palette_bounds_untrusted_input() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for _ in 0..workspace::MAX_COMMAND_BYTES + 32 {
+            app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        }
+        assert_eq!(app.command.len(), workspace::MAX_COMMAND_BYTES);
     }
 
     struct CapturingWorkspace;
@@ -250,6 +347,58 @@ mod tests {
             app.workspaces.navigation_items().next().map(|item| item.id),
             Some(OVERVIEW)
         );
+    }
+
+    #[derive(Default)]
+    struct MemorySessionRepository {
+        state: Mutex<Option<SessionState>>,
+    }
+
+    impl SessionStateRepository for MemorySessionRepository {
+        fn load(&self) -> Result<Option<SessionState>, PersistenceError> {
+            Ok(self.state.lock().expect("session lock").clone())
+        }
+
+        fn save(&self, state: &SessionState) -> Result<(), PersistenceError> {
+            *self.state.lock().expect("session lock") = Some(state.clone());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn session_repository_restores_and_saves_shell_layout() {
+        let repository = Arc::new(MemorySessionRepository {
+            state: Mutex::new(Some(
+                SessionState::new(
+                    Some(PORTFOLIO.as_str().to_owned()),
+                    vec![PORTFOLIO.as_str().to_owned(), CAPTURING.as_str().to_owned()],
+                    vec!["PORT".to_owned()],
+                    BTreeMap::new(),
+                )
+                .expect("valid session"),
+            )),
+        });
+        let registry = WorkspaceRegistry::new(vec![
+            Box::new(CapturingWorkspace),
+            Box::new(TestWorkspace { id: PORTFOLIO, hotkey: 'p' }),
+        ]);
+
+        let mut app = App::new(registry, CAPTURING)
+            .with_session_repository(repository.clone());
+
+        assert_eq!(app.active_workspace(), PORTFOLIO);
+        assert_eq!(app.workspaces.workspace_order(), vec![PORTFOLIO, CAPTURING]);
+        assert_eq!(app.recent_commands(), ["PORT"]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+        let saved = repository
+            .state
+            .lock()
+            .expect("session lock")
+            .clone()
+            .expect("saved session");
+        assert_eq!(saved.active_workspace(), Some(CAPTURING.as_str()));
+        assert_eq!(saved.workspace_order(), &["portfolio", "capturing"]);
     }
 
     #[test]
