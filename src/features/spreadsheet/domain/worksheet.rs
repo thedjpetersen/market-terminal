@@ -5,7 +5,7 @@ use super::{
     UnaryOperator,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Worksheet {
     name: String,
     cells: HashMap<CellAddress, Cell>,
@@ -24,6 +24,15 @@ impl Worksheet {
         &self.name
     }
 
+    pub(crate) fn rename(&mut self, name: impl Into<String>) -> Result<(), WorksheetError> {
+        let name = name.into();
+        if name.trim().is_empty() {
+            return Err(WorksheetError::EmptyName);
+        }
+        self.name = name.trim().to_owned();
+        Ok(())
+    }
+
     pub fn set(&mut self, address: CellAddress, raw: impl Into<String>) {
         let raw = raw.into();
         if raw.is_empty() {
@@ -35,6 +44,10 @@ impl Worksheet {
 
     pub fn clear(&mut self, address: CellAddress) {
         self.cells.remove(&address);
+    }
+
+    pub fn clear_all(&mut self) {
+        self.cells.clear();
     }
 
     pub fn cell(&self, address: CellAddress) -> Option<&Cell> {

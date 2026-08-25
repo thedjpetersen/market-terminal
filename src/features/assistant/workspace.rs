@@ -13,7 +13,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
+    app::{AppIntent, CommandInvocation, ShellContext, Workspace, WorkspaceDescriptor},
     ui::{
         components::terminal_block,
         theme::{AMBER, BG, CYAN, GREEN, INK, MUTED, RED},
@@ -35,6 +35,7 @@ pub struct AssistantWorkspace {
     gateway: Arc<dyn AssistantGateway>,
     model_label: String,
     available_workspaces: Vec<String>,
+    active_workspace: String,
     messages: Vec<AssistantMessage>,
     input: String,
     status: AssistantStatus,
@@ -56,6 +57,7 @@ impl AssistantWorkspace {
             gateway,
             model_label,
             available_workspaces,
+            active_workspace: "overview".to_owned(),
             messages: vec![AssistantMessage::system(
                 "ASK FOR ANALYSIS OR TELL ME WHICH WORKSPACE TO OPEN OR BRING FORWARD.",
             )],
@@ -78,6 +80,7 @@ impl AssistantWorkspace {
         let history_start = self.messages.len().saturating_sub(10);
         let request = AssistantRequest {
             messages: self.messages[history_start..].to_vec(),
+            active_workspace: self.active_workspace.clone(),
             available_workspaces: self.available_workspaces.clone(),
         };
         let gateway = Arc::clone(&self.gateway);
@@ -194,6 +197,15 @@ impl Workspace for AssistantWorkspace {
                 Vec::new()
             }
         }
+    }
+
+    fn update_shell_context(&mut self, context: &ShellContext) {
+        self.active_workspace = context.active_workspace.as_str().to_owned();
+        self.available_workspaces = context
+            .workspace_order
+            .iter()
+            .map(|id| id.as_str().to_owned())
+            .collect();
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {

@@ -13,7 +13,7 @@ use crate::{
     app::{CommandInvocation, Workspace, WorkspaceDescriptor},
     ui::{
         components::terminal_block,
-        theme::{AMBER, BG, CYAN, FOOTER_BG, GREEN, INK, MUTED, NAV_BG, RED},
+        theme::{AMBER, BG, CYAN, FOOTER_BG, INK, MUTED, NAV_BG, RED},
     },
 };
 
@@ -110,6 +110,7 @@ impl SpreadsheetWorkspace {
                 .expect("demo seed addresses are valid");
         }
         self.refresh_market_data();
+        self.spreadsheet.clear_history();
         self.status = "READY · LIVE FIELDS LOADED".to_owned();
     }
 
@@ -136,6 +137,7 @@ impl SpreadsheetWorkspace {
             .map(|point| ((point.request.security, point.request.field), point.value))
             .collect::<HashMap<_, _>>();
 
+        let mut cells = Vec::new();
         for (index, (security, shares)) in securities.into_iter().enumerate() {
             let row = index + 2;
             let price = values
@@ -153,11 +155,12 @@ impl SpreadsheetWorkspace {
                 ('D', shares.to_string()),
                 ('E', format!("=B{row}*D{row}")),
             ] {
-                self.spreadsheet
-                    .set_cell(&format!("{column}{row}"), raw)
-                    .expect("market-data seed addresses are valid");
+                cells.push((format!("{column}{row}"), raw));
             }
         }
+        self.spreadsheet
+            .set_cells(cells)
+            .expect("market-data seed addresses are valid");
     }
 
     fn selected_address(&self) -> String { self.cursor.to_string() }
@@ -254,6 +257,67 @@ impl SpreadsheetWorkspace {
         }
     }
 
+    fn undo(&mut self) {
+        self.status = if self.spreadsheet.undo() {
+            format!("UNDID CHANGE · {}", self.spreadsheet.workbook().active_sheet().name())
+        } else {
+            "NOTHING TO UNDO".to_owned()
+        };
+    }
+
+    fn redo(&mut self) {
+        self.status = if self.spreadsheet.redo() {
+            format!("REDID CHANGE · {}", self.spreadsheet.workbook().active_sheet().name())
+        } else {
+            "NOTHING TO REDO".to_owned()
+        };
+    }
+
+    fn select_sheet(&mut self, name: &str) {
+        match self.spreadsheet.select_sheet(name) {
+            Ok(()) => {
+                self.cursor = CellAddress::new(1, 1).expect("A1 is in bounds");
+                self.first_column = 1;
+                self.first_row = 1;
+                self.status = format!("SELECTED SHEET {}", self.spreadsheet.workbook().active_sheet().name());
+            }
+            Err(error) => self.status = format!("ERROR · {error}"),
+        }
+    }
+
+    fn next_sheet_name(&self) -> String {
+        let mut number = self.spreadsheet.workbook().sheet_count() + 1;
+        loop {
+            let name = format!("Sheet{number}");
+            if self.spreadsheet.workbook().sheet(&name).is_none() {
+                return name;
+            }
+            number += 1;
+        }
+    }
+
+    fn add_sheet(&mut self, requested_name: Option<String>) {
+        let name = requested_name
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| self.next_sheet_name());
+        match self.spreadsheet.add_sheet(name.clone()) {
+            Ok(_) => self.select_sheet(&name),
+            Err(error) => self.status = format!("ERROR · {error}"),
+        }
+    }
+
+    fn select_adjacent_sheet(&mut self, next: bool) {
+        if next {
+            self.spreadsheet.select_next_sheet();
+        } else {
+            self.spreadsheet.select_previous_sheet();
+        }
+        self.cursor = CellAddress::new(1, 1).expect("A1 is in bounds");
+        self.first_column = 1;
+        self.first_row = 1;
+        self.status = format!("SELECTED SHEET {}", self.spreadsheet.workbook().active_sheet().name());
+    }
+
     fn render_formula_bar(&self, frame: &mut Frame, area: Rect) {
         let raw = self.edit.as_ref().map(EditSession::text).unwrap_or_else(|| self.selected_raw());
         let editing = self.edit.is_some();
@@ -340,14 +404,19 @@ impl SpreadsheetWorkspace {
     }
 
     fn render_tabs(&self, frame: &mut Frame, area: Rect) {
-        let name = self.spreadsheet.workbook().active_sheet().name();
+        let workbook = self.spreadsheet.workbook();
+        let mut tabs = vec![Span::styled(" + ", Style::new().fg(AMBER).bold())];
+        for (index, sheet) in workbook.sheets().iter().enumerate() {
+            let style = if index == workbook.active_sheet_index() {
+                Style::new().bg(CYAN).fg(BG).bold()
+            } else {
+                Style::new().fg(MUTED)
+            };
+            tabs.push(Span::styled(format!(" {}:{} ", index + 1, sheet.name()), style));
+            tabs.push(Span::raw(" "));
+        }
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(" + ", Style::new().fg(AMBER).bold()),
-                Span::styled(format!(" {name} "), Style::new().bg(CYAN).fg(BG).bold()),
-                Span::styled("   READY", GREEN),
-            ]))
-            .style(Style::new().bg(NAV_BG)),
+            Paragraph::new(Line::from(tabs)).style(Style::new().bg(NAV_BG)),
             area,
         );
     }
@@ -358,7 +427,7 @@ impl SpreadsheetWorkspace {
             Paragraph::new(Line::from(vec![
                 Span::styled(format!(" {mode} "), Style::new().bg(AMBER).fg(BG).bold()),
                 Span::styled(format!(" {}   ", self.status), INK),
-                Span::styled("ENTER/F2 EDIT  = FORMULA  DEL CLEAR  TAB MOVE  HJKL/ARROWS NAV", MUTED),
+                Span::styled("CTRL-Z/Y UNDO/REDO  CTRL-PGUP/DN SHEETS  SHIFT-F11 NEW  F2 EDIT", MUTED),
             ]))
             .style(Style::new().bg(FOOTER_BG)),
             area,
@@ -381,12 +450,38 @@ impl Workspace for SpreadsheetWorkspace {
     fn is_favorite(&self) -> bool { true }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
-        let Some(address) = invocation.args.first() else { return true };
-        let Ok(address) = address.parse::<CellAddress>() else { return true };
-        self.cursor = address;
-        self.first_column = address.column();
-        self.first_row = address.row();
-        self.status = format!("SELECTED {address}");
+        let Some(first) = invocation.args.first() else { return true };
+        if let Ok(address) = first.parse::<CellAddress>() {
+            self.cursor = address;
+            self.first_column = address.column();
+            self.first_row = address.row();
+            self.status = format!("SELECTED {address}");
+            return true;
+        }
+
+        let operation = first.to_ascii_uppercase();
+        let name = invocation.args.get(1..).unwrap_or_default().join(" ");
+        match operation.as_str() {
+            "ADD" | "NEW" => self.add_sheet((!name.is_empty()).then_some(name)),
+            "NEXT" => self.select_adjacent_sheet(true),
+            "PREV" | "PREVIOUS" => self.select_adjacent_sheet(false),
+            "SELECT" if name.is_empty() => self.status = "ERROR · SHEET SELECT REQUIRES A NAME".to_owned(),
+            "SELECT" => self.select_sheet(&name),
+            "RENAME" if name.is_empty() => self.status = "ERROR · SHEET RENAME REQUIRES A NAME".to_owned(),
+            "RENAME" => match self.spreadsheet.rename_active_sheet(name) {
+                Ok(()) => {
+                    self.status = format!("RENAMED SHEET {}", self.spreadsheet.workbook().active_sheet().name());
+                }
+                Err(error) => self.status = format!("ERROR · {error}"),
+            },
+            "DELETE" | "REMOVE" => match self.spreadsheet.remove_active_sheet() {
+                Ok(()) => {
+                    self.status = format!("REMOVED SHEET · NOW ON {}", self.spreadsheet.workbook().active_sheet().name());
+                }
+                Err(error) => self.status = format!("ERROR · {error}"),
+            },
+            _ => self.select_sheet(&invocation.args.join(" ")),
+        }
         true
     }
 
@@ -395,7 +490,16 @@ impl Workspace for SpreadsheetWorkspace {
             self.handle_edit_key(key);
             return true;
         }
+        let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         match key.code {
+            KeyCode::Char('z') if control && shift => self.redo(),
+            KeyCode::Char('Z') if control && shift => self.redo(),
+            KeyCode::Char('z') if control => self.undo(),
+            KeyCode::Char('y') if control => self.redo(),
+            KeyCode::PageDown if control => self.select_adjacent_sheet(true),
+            KeyCode::PageUp if control => self.select_adjacent_sheet(false),
+            KeyCode::F(11) if shift => self.add_sheet(None),
             KeyCode::Up | KeyCode::Char('k') => self.move_cursor(0, -1),
             KeyCode::Down | KeyCode::Char('j') => self.move_cursor(0, 1),
             KeyCode::Left | KeyCode::Char('h') => self.move_cursor(-1, 0),
@@ -495,6 +599,10 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent { KeyEvent::new(code, KeyModifiers::NONE) }
 
+    fn modified_key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
     #[test]
     fn seeds_market_data_and_formulas() {
         let workspace = workspace();
@@ -544,5 +652,75 @@ mod tests {
             args: vec!["Z100".to_owned()],
         });
         assert_eq!(workspace.cursor.to_string(), "Z100");
+    }
+
+    #[test]
+    fn keyboard_undo_and_redo_restore_committed_edits() {
+        let mut workspace = workspace();
+        let original = workspace.spreadsheet.cell("A1").unwrap().raw;
+        workspace.handle_key(key(KeyCode::F(2)));
+        for _ in 0..original.chars().count() {
+            workspace.handle_key(key(KeyCode::Backspace));
+        }
+        workspace.handle_key(key(KeyCode::Char('x')));
+        workspace.handle_key(key(KeyCode::Enter));
+        assert_eq!(workspace.spreadsheet.cell("A1").unwrap().raw, "x");
+
+        assert!(workspace.handle_key(modified_key(
+            KeyCode::Char('z'),
+            KeyModifiers::CONTROL,
+        )));
+        assert_eq!(workspace.spreadsheet.cell("A1").unwrap().raw, original);
+        assert!(workspace.handle_key(modified_key(
+            KeyCode::Char('y'),
+            KeyModifiers::CONTROL,
+        )));
+        assert_eq!(workspace.spreadsheet.cell("A1").unwrap().raw, "x");
+    }
+
+    #[test]
+    fn keyboard_creates_and_cycles_workbook_tabs() {
+        let mut workspace = workspace();
+        assert!(workspace.handle_key(modified_key(
+            KeyCode::F(11),
+            KeyModifiers::SHIFT,
+        )));
+        assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 2);
+        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Sheet2");
+
+        assert!(workspace.handle_key(modified_key(
+            KeyCode::PageUp,
+            KeyModifiers::CONTROL,
+        )));
+        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Sheet1");
+        assert!(workspace.handle_key(modified_key(
+            KeyCode::PageDown,
+            KeyModifiers::CONTROL,
+        )));
+        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Sheet2");
+    }
+
+    #[test]
+    fn sheet_commands_manage_named_tabs_and_remain_undoable() {
+        let mut workspace = workspace();
+        workspace.handle_command(&CommandInvocation {
+            function: "SHEET".to_owned(),
+            args: vec!["ADD".to_owned(), "DCF".to_owned(), "Model".to_owned()],
+        });
+        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "DCF Model");
+        workspace.handle_command(&CommandInvocation {
+            function: "SHEET".to_owned(),
+            args: vec!["RENAME".to_owned(), "Base".to_owned(), "Case".to_owned()],
+        });
+        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Base Case");
+
+        workspace.handle_command(&CommandInvocation {
+            function: "SHEET".to_owned(),
+            args: vec!["DELETE".to_owned()],
+        });
+        assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 1);
+        workspace.handle_key(modified_key(KeyCode::Char('z'), KeyModifiers::CONTROL));
+        assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 2);
+        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Base Case");
     }
 }

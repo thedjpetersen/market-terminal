@@ -1,8 +1,12 @@
+pub mod alerts;
 pub mod assistant;
+pub mod charting;
 pub mod instrument;
+pub mod market_data;
 pub mod markets;
 pub mod news;
 pub mod overview;
 pub mod portfolio;
 pub mod security;
 pub mod spreadsheet;
+pub mod watchlist;
