@@ -381,14 +381,12 @@ impl Workspace for SpreadsheetWorkspace {
     fn is_favorite(&self) -> bool { true }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
-        if let Some(address) = invocation.args.first()
-            && let Ok(address) = address.parse::<CellAddress>()
-        {
-            self.cursor = address;
-            self.first_column = address.column();
-            self.first_row = address.row();
-            self.status = format!("SELECTED {address}");
-        }
+        let Some(address) = invocation.args.first() else { return true };
+        let Ok(address) = address.parse::<CellAddress>() else { return true };
+        self.cursor = address;
+        self.first_column = address.column();
+        self.first_row = address.row();
+        self.status = format!("SELECTED {address}");
         true
     }
 
