@@ -32,7 +32,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     capture(&output, &font, "monitor", |app| command(app, "MON MACRO"))?;
     capture(&output, &font, "charting", |app| {
         command(app, "CHART MSFT COMPARE SPY,QQQ 6M SMA20 NORMALIZE");
+        app.handle_key(key(KeyCode::Char(',')));
+        app.handle_key(key(KeyCode::Char(',')));
     })?;
+    capture(&output, &font, "chat", |app| command(app, "CHAT"))?;
     capture(&output, &font, "spreadsheet", |app| command(app, "SHEET"))?;
     capture(&output, &font, "alerts", |app| {
         command(app, "ALERTS");

@@ -33,6 +33,12 @@ bootstrap ──▶ app kernel
 - `bootstrap.rs` is the composition root. It is the only place that selects
   concrete adapters and registers the complete product surface.
 
+The chat context follows the same boundary: `features/chat` owns endpoint and
+message rules plus the `ChatGateway` port, while `infrastructure/irc.rs` owns
+Tokio, TLS, environment configuration, reconnection, and wire protocol details.
+The native workspace never depends on the IRC crate and never performs network
+work during input or rendering.
+
 ## Why there is no global data service
 
 A single `MarketDataProvider` spanning quotes, portfolios, news, analytics,

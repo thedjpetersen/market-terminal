@@ -22,11 +22,14 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 - Find — canonical instrument identity and ranked symbol/company discovery
 - Monitor — configurable watchlists, bounded quote streams, sorting,
   data-quality states, last-known-good fallback, and replay
-- Chart — price/volume history, comparisons, normalization, and moving averages
+- Chart — comparative performance, zero baselines, inspection cursor, market
+  profile statistics, volume histograms, and moving averages
+- Chat — TLS-capable IRC market rooms with bounded queues, background reconnect,
+  participant presence, notices, actions, and an inline composer
 - Alerts — idempotent, debounced local rules with acknowledgement and audit state
 
 Use the labeled navigation keys, or type a function such as `MON`, `CHART`,
-`SHEET`, `FIND`, or `ASK` into the command bar. All displayed market values are
+`SHEET`, `CHAT`, `FIND`, or `ASK` into the command bar. All displayed market values are
 deterministic demo data.
 
 The interactive binary restores the active workspace, workspace order, and
@@ -45,10 +48,12 @@ mockups.
 | ![Research overview with performance, holdings, news, and market context](docs/screenshots/overview.png) | ![Cross-asset market monitor with configurable quote columns and data-quality states](docs/screenshots/monitor.png) |
 | **Comparative charting** | **Spreadsheet workspace** |
 | ![Normalized multi-instrument chart with moving average and volume](docs/screenshots/charting.png) | ![Keyboard-first spreadsheet with formulas and market-linked cells](docs/screenshots/spreadsheet.png) |
-| **Alerts register** | **OpenRouter AI command plane** |
-| ![Debounced local alert rules with lifecycle and audit state](docs/screenshots/alerts.png) | ![OpenRouter assistant for analysis and validated workspace control](docs/screenshots/assistant.png) |
-| **Instrument discovery** | **Security research** |
-| ![Ranked canonical instrument search results](docs/screenshots/find.png) | ![Single-security quote, chart, fundamentals, estimates, and news](docs/screenshots/security.png) |
+| **IRC market chat** | **OpenRouter AI command plane** |
+| ![Native IRC market chat with channel conversation and participant presence](docs/screenshots/chat.png) | ![OpenRouter assistant for analysis and validated workspace control](docs/screenshots/assistant.png) |
+| **Alerts register** | **Security research** |
+| ![Debounced local alert rules with lifecycle and audit state](docs/screenshots/alerts.png) | ![Single-security quote, chart, fundamentals, estimates, and news](docs/screenshots/security.png) |
+| **Instrument discovery** | |
+| ![Ranked canonical instrument search results](docs/screenshots/find.png) | |
 
 ## Run locally
 
@@ -89,6 +94,27 @@ workspace to the front, dispatch an existing terminal command, or restore the
 default workspace order. It cannot execute shell commands, read credentials,
 submit trades, or mutate arbitrary application state.
 
+## IRC chat
+
+The `CHAT`/`IRC` workspace connects on a dedicated Tokio worker, keeping DNS,
+TLS, registration, stream reads, and reconnect delays off the render loop.
+Incoming and outgoing queues are bounded so a busy room cannot grow terminal
+memory without limit. Configure a server before launching:
+
+```bash
+export IRC_SERVER="irc.libera.chat"
+export IRC_PORT="6697"                 # optional; inferred from IRC_TLS
+export IRC_TLS="true"                  # true by default
+export IRC_NICKNAME="market-terminal"
+export IRC_CHANNEL="#market-terminal"
+cargo run --release
+```
+
+Optional `IRC_SERVER_PASSWORD` and `IRC_NICKSERV_PASSWORD` values are passed
+only to the IRC adapter and are never rendered. Press `H` or type `CHAT`, then
+press `I`/Enter to compose, Enter to send, Esc to leave input, or `R` to
+reconnect.
+
 ## Design constraints
 
 - crisp type and chart strokes; no simulated CRT glow
@@ -118,6 +144,7 @@ src/
 │   ├── persistence/ versioned session + opaque feature-document ports
 │   ├── watchlist/   monitor model + catalog port + workspace
 │   ├── charting/    chart specification + history port + workspace
+│   ├── chat/        IRC domain + gateway port + workspace
 │   ├── spreadsheet/ workbook domain + application + presentation
 │   └── assistant/   AI conversation domain + provider port + workspace
 ├── foundation/      narrowly shared value objects such as InstrumentId

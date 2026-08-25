@@ -1,7 +1,9 @@
 mod alerts_demo;
 mod charting_demo;
+mod chat_demo;
 mod demo;
 mod instrument_demo;
+mod irc;
 mod local_persistence;
 mod market_data_demo;
 mod openrouter;
@@ -9,8 +11,10 @@ mod spreadsheet_demo;
 
 pub use alerts_demo::DemoAlertsReplay;
 pub use charting_demo::DemoChartHistory;
+pub use chat_demo::DemoChatGateway;
 pub use demo::DemoData;
 pub use instrument_demo::DemoInstrumentSearch;
+pub use irc::IrcChatGateway;
 pub use local_persistence::LocalPersistence;
 pub use market_data_demo::{DemoMarketDataReplay, DemoWatchlistCatalog};
 pub use openrouter::{OpenRouterConfig, OpenRouterGateway};
