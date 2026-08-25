@@ -11,19 +11,28 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 
 - Overview — returns, risk, holdings, watchlist, and movers
 - Markets — global indices, cross-asset monitor, sectors, breadth, and rates
-- Security — quote, price chart, fundamentals, analyst consensus, and news
+- Security — quote/chart, financials, estimates, ownership, filings, peers,
+  and linked news
 - Portfolio — positions, allocation, attribution, scenarios, and activity
-- News — headline browser, story reader, and live movers
-- Spreadsheet — formulas, ranges, dependency evaluation, and market refresh
+- News — filters, unread/bookmarks, story detail, linked securities, and an
+  economic-event calendar
+- Spreadsheet — incremental recalculation, ranges, lookups, conditional/text
+  formulas, undo/redo, CSV, and market refresh
 - AI — OpenRouter-backed analysis and natural-language workspace control
 - Find — canonical instrument identity and ranked symbol/company discovery
-- Monitor — configurable watchlists, sorting, data-quality states, and replay
+- Monitor — configurable watchlists, bounded quote streams, sorting,
+  data-quality states, last-known-good fallback, and replay
 - Chart — price/volume history, comparisons, normalization, and moving averages
 - Alerts — idempotent, debounced local rules with acknowledgement and audit state
 
 Use the labeled navigation keys, or type a function such as `MON`, `CHART`,
 `SHEET`, `FIND`, or `ASK` into the command bar. All displayed market values are
 deterministic demo data.
+
+The interactive binary restores the active workspace, workspace order, and
+recent commands from crash-safe, versioned local state. Set
+`MARKET_TERMINAL_STATE_DIR` to override the platform default. Corrupt current
+state falls back to the previous valid generation and never blocks startup.
 
 ## Experience gallery
 
@@ -106,6 +115,7 @@ src/
 │   ├── news/        domain + port + workspace
 │   ├── instrument/  search port + discovery workspace
 │   ├── market_data/ typed quote/history read contracts
+│   ├── persistence/ versioned session + opaque feature-document ports
 │   ├── watchlist/   monitor model + catalog port + workspace
 │   ├── charting/    chart specification + history port + workspace
 │   ├── spreadsheet/ workbook domain + application + presentation

@@ -1,8 +1,16 @@
+mod cache;
 mod domain;
 mod port;
+mod stream;
 
+pub use cache::{QuoteCache, QuoteCacheLookup, QuoteCachePolicy};
 pub use domain::{
-    BarInterval, CanonicalInstrumentId, DataQuality, HistoryRequest, MarketDataError, Percent,
-    Price, PriceBar, PriceChange, Quantity, QuoteSnapshot, UtcTimestamp,
+    BarInterval, CacheStatus, CanonicalInstrumentId, DataProvenance, DataQuality, HistoryRequest,
+    MarketDataError, MarketDataErrorKind, Percent, Price, PriceBar, PriceChange, ProviderId,
+    Quantity, QuoteSnapshot, RateLimitPolicy, RetryPolicy, UtcTimestamp,
 };
-pub use port::MarketDataQuery;
+pub use port::{MarketDataQuery, QuoteSubscription};
+pub use stream::{
+    CancellationToken, CoalescingQuoteBuffer, QuoteSubscriptionRequest, QuoteUpdate,
+    SubscriptionId, SubscriptionMetrics,
+};

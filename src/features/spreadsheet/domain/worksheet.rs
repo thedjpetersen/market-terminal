@@ -1,14 +1,35 @@
-use std::{collections::HashMap, fmt};
+use std::{
+    cell::RefCell,
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use super::{
     parse_formula, AggregateFunction, BinaryOperator, Cell, CellAddress, CellError, CellValue, Expr,
     UnaryOperator,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Worksheet {
     name: String,
     cells: HashMap<CellAddress, Cell>,
+    evaluation: RefCell<EvaluationState>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct EvaluationState {
+    // Formula results are memoized across reads. Mutations evict only the
+    // changed cell and its transitive dependents through the reverse index.
+    cache: HashMap<CellAddress, CellValue>,
+    dependencies: HashMap<CellAddress, HashSet<CellAddress>>,
+    dependents: HashMap<CellAddress, HashSet<CellAddress>>,
+}
+
+impl PartialEq for Worksheet {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.cells == other.cells
+    }
 }
 
 impl Worksheet {
@@ -17,7 +38,11 @@ impl Worksheet {
         if name.trim().is_empty() {
             return Err(WorksheetError::EmptyName);
         }
-        Ok(Self { name: name.trim().to_owned(), cells: HashMap::new() })
+        Ok(Self {
+            name: name.trim().to_owned(),
+            cells: HashMap::new(),
+            evaluation: RefCell::new(EvaluationState::default()),
+        })
     }
 
     pub fn name(&self) -> &str {
@@ -38,16 +63,21 @@ impl Worksheet {
         if raw.is_empty() {
             self.cells.remove(&address);
         } else {
-            self.cells.insert(address, Cell::new(raw));
+            self.cells.insert(address, Cell::new(raw.clone()));
         }
+        self.update_dependencies(address, &raw);
+        self.invalidate(address);
     }
 
     pub fn clear(&mut self, address: CellAddress) {
         self.cells.remove(&address);
+        self.update_dependencies(address, "");
+        self.invalidate(address);
     }
 
     pub fn clear_all(&mut self) {
         self.cells.clear();
+        *self.evaluation.get_mut() = EvaluationState::default();
     }
 
     pub fn cell(&self, address: CellAddress) -> Option<&Cell> {
@@ -59,16 +89,65 @@ impl Worksheet {
     }
 
     pub fn value(&self, address: CellAddress) -> CellValue {
-        let mut cache = HashMap::new();
-        self.evaluate_cell(address, &mut Vec::new(), &mut cache)
+        let mut cache = std::mem::take(&mut self.evaluation.borrow_mut().cache);
+        let value = self.evaluate_cell(address, &mut Vec::new(), &mut cache);
+        self.evaluation.borrow_mut().cache = cache;
+        value
     }
 
     pub fn values(&self) -> HashMap<CellAddress, CellValue> {
-        let mut cache = HashMap::new();
+        let mut cache = std::mem::take(&mut self.evaluation.borrow_mut().cache);
         for address in self.cells.keys() {
             self.evaluate_cell(*address, &mut Vec::new(), &mut cache);
         }
+        self.evaluation.borrow_mut().cache = cache.clone();
         cache
+    }
+
+    fn update_dependencies(&mut self, address: CellAddress, raw: &str) {
+        let state = self.evaluation.get_mut();
+        if let Some(previous) = state.dependencies.remove(&address) {
+            for dependency in previous {
+                if let Some(dependents) = state.dependents.get_mut(&dependency) {
+                    dependents.remove(&address);
+                    if dependents.is_empty() {
+                        state.dependents.remove(&dependency);
+                    }
+                }
+            }
+        }
+
+        let dependencies = raw
+            .trim()
+            .strip_prefix('=')
+            .and_then(|formula| parse_formula(formula).ok())
+            .map(|expression| {
+                let mut dependencies = HashSet::new();
+                collect_dependencies(&expression, &mut dependencies);
+                dependencies
+            })
+            .unwrap_or_default();
+        for dependency in &dependencies {
+            state.dependents.entry(*dependency).or_default().insert(address);
+        }
+        if !dependencies.is_empty() {
+            state.dependencies.insert(address, dependencies);
+        }
+    }
+
+    fn invalidate(&mut self, changed: CellAddress) {
+        let state = self.evaluation.get_mut();
+        let mut pending = vec![changed];
+        let mut invalidated = HashSet::new();
+        while let Some(address) = pending.pop() {
+            if !invalidated.insert(address) {
+                continue;
+            }
+            state.cache.remove(&address);
+            if let Some(dependents) = state.dependents.get(&address) {
+                pending.extend(dependents.iter().copied());
+            }
+        }
     }
 
     fn evaluate_cell(
@@ -119,6 +198,7 @@ impl Worksheet {
     ) -> Result<CellValue, CellError> {
         match expression {
             Expr::Number(number) => Ok(CellValue::Number(*number)),
+            Expr::Text(text) => Ok(CellValue::Text(text.clone())),
             Expr::Reference(address) => Ok(self.evaluate_cell(*address, stack, cache)),
             Expr::Range(_) => Err(CellError::InvalidValue),
             Expr::Unary { operator, operand } => {
@@ -129,45 +209,200 @@ impl Worksheet {
                 }))
             }
             Expr::Binary { left, operator, right } => {
-                let left = self.number(self.evaluate_expression(left, stack, cache)?)?;
-                let right = self.number(self.evaluate_expression(right, stack, cache)?)?;
-                let number = match operator {
-                    BinaryOperator::Add => left + right,
-                    BinaryOperator::Subtract => left - right,
-                    BinaryOperator::Multiply => left * right,
-                    BinaryOperator::Divide if right.abs() < f64::EPSILON => {
-                        return Err(CellError::DivisionByZero);
-                    }
-                    BinaryOperator::Divide => left / right,
-                };
-                Ok(CellValue::Number(number))
-            }
-            Expr::Function { function, arguments } => {
-                let mut numbers = Vec::new();
-                for argument in arguments {
-                    match argument {
-                        Expr::Range(range) => {
-                            for address in range.addresses() {
-                                match self.evaluate_cell(address, stack, cache) {
-                                    CellValue::Number(number) => numbers.push(number),
-                                    CellValue::Error(error) => return Err(error),
-                                    CellValue::Blank | CellValue::Text(_) => {}
-                                }
+                let left = self.evaluate_expression(left, stack, cache)?;
+                let right = self.evaluate_expression(right, stack, cache)?;
+                if let CellValue::Error(error) = &left {
+                    return Err(error.clone());
+                }
+                if let CellValue::Error(error) = &right {
+                    return Err(error.clone());
+                }
+                match operator {
+                    BinaryOperator::Add
+                    | BinaryOperator::Subtract
+                    | BinaryOperator::Multiply
+                    | BinaryOperator::Divide => {
+                        let left = self.number(left)?;
+                        let right = self.number(right)?;
+                        let number = match operator {
+                            BinaryOperator::Add => left + right,
+                            BinaryOperator::Subtract => left - right,
+                            BinaryOperator::Multiply => left * right,
+                            BinaryOperator::Divide if right.abs() < f64::EPSILON => {
+                                return Err(CellError::DivisionByZero);
                             }
-                        }
-                        Expr::Reference(address) => match self.evaluate_cell(*address, stack, cache) {
-                            CellValue::Number(number) => numbers.push(number),
-                            CellValue::Error(error) => return Err(error),
-                            CellValue::Blank | CellValue::Text(_) => {}
-                        },
-                        _ => {
-                            let value = self.evaluate_expression(argument, stack, cache)?;
-                            numbers.push(self.number(value)?);
-                        }
+                            BinaryOperator::Divide => left / right,
+                            _ => unreachable!("comparison operators were handled separately"),
+                        };
+                        Ok(CellValue::Number(number))
+                    }
+                    BinaryOperator::Equal => Ok(boolean_value(values_equal(&left, &right))),
+                    BinaryOperator::NotEqual => Ok(boolean_value(!values_equal(&left, &right))),
+                    BinaryOperator::LessThan
+                    | BinaryOperator::LessThanOrEqual
+                    | BinaryOperator::GreaterThan
+                    | BinaryOperator::GreaterThanOrEqual => {
+                        let ordering = compare_values(&left, &right).ok_or(CellError::InvalidValue)?;
+                        let matches = match operator {
+                            BinaryOperator::LessThan => ordering == Ordering::Less,
+                            BinaryOperator::LessThanOrEqual => ordering != Ordering::Greater,
+                            BinaryOperator::GreaterThan => ordering == Ordering::Greater,
+                            BinaryOperator::GreaterThanOrEqual => ordering != Ordering::Less,
+                            _ => unreachable!("equality operators were handled separately"),
+                        };
+                        Ok(boolean_value(matches))
                     }
                 }
-                self.aggregate(*function, &numbers).map(CellValue::Number)
             }
+            Expr::Function { function, arguments } => {
+                self.evaluate_function(*function, arguments, stack, cache)
+            }
+        }
+    }
+
+    fn evaluate_function(
+        &self,
+        function: AggregateFunction,
+        arguments: &[Expr],
+        stack: &mut Vec<CellAddress>,
+        cache: &mut HashMap<CellAddress, CellValue>,
+    ) -> Result<CellValue, CellError> {
+        match function {
+            AggregateFunction::If => {
+                expect_arity(arguments, 3, 3)?;
+                let condition = self.evaluate_expression(&arguments[0], stack, cache)?;
+                let branch = if truthy(&condition)? { &arguments[1] } else { &arguments[2] };
+                self.evaluate_expression(branch, stack, cache)
+            }
+            AggregateFunction::And | AggregateFunction::Or => {
+                if arguments.is_empty() {
+                    return Err(CellError::InvalidValue);
+                }
+                let seeking = function == AggregateFunction::Or;
+                for argument in arguments {
+                    let value = self.evaluate_expression(argument, stack, cache)?;
+                    if truthy(&value)? == seeking {
+                        return Ok(boolean_value(seeking));
+                    }
+                }
+                Ok(boolean_value(!seeking))
+            }
+            AggregateFunction::Not => {
+                expect_arity(arguments, 1, 1)?;
+                let value = self.evaluate_expression(&arguments[0], stack, cache)?;
+                Ok(boolean_value(!truthy(&value)?))
+            }
+            AggregateFunction::Concat => {
+                let values = self.evaluate_arguments(arguments, stack, cache)?;
+                let mut text = String::new();
+                for value in values {
+                    text.push_str(&value_as_text(value)?);
+                }
+                Ok(CellValue::Text(text))
+            }
+            AggregateFunction::Length => {
+                expect_arity(arguments, 1, 1)?;
+                let value = self.evaluate_expression(&arguments[0], stack, cache)?;
+                Ok(CellValue::Number(value_as_text(value)?.chars().count() as f64))
+            }
+            AggregateFunction::Absolute => {
+                expect_arity(arguments, 1, 1)?;
+                let value = self.evaluate_expression(&arguments[0], stack, cache)?;
+                Ok(CellValue::Number(self.number(value)?.abs()))
+            }
+            AggregateFunction::Round => {
+                expect_arity(arguments, 1, 2)?;
+                let value = self.evaluate_expression(&arguments[0], stack, cache)?;
+                let digits = if let Some(argument) = arguments.get(1) {
+                    let value = self.evaluate_expression(argument, stack, cache)?;
+                    self.number(value)?
+                } else {
+                    0.0
+                };
+                if digits.fract().abs() > f64::EPSILON || !(-15.0..=15.0).contains(&digits) {
+                    return Err(CellError::InvalidValue);
+                }
+                let factor = 10_f64.powi(digits as i32);
+                Ok(CellValue::Number((self.number(value)? * factor).round() / factor))
+            }
+            AggregateFunction::XLookup => self.evaluate_xlookup(arguments, stack, cache),
+            AggregateFunction::Sum
+            | AggregateFunction::Average
+            | AggregateFunction::Minimum
+            | AggregateFunction::Maximum
+            | AggregateFunction::Count
+            | AggregateFunction::CountA => {
+                let values = self.evaluate_arguments(arguments, stack, cache)?;
+                if function == AggregateFunction::CountA {
+                    return Ok(CellValue::Number(
+                        values.iter().filter(|value| !matches!(value, CellValue::Blank)).count() as f64,
+                    ));
+                }
+                let numbers = values
+                    .into_iter()
+                    .filter_map(|value| match value {
+                        CellValue::Number(number) => Some(Ok(number)),
+                        CellValue::Error(error) => Some(Err(error)),
+                        CellValue::Blank | CellValue::Text(_) => None,
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if function == AggregateFunction::Count {
+                    return Ok(CellValue::Number(numbers.len() as f64));
+                }
+                self.aggregate(function, &numbers).map(CellValue::Number)
+            }
+        }
+    }
+
+    fn evaluate_arguments(
+        &self,
+        arguments: &[Expr],
+        stack: &mut Vec<CellAddress>,
+        cache: &mut HashMap<CellAddress, CellValue>,
+    ) -> Result<Vec<CellValue>, CellError> {
+        let mut values = Vec::new();
+        for argument in arguments {
+            if let Expr::Range(range) = argument {
+                values.extend(range.addresses().map(|address| self.evaluate_cell(address, stack, cache)));
+            } else {
+                values.push(self.evaluate_expression(argument, stack, cache)?);
+            }
+        }
+        Ok(values)
+    }
+
+    fn evaluate_xlookup(
+        &self,
+        arguments: &[Expr],
+        stack: &mut Vec<CellAddress>,
+        cache: &mut HashMap<CellAddress, CellValue>,
+    ) -> Result<CellValue, CellError> {
+        expect_arity(arguments, 3, 4)?;
+        let needle = self.evaluate_expression(&arguments[0], stack, cache)?;
+        if let CellValue::Error(error) = &needle {
+            return Err(error.clone());
+        }
+        let (Expr::Range(lookup), Expr::Range(results)) = (&arguments[1], &arguments[2]) else {
+            return Err(CellError::InvalidValue);
+        };
+        let lookup_addresses = lookup.addresses().collect::<Vec<_>>();
+        let result_addresses = results.addresses().collect::<Vec<_>>();
+        if lookup_addresses.len() != result_addresses.len() {
+            return Err(CellError::InvalidValue);
+        }
+        for (lookup_address, result_address) in lookup_addresses.into_iter().zip(result_addresses) {
+            let candidate = self.evaluate_cell(lookup_address, stack, cache);
+            if let CellValue::Error(error) = &candidate {
+                return Err(error.clone());
+            }
+            if values_equal(&needle, &candidate) {
+                return Ok(self.evaluate_cell(result_address, stack, cache));
+            }
+        }
+        if let Some(fallback) = arguments.get(3) {
+            self.evaluate_expression(fallback, stack, cache)
+        } else {
+            Err(CellError::NotAvailable)
         }
     }
 
@@ -187,7 +422,77 @@ impl Worksheet {
             AggregateFunction::Average => Ok(numbers.iter().sum::<f64>() / numbers.len() as f64),
             AggregateFunction::Minimum => numbers.iter().copied().reduce(f64::min).ok_or(CellError::InvalidValue),
             AggregateFunction::Maximum => numbers.iter().copied().reduce(f64::max).ok_or(CellError::InvalidValue),
+            _ => Err(CellError::InvalidValue),
         }
+    }
+}
+
+fn collect_dependencies(expression: &Expr, dependencies: &mut HashSet<CellAddress>) {
+    match expression {
+        Expr::Reference(address) => {
+            dependencies.insert(*address);
+        }
+        Expr::Range(range) => dependencies.extend(range.addresses()),
+        Expr::Unary { operand, .. } => collect_dependencies(operand, dependencies),
+        Expr::Binary { left, right, .. } => {
+            collect_dependencies(left, dependencies);
+            collect_dependencies(right, dependencies);
+        }
+        Expr::Function { arguments, .. } => {
+            for argument in arguments {
+                collect_dependencies(argument, dependencies);
+            }
+        }
+        Expr::Number(_) | Expr::Text(_) => {}
+    }
+}
+
+fn expect_arity(arguments: &[Expr], minimum: usize, maximum: usize) -> Result<(), CellError> {
+    if (minimum..=maximum).contains(&arguments.len()) {
+        Ok(())
+    } else {
+        Err(CellError::InvalidValue)
+    }
+}
+
+fn truthy(value: &CellValue) -> Result<bool, CellError> {
+    match value {
+        CellValue::Blank => Ok(false),
+        CellValue::Number(number) => Ok(number.abs() >= f64::EPSILON),
+        CellValue::Text(text) => Ok(!text.is_empty()),
+        CellValue::Error(error) => Err(error.clone()),
+    }
+}
+
+fn boolean_value(value: bool) -> CellValue {
+    CellValue::Number(if value { 1.0 } else { 0.0 })
+}
+
+fn values_equal(left: &CellValue, right: &CellValue) -> bool {
+    match (left, right) {
+        (CellValue::Blank, CellValue::Blank) => true,
+        (CellValue::Number(left), CellValue::Number(right)) => left == right,
+        (CellValue::Text(left), CellValue::Text(right)) => left == right,
+        (CellValue::Error(left), CellValue::Error(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn compare_values(left: &CellValue, right: &CellValue) -> Option<Ordering> {
+    match (left, right) {
+        (CellValue::Number(left), CellValue::Number(right)) => left.partial_cmp(right),
+        (CellValue::Text(left), CellValue::Text(right)) => Some(left.cmp(right)),
+        (CellValue::Blank, CellValue::Blank) => Some(Ordering::Equal),
+        _ => None,
+    }
+}
+
+fn value_as_text(value: CellValue) -> Result<String, CellError> {
+    match value {
+        CellValue::Blank => Ok(String::new()),
+        CellValue::Number(number) => Ok(number.to_string()),
+        CellValue::Text(text) => Ok(text),
+        CellValue::Error(error) => Err(error),
     }
 }
 
@@ -274,5 +579,107 @@ mod tests {
         assert_eq!(sheet.value(address("A1")), CellValue::Error(CellError::CircularReference));
         assert_eq!(sheet.value(address("B1")), CellValue::Error(CellError::CircularReference));
         assert_eq!(sheet.value(address("C1")), CellValue::Error(CellError::CircularReference));
+    }
+
+    #[test]
+    fn comparisons_and_if_are_typed_and_lazy() {
+        let mut sheet = Worksheet::new("Model").unwrap();
+        sheet.set(address("A1"), "12");
+        sheet.set(address("B1"), "=IF(A1 >= 10, \"large\", \"small\")");
+        sheet.set(address("B2"), "=IF(A1 = 12, 42, 1 / 0)");
+        sheet.set(address("B3"), "=A1 <> 12");
+        sheet.set(address("B4"), "=\"alpha\" < \"beta\"");
+        assert_eq!(sheet.value(address("B1")), CellValue::Text("large".to_owned()));
+        assert_eq!(sheet.value(address("B2")), CellValue::Number(42.0));
+        assert_eq!(sheet.value(address("B3")), CellValue::Number(0.0));
+        assert_eq!(sheet.value(address("B4")), CellValue::Number(1.0));
+    }
+
+    #[test]
+    fn evaluates_text_conditional_count_and_numeric_functions() {
+        let mut sheet = Worksheet::new("Model").unwrap();
+        sheet.set(address("A1"), "north");
+        sheet.set(address("A2"), "3.14159");
+        sheet.set(address("A3"), "");
+        sheet.set(address("A4"), "-4");
+        sheet.set(address("B1"), "=CONCAT(A1, \"-\", ROUND(A2, 2))");
+        sheet.set(address("B2"), "=LEN(B1)");
+        sheet.set(address("B3"), "=ABS(A4)");
+        sheet.set(address("B4"), "=COUNT(A1:A4)");
+        sheet.set(address("B5"), "=COUNTA(A1:A4)");
+        sheet.set(address("B6"), "=AND(A2 > 3, NOT(A4 > 0))");
+        assert_eq!(sheet.value(address("B1")), CellValue::Text("north-3.14".to_owned()));
+        assert_eq!(sheet.value(address("B2")), CellValue::Number(10.0));
+        assert_eq!(sheet.value(address("B3")), CellValue::Number(4.0));
+        assert_eq!(sheet.value(address("B4")), CellValue::Number(2.0));
+        assert_eq!(sheet.value(address("B5")), CellValue::Number(3.0));
+        assert_eq!(sheet.value(address("B6")), CellValue::Number(1.0));
+    }
+
+    #[test]
+    fn xlookup_matches_exact_values_and_supports_a_lazy_fallback() {
+        let mut sheet = Worksheet::new("Model").unwrap();
+        sheet.set(address("A1"), "MSFT");
+        sheet.set(address("A2"), "META");
+        sheet.set(address("A3"), "AMZN");
+        sheet.set(address("B1"), "420");
+        sheet.set(address("B2"), "780");
+        sheet.set(address("B3"), "230");
+        sheet.set(address("C1"), "=XLOOKUP(\"META\", A1:A3, B1:B3)");
+        sheet.set(address("C2"), "=XLOOKUP(\"NVDA\", A1:A3, B1:B3, \"missing\")");
+        sheet.set(address("C3"), "=XLOOKUP(\"NVDA\", A1:A3, B1:B3)");
+        assert_eq!(sheet.value(address("C1")), CellValue::Number(780.0));
+        assert_eq!(sheet.value(address("C2")), CellValue::Text("missing".to_owned()));
+        assert_eq!(sheet.value(address("C3")), CellValue::Error(CellError::NotAvailable));
+    }
+
+    #[test]
+    fn edits_invalidate_only_the_changed_cell_and_transitive_dependents() {
+        let mut sheet = Worksheet::new("Model").unwrap();
+        sheet.set(address("A1"), "10");
+        sheet.set(address("B1"), "=A1 * 2");
+        sheet.set(address("C1"), "99");
+        sheet.values();
+        assert_eq!(sheet.evaluation.borrow().cache.len(), 3);
+
+        sheet.set(address("A1"), "20");
+        let evaluation = sheet.evaluation.borrow();
+        let cache = &evaluation.cache;
+        assert!(!cache.contains_key(&address("A1")));
+        assert!(!cache.contains_key(&address("B1")));
+        assert_eq!(cache.get(&address("C1")), Some(&CellValue::Number(99.0)));
+        drop(evaluation);
+
+        assert_eq!(sheet.value(address("B1")), CellValue::Number(40.0));
+        assert_eq!(sheet.value(address("C1")), CellValue::Number(99.0));
+    }
+
+    #[test]
+    fn changing_a_formula_rewires_its_dependency_graph() {
+        let mut sheet = Worksheet::new("Model").unwrap();
+        sheet.set(address("A1"), "10");
+        sheet.set(address("D1"), "40");
+        sheet.set(address("B1"), "=A1");
+        sheet.set(address("C1"), "=B1 + 1");
+        sheet.values();
+
+        sheet.set(address("B1"), "=D1");
+        assert_eq!(sheet.value(address("C1")), CellValue::Number(41.0));
+        sheet.set(address("A1"), "20");
+        assert_eq!(sheet.value(address("C1")), CellValue::Number(41.0));
+        sheet.set(address("D1"), "50");
+        assert_eq!(sheet.value(address("C1")), CellValue::Number(51.0));
+    }
+
+    #[test]
+    fn breaking_a_cached_cycle_invalidates_every_member() {
+        let mut sheet = Worksheet::new("Model").unwrap();
+        sheet.set(address("A1"), "=B1");
+        sheet.set(address("B1"), "=A1");
+        assert_eq!(sheet.value(address("A1")), CellValue::Error(CellError::CircularReference));
+
+        sheet.set(address("B1"), "5");
+        assert_eq!(sheet.value(address("A1")), CellValue::Number(5.0));
+        assert_eq!(sheet.value(address("B1")), CellValue::Number(5.0));
     }
 }
