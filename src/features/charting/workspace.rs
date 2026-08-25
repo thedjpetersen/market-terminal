@@ -180,7 +180,9 @@ impl ChartingWorkspace {
             .map(|line| {
                 Dataset::default()
                     .name(line.name.clone())
-                    .marker(symbols::Marker::Braille)
+                    // Half-blocks retain twice the vertical resolution of a
+                    // character grid without depending on Braille font coverage.
+                    .marker(symbols::Marker::HalfBlock)
                     .graph_type(GraphType::Line)
                     .style(line.color)
                     .data(&line.points)
