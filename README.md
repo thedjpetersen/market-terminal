@@ -45,6 +45,31 @@ cargo build --release
 - no proprietary Bloomberg code, assets, trademarks, or data
 - native Rust architecture with no browser assets
 
+## Architecture
+
+The codebase follows domain-driven, package-by-feature boundaries. Each
+workspace owns its domain model, query port, local interaction state, and
+terminal adapter. The application kernel knows only the `Workspace` contract
+and registry; infrastructure implements feature-owned ports and is wired at
+the composition root.
+
+```text
+src/
+├── app/             lifecycle, input modes, workspace contract and registry
+├── features/        bounded contexts packaged by feature
+│   ├── overview/    domain + port + workspace
+│   ├── markets/     domain + port + workspace
+│   ├── security/    domain + port + workspace
+│   ├── portfolio/   domain + port + workspace
+│   └── news/        domain + port + workspace
+├── infrastructure/ adapters implementing feature-owned ports
+├── ui/              theme, terminal chrome, and reusable visual primitives
+└── bootstrap.rs     dependency injection and feature registration
+```
+
+See [`docs/architecture.md`](docs/architecture.md) for dependency rules and
+the recipe for adding a new terminal function.
+
 ## License
 
 MIT © 2026 DJ Petersen.
