@@ -164,8 +164,8 @@ fn draw_glyph(
 ) {
     let bounds = glyph.px_bounds();
     glyph.draw(|x, y, coverage| {
-        let pixel_x = bounds.min.x + x as i32 + x_offset;
-        let pixel_y = bounds.min.y + y as i32;
+        let pixel_x = bounds.min.x.floor() as i32 + x as i32 + x_offset;
+        let pixel_y = bounds.min.y.floor() as i32 + y as i32;
         if pixel_x < 0 || pixel_y < 0 {
             return;
         }
