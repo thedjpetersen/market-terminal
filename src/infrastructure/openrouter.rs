@@ -54,7 +54,10 @@ impl OpenRouterGateway {
         let workspace_catalog = request.available_workspaces.join(", ");
         let mut messages = vec![json!({
             "role": "system",
-            "content": format!("{SYSTEM_PROMPT}\nAvailable workspaces: {workspace_catalog}")
+            "content": format!(
+                "{SYSTEM_PROMPT}\nCurrent workspace: {}\nWorkspace order: {workspace_catalog}",
+                request.active_workspace
+            )
         })];
         messages.extend(request.messages.into_iter().map(|message| {
             let role = match message.role {
@@ -313,6 +316,7 @@ mod tests {
             messages: vec![crate::features::assistant::domain::AssistantMessage::user(
                 "show markets",
             )],
+            active_workspace: "overview".to_owned(),
             available_workspaces: vec!["overview".to_owned(), "markets".to_owned()],
         });
 

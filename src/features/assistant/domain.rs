@@ -36,6 +36,7 @@ pub enum UiAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssistantRequest {
     pub messages: Vec<AssistantMessage>,
+    pub active_workspace: String,
     pub available_workspaces: Vec<String>,
 }
 

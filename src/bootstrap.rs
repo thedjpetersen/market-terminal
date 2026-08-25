@@ -3,18 +3,23 @@ use std::sync::Arc;
 use crate::{
     app::{App, WorkspaceRegistry},
     features::{
+        alerts::{AlertsQuery, AlertsWorkspace},
         assistant::{AssistantGateway, AssistantWorkspace},
+        charting::{ChartHistoryQuery, ChartingWorkspace},
         instrument::{InstrumentSearch, InstrumentSearchWorkspace},
+        market_data::MarketDataQuery,
         markets::{MarketsQuery, MarketsWorkspace},
         news::{NewsQuery, NewsWorkspace},
         overview::{OverviewQuery, OverviewWorkspace, ID as OVERVIEW},
         portfolio::{PortfolioQuery, PortfolioWorkspace},
         security::{SecurityQuery, SecurityWorkspace},
         spreadsheet::{SpreadsheetMarketData, SpreadsheetWorkspace},
+        watchlist::{WatchlistCatalog, WatchlistWorkspace},
     },
     infrastructure::{
-        DemoData, DemoInstrumentSearch, DemoSpreadsheetMarketData, OpenRouterConfig,
-        OpenRouterGateway,
+        DemoAlertsReplay, DemoChartHistory, DemoData, DemoInstrumentSearch,
+        DemoMarketDataReplay, DemoSpreadsheetMarketData, DemoWatchlistCatalog,
+        OpenRouterConfig, OpenRouterGateway,
     },
 };
 
@@ -30,6 +35,10 @@ pub fn demo_app() -> App {
     let assistant_gateway: Arc<dyn AssistantGateway> =
         Arc::new(OpenRouterGateway::new(OpenRouterConfig::from_env()));
     let instrument_search: Arc<dyn InstrumentSearch> = Arc::new(DemoInstrumentSearch);
+    let chart_history: Arc<dyn ChartHistoryQuery> = Arc::new(DemoChartHistory);
+    let market_data: Arc<dyn MarketDataQuery> = Arc::new(DemoMarketDataReplay::new());
+    let watchlist_catalog: Arc<dyn WatchlistCatalog> = Arc::new(DemoWatchlistCatalog);
+    let alerts_query: Arc<dyn AlertsQuery> = Arc::new(DemoAlertsReplay::new());
 
     let workspaces = WorkspaceRegistry::new(vec![
         Box::new(OverviewWorkspace::new(overview_query)),
@@ -39,7 +48,10 @@ pub fn demo_app() -> App {
                 "overview".to_owned(),
                 "assistant".to_owned(),
                 "instrument_search".to_owned(),
+                "watchlist".to_owned(),
                 "markets".to_owned(),
+                "charting".to_owned(),
+                "alerts".to_owned(),
                 "security".to_owned(),
                 "portfolio".to_owned(),
                 "news".to_owned(),
@@ -47,7 +59,10 @@ pub fn demo_app() -> App {
             ],
         )),
         Box::new(InstrumentSearchWorkspace::new(instrument_search)),
+        Box::new(WatchlistWorkspace::new(market_data, watchlist_catalog)),
         Box::new(MarketsWorkspace::new(markets_query)),
+        Box::new(ChartingWorkspace::new(chart_history)),
+        Box::new(AlertsWorkspace::new(alerts_query)),
         Box::new(SecurityWorkspace::new(security_query)),
         Box::new(PortfolioWorkspace::new(portfolio_query)),
         Box::new(NewsWorkspace::new(news_query)),

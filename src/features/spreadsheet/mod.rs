@@ -3,7 +3,7 @@ pub mod domain;
 mod ports;
 mod presentation;
 
-pub use application::{CellView, Spreadsheet, SpreadsheetError};
+pub use application::{CellView, CsvError, Spreadsheet, SpreadsheetError};
 pub use ports::{MarketDataPoint, MarketDataRequest, SpreadsheetMarketData};
 pub use presentation::SpreadsheetWorkspace;
 

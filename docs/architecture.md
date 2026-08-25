@@ -10,7 +10,7 @@ renderer.
 ```text
 bootstrap ──▶ app kernel
     │            ▲
-    ├────────▶ features ──▶ shared UI primitives
+    ├────────▶ features ──▶ foundation + shared UI primitives
     │              ▲
     └────▶ infrastructure adapters
 ```
@@ -19,6 +19,9 @@ bootstrap ──▶ app kernel
   contract. It has no market or portfolio business rules.
 - `features/<name>` is a bounded context. It owns its domain types, outbound
   query port, local UI state, and terminal workspace adapter.
+- `foundation` contains only stable, narrowly shared value objects. Canonical
+  instrument identity lives here; provider quote schemas and feature state do
+  not.
 - `infrastructure` implements feature-owned ports. A live adapter can replace
   `DemoData` without changing feature code.
 - `ui` contains the design system only: theme tokens, chrome, tables, panels,
@@ -45,6 +48,18 @@ on that concrete adapter.
 
 No root router match, shared screen state, or central data trait needs to be
 edited. The registry validates duplicate IDs and hotkeys at startup.
+
+## Cross-feature events
+
+The application kernel owns an in-process, typed event bus. Subscriptions are
+topic-filtered and bounded: a slow consumer drops its oldest pending envelope
+and exposes a drop count instead of allowing an unbounded queue to stall the
+terminal. Subscriptions can be cancelled explicitly and each envelope carries
+a monotonic sequence number.
+
+The bus does not own business schemas. A publishing feature defines its event
+type and topic; consumers downcast the typed envelope at their boundary. This
+keeps transport mechanics in the kernel while preserving domain ownership.
 
 ## AI command plane
 
@@ -73,8 +88,8 @@ The next structural steps are intentionally additive:
 
 - split `DemoData` into live quote, reference-data, news, and portfolio
   adapters;
-- add an internal event bus for streaming updates and cross-feature intents;
-- evolve `AppIntent` into a bounded event bus with acknowledgement and tracing;
+- connect streaming adapters to the bounded event bus with acknowledgement and
+  tracing where delivery guarantees require it;
 - add caching, retries, entitlements, and observability as infrastructure
   decorators around feature ports;
 - move bounded contexts into workspace crates when build times or team

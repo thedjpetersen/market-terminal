@@ -1,12 +1,14 @@
+mod events;
 mod input;
 mod workspace;
 
 use crossterm::event::KeyEvent;
 
 pub use input::InputMode;
+pub use events::{EventBus, EventEnvelope, EventTopic, SubscriptionId, SubscriptionMetrics};
 pub use workspace::{
     AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor, WorkspaceId,
-    WorkspaceNavigationItem, WorkspaceRegistry,
+    ShellContext, WorkspaceNavigationItem, WorkspaceRegistry,
 };
 
 pub struct App {
@@ -15,17 +17,20 @@ pub struct App {
     pub(crate) input_mode: InputMode,
     pub(crate) ticks: u64,
     pub(crate) workspaces: WorkspaceRegistry,
+    events: EventBus,
     should_quit: bool,
 }
 
 impl App {
-    pub fn new(workspaces: WorkspaceRegistry, initial_workspace: WorkspaceId) -> Self {
+    pub fn new(mut workspaces: WorkspaceRegistry, initial_workspace: WorkspaceId) -> Self {
+        workspaces.update_shell_context(initial_workspace);
         Self {
             active_workspace: initial_workspace,
             command: String::new(),
             input_mode: InputMode::Navigation,
             ticks: 0,
             workspaces,
+            events: EventBus::default(),
             should_quit: false,
         }
     }
@@ -50,12 +55,18 @@ impl App {
         self.should_quit
     }
 
+    pub fn events(&self) -> &EventBus { &self.events }
+
+    pub fn events_mut(&mut self) -> &mut EventBus { &mut self.events }
+
     pub fn advance_tick(&mut self) {
         self.ticks = self.ticks.wrapping_add(1);
+        self.workspaces.update_shell_context(self.active_workspace);
         let intents = self.workspaces.poll_intents();
         for intent in intents {
             self.apply_intent(intent);
         }
+        self.workspaces.update_shell_context(self.active_workspace);
     }
 
     /// Applies a key press to application state without performing terminal I/O.

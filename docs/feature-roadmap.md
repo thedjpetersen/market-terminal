@@ -23,8 +23,21 @@ move to its own crate later without changing its public vocabulary.
 - **Complete:** first Instrument Master/Search slice with canonical IDs, ranked
   symbol and company lookup, typed instrument kinds, and navigation from search
   results into Security Research.
-- **Next:** shared quote/history contracts and a configurable market monitor,
-  followed by persistent layouts and spreadsheet save/export.
+- **Complete:** bounded kernel event bus with typed envelopes, topic filters,
+  queue limits, cancellation, lag metrics, and a foundation-owned
+  `InstrumentId`.
+- **Complete:** first Market Data/Watchlist slice with typed quote/history
+  contracts, explicit quality and entitlement states, configurable monitor
+  columns and sorting, security drill-through, and deterministic replay.
+- **Complete:** first Charting slice with price/volume series, periods,
+  normalization, comparisons, moving averages, and deterministic history.
+- **Complete:** Spreadsheet multi-sheet management, atomic undo/redo, multi-cell
+  edits, and deterministic formula-preserving CSV import/export.
+- **Complete:** first Alerts slice with price/move rules, deterministic replay,
+  consecutive-match debouncing, idempotency, enable/disable, acknowledgement,
+  audit state, and explicitly simulated local delivery.
+- **Next:** persistence, incremental spreadsheet recalculation, richer formulas,
+  and live provider adapters.
 
 ## Product principles
 

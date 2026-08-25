@@ -49,6 +49,12 @@ pub struct WorkspaceNavigationItem {
     pub hotkey: Option<char>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellContext {
+    pub active_workspace: WorkspaceId,
+    pub workspace_order: Vec<WorkspaceId>,
+}
+
 /// The only application-level mutations a feature may request.
 ///
 /// Keeping these intents small and validated at the registry boundary lets
@@ -84,6 +90,10 @@ pub trait Workspace: Send {
 
     /// Polls asynchronous feature work and returns validated shell requests.
     fn poll_intents(&mut self) -> Vec<AppIntent> { Vec::new() }
+
+    /// Supplies a read-only snapshot of shell focus and layout. Features may
+    /// use this as model/view context but cannot mutate it directly.
+    fn update_shell_context(&mut self, _context: &ShellContext) {}
 }
 
 pub struct WorkspaceRegistry {
@@ -163,6 +173,16 @@ impl WorkspaceRegistry {
             .iter_mut()
             .flat_map(|workspace| workspace.poll_intents())
             .collect()
+    }
+
+    pub fn update_shell_context(&mut self, active_workspace: WorkspaceId) {
+        let context = ShellContext {
+            active_workspace,
+            workspace_order: self.entries.iter().map(|entry| entry.descriptor().id).collect(),
+        };
+        for workspace in &mut self.entries {
+            workspace.update_shell_context(&context);
+        }
     }
 
     /// Resolves a model/user-facing target against IDs, labels, and exact

@@ -17,9 +17,13 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 - Spreadsheet — formulas, ranges, dependency evaluation, and market refresh
 - AI — OpenRouter-backed analysis and natural-language workspace control
 - Find — canonical instrument identity and ranked symbol/company discovery
+- Monitor — configurable watchlists, sorting, data-quality states, and replay
+- Chart — price/volume history, comparisons, normalization, and moving averages
+- Alerts — idempotent, debounced local rules with acknowledgement and audit state
 
-Use `G`, `M`, `S`, `P`, `N`, `A`, and `F` to navigate, or type a function into
-the command bar. All displayed market values are deterministic demo data.
+Use the labeled navigation keys, or type a function such as `MON`, `CHART`,
+`SHEET`, `FIND`, or `ASK` into the command bar. All displayed market values are
+deterministic demo data.
 
 ## Run locally
 
@@ -84,9 +88,13 @@ src/
 │   ├── security/    domain + port + workspace
 │   ├── portfolio/   domain + port + workspace
 │   ├── news/        domain + port + workspace
-│   ├── instrument/  canonical identity + search port + discovery workspace
+│   ├── instrument/  search port + discovery workspace
+│   ├── market_data/ typed quote/history read contracts
+│   ├── watchlist/   monitor model + catalog port + workspace
+│   ├── charting/    chart specification + history port + workspace
 │   ├── spreadsheet/ workbook domain + application + presentation
 │   └── assistant/   AI conversation domain + provider port + workspace
+├── foundation/      narrowly shared value objects such as InstrumentId
 ├── infrastructure/ adapters implementing feature-owned ports
 ├── ui/              theme, terminal chrome, and reusable visual primitives
 └── bootstrap.rs     dependency injection and feature registration

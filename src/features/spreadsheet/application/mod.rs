@@ -1,3 +1,3 @@
 mod spreadsheet;
 
-pub use spreadsheet::{CellView, Spreadsheet, SpreadsheetError};
+pub use spreadsheet::{CellView, CsvError, Spreadsheet, SpreadsheetError};

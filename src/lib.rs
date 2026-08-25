@@ -6,6 +6,7 @@
 pub mod app;
 pub mod bootstrap;
 pub mod features;
+pub mod foundation;
 pub mod runtime;
 
 mod infrastructure;
