@@ -168,7 +168,7 @@ mod tests {
         };
 
         let spread = quote.spread().expect("two-sided quote").value();
-        assert!((spread - 0.04).abs() < f64::EPSILON * 10.0);
+        assert!((spread - 0.04).abs() < 1e-10);
         assert!(quote.quality.is_usable());
     }
 

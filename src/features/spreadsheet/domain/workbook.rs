@@ -165,6 +165,7 @@ mod tests {
         let mut workbook = Workbook::new();
         assert_eq!(workbook.remove_active_sheet(), Err(WorkbookError::CannotRemoveLastSheet));
         workbook.add_sheet("Model").unwrap();
+        workbook.select_sheet("Model").unwrap();
         assert!(matches!(
             workbook.rename_active_sheet("sheet1"),
             Err(WorkbookError::DuplicateSheetName(_))
