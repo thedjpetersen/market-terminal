@@ -27,6 +27,35 @@ use super::{
 const SERIES_COLORS: [Color; 4] = [CYAN, YELLOW, GREEN, RED];
 const DEFAULT_MOVING_AVERAGE: Study = Study::SimpleMovingAverage { window: 20 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChartLineMode {
+    Smooth,
+    Compatible,
+}
+
+impl ChartLineMode {
+    const fn marker(self) -> symbols::Marker {
+        match self {
+            Self::Smooth => symbols::Marker::Braille,
+            Self::Compatible => symbols::Marker::HalfBlock,
+        }
+    }
+
+    const fn toggled(self) -> Self {
+        match self {
+            Self::Smooth => Self::Compatible,
+            Self::Compatible => Self::Smooth,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Smooth => "SMOOTH",
+            Self::Compatible => "COMPAT",
+        }
+    }
+}
+
 struct PreparedLine {
     name: String,
     points: Vec<(f64, f64)>,
@@ -55,6 +84,7 @@ pub struct ChartingWorkspace {
     specification: ChartSpecification,
     status: String,
     cursor_offset: usize,
+    line_mode: ChartLineMode,
 }
 
 impl ChartingWorkspace {
@@ -64,6 +94,7 @@ impl ChartingWorkspace {
             specification: ChartSpecification::new(ChartInstrument::from_terminal_subject("AAPL")),
             status: "READY · [/] PERIOD · N NORMALIZE · V VOLUME · S SMA".to_owned(),
             cursor_offset: 0,
+            line_mode: ChartLineMode::Smooth,
         }
     }
 
@@ -140,9 +171,10 @@ impl ChartingWorkspace {
                 Span::styled(format!("{:+.2}%  ", chart.change_percent), change_style),
                 Span::styled(
                     format!(
-                        "{} · {}  |  COMPARE {}  |  {}  |  {} · {}",
+                        "{} · {} · {} LINES  |  COMPARE {}  |  {}  |  {} · {}",
                         self.specification.period.label(),
                         self.specification.normalization.label(),
+                        self.line_mode.label(),
                         comparisons,
                         studies,
                         chart.quality,
@@ -180,9 +212,7 @@ impl ChartingWorkspace {
             .map(|line| {
                 Dataset::default()
                     .name(line.name.clone())
-                    // Half-blocks retain twice the vertical resolution of a
-                    // character grid without depending on Braille font coverage.
-                    .marker(symbols::Marker::HalfBlock)
+                    .marker(self.line_mode.marker())
                     .graph_type(GraphType::Line)
                     .style(line.color)
                     .data(&line.points)
@@ -400,6 +430,11 @@ impl Workspace for ChartingWorkspace {
                 self.status = "INSPECT · LATEST OBSERVATION".to_owned();
                 true
             }
+            KeyCode::Char('l') => {
+                self.line_mode = self.line_mode.toggled();
+                self.status = format!("LINE MODE · {}", self.line_mode.label());
+                true
+            }
             _ => false,
         }
     }
@@ -458,7 +493,9 @@ impl Workspace for ChartingWorkspace {
                 Span::styled(" ,/. ", AMBER),
                 Span::styled("INSPECT  ", MUTED),
                 Span::styled(" E ", AMBER),
-                Span::styled("LATEST", MUTED),
+                Span::styled("LATEST  ", MUTED),
+                Span::styled(" L ", AMBER),
+                Span::styled("LINE MODE", MUTED),
             ]))
             .style(Style::new().fg(INK)),
             sections[2],
@@ -826,6 +863,14 @@ mod tests {
         assert_eq!(workspace.cursor_offset, 1);
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)));
         assert_eq!(workspace.cursor_offset, 0);
+    }
+
+    #[test]
+    fn line_mode_can_fall_back_for_limited_terminal_fonts() {
+        let mut workspace = ChartingWorkspace::new(Arc::new(StubHistory));
+        assert_eq!(workspace.line_mode.label(), "SMOOTH");
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE)));
+        assert_eq!(workspace.line_mode.label(), "COMPAT");
     }
 
     #[test]

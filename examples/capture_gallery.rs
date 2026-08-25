@@ -150,6 +150,9 @@ fn draw_symbol(
     color: Rgba<u8>,
     bold: bool,
 ) {
+    if draw_braille(image, symbol, x, y, color) {
+        return;
+    }
     let scale = PxScale::from(FONT_SIZE);
     let scaled = font.as_scaled(scale);
     let baseline = y as f32 + (CELL_HEIGHT as f32 - scaled.height()) / 2.0 + scaled.ascent();
@@ -166,6 +169,43 @@ fn draw_symbol(
         }
         cursor += advance;
     }
+}
+
+/// Rasterizes Unicode Braille directly so generated captures do not depend on
+/// whether the selected text font happens to contain the Braille block.
+fn draw_braille(
+    image: &mut RgbaImage,
+    symbol: &str,
+    x: u32,
+    y: u32,
+    color: Rgba<u8>,
+) -> bool {
+    let mut characters = symbol.chars();
+    let Some(character) = characters.next() else { return false };
+    if characters.next().is_some() || !(('\u{2800}'..='\u{28ff}').contains(&character)) {
+        return false;
+    }
+
+    let pattern = character as u32 - 0x2800;
+    let dots = [
+        (0_u32, 0_u32, 0_u32),
+        (1, 0, 1),
+        (2, 0, 2),
+        (3, 1, 0),
+        (4, 1, 1),
+        (5, 1, 2),
+        (6, 0, 3),
+        (7, 1, 3),
+    ];
+    for (bit, column, row) in dots {
+        if pattern & (1 << bit) == 0 {
+            continue;
+        }
+        let dot_x = x + 2 + column * 4;
+        let dot_y = y + 2 + row * 4;
+        fill_rect(image, dot_x, dot_y, 2, 2, color);
+    }
+    true
 }
 
 fn draw_glyph(
