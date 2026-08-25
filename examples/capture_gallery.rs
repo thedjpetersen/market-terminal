@@ -39,8 +39,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         app.handle_key(key(KeyCode::Char('r')));
         app.handle_key(key(KeyCode::Char('r')));
     })?;
-    capture(&output, &font, "assistant", |app| command(app, "AI"))?;
-    capture(&output, &font, "find", |app| command(app, "FIND NVIDIA"))?;
+    capture(&output, &font, "assistant", |app| {
+        command(app, "AI");
+        type_text(app, "Bring the monitor forward and compare AAPL with SPY");
+    })?;
+    capture(&output, &font, "find", |app| command(app, "FIND US"))?;
     capture(&output, &font, "security", |app| command(app, "AAPL US"))?;
     Ok(())
 }
@@ -70,6 +73,12 @@ fn command(app: &mut App, value: &str) {
         app.handle_key(key(KeyCode::Char(character)));
     }
     app.handle_key(key(KeyCode::Enter));
+}
+
+fn type_text(app: &mut App, value: &str) {
+    for character in value.chars() {
+        app.handle_key(key(KeyCode::Char(character)));
+    }
 }
 
 fn key(code: KeyCode) -> KeyEvent {
