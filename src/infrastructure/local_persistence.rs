@@ -40,10 +40,6 @@ impl LocalPersistence {
         Self { root: root.into(), operation: Mutex::new(()) }
     }
 
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
     fn session_path(&self) -> PathBuf {
         self.root.join("session.json")
     }
