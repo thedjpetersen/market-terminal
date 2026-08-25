@@ -159,11 +159,10 @@ impl Workspace for AssistantWorkspace {
                 self.messages.truncate(1);
             }
             KeyCode::Char(character)
-                if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                    && self.input.len() < MAX_INPUT_BYTES =>
             {
-                if self.input.len() < MAX_INPUT_BYTES {
-                    self.input.push(character);
-                }
+                self.input.push(character);
             }
             _ => {}
         }
