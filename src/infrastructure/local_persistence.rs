@@ -257,7 +257,7 @@ fn read_bounded(path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
         Err(error) => return Err(error.into()),
     };
     let mut bytes = Vec::new();
-    file.by_ref()
+    Read::by_ref(&mut file)
         .take((MAX_ENVELOPE_BYTES + 1) as u64)
         .read_to_end(&mut bytes)?;
     if bytes.len() > MAX_ENVELOPE_BYTES {
