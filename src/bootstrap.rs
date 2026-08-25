@@ -6,6 +6,7 @@ use crate::{
         alerts::{AlertsQuery, AlertsWorkspace},
         assistant::{AssistantGateway, AssistantWorkspace},
         charting::{ChartHistoryQuery, ChartingWorkspace},
+        chat::{ChatGateway, ChatWorkspace},
         instrument::{InstrumentSearch, InstrumentSearchWorkspace},
         market_data::MarketDataQuery,
         markets::{MarketsQuery, MarketsWorkspace},
@@ -17,13 +18,17 @@ use crate::{
         watchlist::{WatchlistCatalog, WatchlistWorkspace},
     },
     infrastructure::{
-        DemoAlertsReplay, DemoChartHistory, DemoData, DemoInstrumentSearch,
-        DemoMarketDataReplay, DemoSpreadsheetMarketData, DemoWatchlistCatalog,
+        DemoAlertsReplay, DemoChartHistory, DemoChatGateway, DemoData, DemoInstrumentSearch,
+        DemoMarketDataReplay, DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway,
         LocalPersistence, OpenRouterConfig, OpenRouterGateway,
     },
 };
 
 pub fn demo_app() -> App {
+    build_app(Arc::new(DemoChatGateway::new()))
+}
+
+fn build_app(chat_gateway: Arc<dyn ChatGateway>) -> App {
     let data = Arc::new(DemoData);
     let overview_query: Arc<dyn OverviewQuery> = data.clone();
     let markets_query: Arc<dyn MarketsQuery> = data.clone();
@@ -51,6 +56,7 @@ pub fn demo_app() -> App {
                 "watchlist".to_owned(),
                 "markets".to_owned(),
                 "charting".to_owned(),
+                "chat".to_owned(),
                 "alerts".to_owned(),
                 "security".to_owned(),
                 "portfolio".to_owned(),
@@ -62,6 +68,7 @@ pub fn demo_app() -> App {
         Box::new(WatchlistWorkspace::new(market_data, watchlist_catalog)),
         Box::new(MarketsWorkspace::new(markets_query)),
         Box::new(ChartingWorkspace::new(chart_history)),
+        Box::new(ChatWorkspace::new(chat_gateway)),
         Box::new(AlertsWorkspace::new(alerts_query)),
         Box::new(SecurityWorkspace::new(security_query)),
         Box::new(PortfolioWorkspace::new(portfolio_query)),
@@ -74,7 +81,7 @@ pub fn demo_app() -> App {
 /// Builds the interactive application with durable shell state enabled.
 pub fn persistent_app() -> App {
     let repository = Arc::new(LocalPersistence::new(default_state_directory()));
-    demo_app().with_session_repository(repository)
+    build_app(Arc::new(IrcChatGateway::from_env())).with_session_repository(repository)
 }
 
 pub fn default_state_directory() -> PathBuf {

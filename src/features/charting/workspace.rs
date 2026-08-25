@@ -6,7 +6,7 @@ use ratatui::{
     style::{Color, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Axis, Block, Borders, Chart, Dataset, GraphType, Paragraph, Wrap},
+    widgets::{Axis, Block, Borders, Chart, Dataset, GraphType, Paragraph, Sparkline, Wrap},
     Frame,
 };
 
@@ -35,10 +35,15 @@ struct PreparedLine {
 
 struct PreparedChart {
     lines: Vec<PreparedLine>,
-    volume: Vec<(f64, f64)>,
+    primary_values: Vec<f64>,
+    primary_closes: Vec<f64>,
+    volume_bars: Vec<u64>,
     x_max: f64,
     y_bounds: [f64; 2],
-    volume_max: f64,
+    volume_max: u64,
+    session_high: f64,
+    session_low: f64,
+    average_volume: u64,
     last: f64,
     change_percent: f64,
     quality: &'static str,
@@ -49,6 +54,7 @@ pub struct ChartingWorkspace {
     query: Arc<dyn ChartHistoryQuery>,
     specification: ChartSpecification,
     status: String,
+    cursor_offset: usize,
 }
 
 impl ChartingWorkspace {
@@ -57,6 +63,7 @@ impl ChartingWorkspace {
             query,
             specification: ChartSpecification::new(ChartInstrument::from_terminal_subject("AAPL")),
             status: "READY · [/] PERIOD · N NORMALIZE · V VOLUME · S SMA".to_owned(),
+            cursor_offset: 0,
         }
     }
 
@@ -151,7 +158,23 @@ impl ChartingWorkspace {
     }
 
     fn render_price_chart(&self, frame: &mut Frame, area: Rect, chart: &PreparedChart) {
-        let datasets = chart
+        let columns = if area.width >= 110 {
+            Layout::horizontal([Constraint::Percentage(78), Constraint::Percentage(22)]).split(area)
+        } else {
+            Layout::horizontal([Constraint::Percentage(100), Constraint::Length(0)]).split(area)
+        };
+        let selected_index = chart
+            .primary_values
+            .len()
+            .saturating_sub(1)
+            .saturating_sub(self.cursor_offset.min(chart.primary_values.len().saturating_sub(1)));
+        let selected_x = selected_index as f64;
+        let cursor = [
+            (selected_x, chart.y_bounds[0]),
+            (selected_x, chart.y_bounds[1]),
+        ];
+        let zero_baseline = [(0.0, 0.0), (chart.x_max, 0.0)];
+        let mut datasets = chart
             .lines
             .iter()
             .map(|line| {
@@ -163,10 +186,32 @@ impl ChartingWorkspace {
                     .data(&line.points)
             })
             .collect::<Vec<_>>();
+        if self.specification.normalization == Normalization::PercentChange {
+            datasets.push(
+                Dataset::default()
+                    .name("0% BASE")
+                    .marker(symbols::Marker::Dot)
+                    .graph_type(GraphType::Line)
+                    .style(MUTED)
+                    .data(&zero_baseline),
+            );
+        }
+        datasets.push(
+            Dataset::default()
+                .name("INSPECT")
+                .marker(symbols::Marker::Dot)
+                .graph_type(GraphType::Line)
+                .style(AMBER)
+                .data(&cursor),
+        );
         let middle = (chart.y_bounds[0] + chart.y_bounds[1]) / 2.0;
+        let lower_middle = (chart.y_bounds[0] + middle) / 2.0;
+        let upper_middle = (middle + chart.y_bounds[1]) / 2.0;
         let y_labels = [
             format!("{:.2}", chart.y_bounds[0]),
+            format!("{lower_middle:.2}"),
             format!("{middle:.2}"),
+            format!("{upper_middle:.2}"),
             format!("{:.2}", chart.y_bounds[1]),
         ];
         let axis_title = match self.specification.normalization {
@@ -188,25 +233,80 @@ impl ChartingWorkspace {
                     .labels(y_labels)
                     .style(AMBER),
             );
-        frame.render_widget(price_chart, area);
+        frame.render_widget(price_chart, columns[0]);
+
+        if columns[1].width > 0 {
+            self.render_statistics(frame, columns[1], chart, selected_index);
+        }
     }
 
     fn render_volume_chart(&self, frame: &mut Frame, area: Rect, chart: &PreparedChart) {
-        let volume = Chart::new(vec![Dataset::default()
-            .name(format!("{} VOLUME", self.specification.primary.symbol))
-            .marker(symbols::Marker::Braille)
-            .graph_type(GraphType::Line)
+        let volume = Sparkline::default()
+            .data(&chart.volume_bars)
+            .max(chart.volume_max)
             .style(AMBER)
-            .data(&chart.volume)])
-        .block(terminal_block("VOL", "VOLUME PROFILE"))
-        .x_axis(Axis::default().bounds([0.0, chart.x_max]).style(MUTED))
-        .y_axis(
-            Axis::default()
-                .bounds([0.0, chart.volume_max])
-                .labels(["0", "VOLUME"])
-                .style(MUTED),
-        );
+            .block(terminal_block("VOL", "VOLUME HISTOGRAM"));
         frame.render_widget(volume, area);
+    }
+
+    fn render_statistics(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        chart: &PreparedChart,
+        selected_index: usize,
+    ) {
+        let selected_value = chart.primary_values.get(selected_index).copied().unwrap_or_default();
+        let selected_close = chart.primary_closes.get(selected_index).copied().unwrap_or_default();
+        let observation = selected_index + 1;
+        let total = chart.primary_values.len();
+        let mut lines = vec![
+            Line::from(Span::styled("INSPECTION", AMBER)),
+            Line::from(Span::styled(format!("OBS  {observation}/{total}"), MUTED)),
+            Line::from(Span::styled(format!("PX   {selected_close:.2}"), CYAN)),
+            Line::from(Span::styled(format!("PLOT {selected_value:+.2}"), INK)),
+            Line::from(""),
+            Line::from(Span::styled("RANGE", AMBER)),
+            Line::from(Span::styled(format!("HIGH {:.2}", chart.session_high), GREEN)),
+            Line::from(Span::styled(format!("LOW  {:.2}", chart.session_low), RED)),
+            Line::from(Span::styled(
+                format!("SPAN {:.2}", chart.session_high - chart.session_low),
+                MUTED,
+            )),
+            Line::from(Span::styled(
+                format!(
+                    "VOL  {}",
+                    compact_volume(*chart.volume_bars.get(selected_index).unwrap_or(&0))
+                ),
+                AMBER,
+            )),
+            Line::from(Span::styled(
+                format!("AVG  {}", compact_volume(chart.average_volume)),
+                MUTED,
+            )),
+            Line::from(""),
+            Line::from(Span::styled("SERIES", AMBER)),
+        ];
+        lines.extend(chart.lines.iter().map(|line| {
+            let value = line
+                .points
+                .iter()
+                .find(|point| point.0 as usize == selected_index)
+                .map(|point| point.1);
+            Line::from(vec![
+                Span::styled("■ ", line.color),
+                Span::styled(format!("{:<7}", line.name), MUTED),
+                Span::styled(
+                    value.map(|value| format!("{value:+.2}"))
+                        .unwrap_or_else(|| "—".to_owned()),
+                    line.color,
+                ),
+            ])
+        }));
+        frame.render_widget(
+            Paragraph::new(lines).block(terminal_block("STAT", "MARKET PROFILE")),
+            area,
+        );
     }
 
     fn render_error(&self, frame: &mut Frame, area: Rect, error: &HistoryError) {
@@ -241,6 +341,7 @@ impl Workspace for ChartingWorkspace {
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
         apply_chart_command(&mut self.specification, &invocation.args, &mut self.status);
+        self.cursor_offset = 0;
         true
     }
 
@@ -248,11 +349,13 @@ impl Workspace for ChartingWorkspace {
         match key.code {
             KeyCode::Right | KeyCode::Char(']') => {
                 self.specification.period = self.specification.period.next();
+                self.cursor_offset = 0;
                 self.status = format!("PERIOD · {}", self.specification.period.label());
                 true
             }
             KeyCode::Left | KeyCode::Char('[') => {
                 self.specification.period = self.specification.period.previous();
+                self.cursor_offset = 0;
                 self.status = format!("PERIOD · {}", self.specification.period.label());
                 true
             }
@@ -278,6 +381,21 @@ impl Workspace for ChartingWorkspace {
             KeyCode::Char('x') => {
                 self.specification.comparisons.clear();
                 self.status = "COMPARISONS CLEARED".to_owned();
+                true
+            }
+            KeyCode::Char(',') => {
+                self.cursor_offset = self.cursor_offset.saturating_add(1).min(10_000);
+                self.status = format!("INSPECT · {} OBSERVATION(S) BACK", self.cursor_offset);
+                true
+            }
+            KeyCode::Char('.') => {
+                self.cursor_offset = self.cursor_offset.saturating_sub(1);
+                self.status = format!("INSPECT · {} OBSERVATION(S) BACK", self.cursor_offset);
+                true
+            }
+            KeyCode::Char('e') => {
+                self.cursor_offset = 0;
+                self.status = "INSPECT · LATEST OBSERVATION".to_owned();
                 true
             }
             _ => false,
@@ -335,8 +453,10 @@ impl Workspace for ChartingWorkspace {
                 Span::styled("SMA  ", MUTED),
                 Span::styled(" C ", AMBER),
                 Span::styled("COMPARE SPY  ", MUTED),
-                Span::styled(" X ", AMBER),
-                Span::styled("CLEAR COMPARISONS", MUTED),
+                Span::styled(" ,/. ", AMBER),
+                Span::styled("INSPECT  ", MUTED),
+                Span::styled(" E ", AMBER),
+                Span::styled("LATEST", MUTED),
             ]))
             .style(Style::new().fg(INK)),
             sections[2],
@@ -365,12 +485,12 @@ fn prepare_chart(
     } else {
         ((last / first_close) - 1.0) * 100.0
     };
-    let volume = primary
+    let volume_bars = primary
         .bars
         .iter()
-        .enumerate()
-        .map(|(index, bar)| (index as f64, bar.volume as f64 / 1_000_000.0))
+        .map(|bar| bar.volume)
         .collect::<Vec<_>>();
+    let primary_closes = primary.bars.iter().map(|bar| bar.close).collect::<Vec<_>>();
 
     let mut lines = series
         .iter()
@@ -432,24 +552,61 @@ fn prepare_chart(
             (minimum.min(value), maximum.max(value))
         });
     let y_bounds = padded_bounds(minimum, maximum);
-    let volume_max = volume
+    let primary_values = lines
+        .first()
+        .map(|line| line.points.iter().map(|point| point.1).collect())
+        .unwrap_or_default();
+    let volume_max = volume_bars
         .iter()
-        .map(|point| point.1)
-        .fold(0.0_f64, f64::max)
-        .max(1.0)
-        * 1.1;
+        .copied()
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let average_volume = if volume_bars.is_empty() {
+        0
+    } else {
+        (volume_bars.iter().map(|value| u128::from(*value)).sum::<u128>()
+            / volume_bars.len() as u128) as u64
+    };
+    let session_high = primary
+        .bars
+        .iter()
+        .map(|bar| bar.high)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let session_low = primary
+        .bars
+        .iter()
+        .map(|bar| bar.low)
+        .fold(f64::INFINITY, f64::min);
 
     Ok(PreparedChart {
         lines,
-        volume,
+        primary_values,
+        primary_closes,
+        volume_bars,
         x_max,
         y_bounds,
         volume_max,
+        session_high,
+        session_low,
+        average_volume,
         last,
         change_percent,
         quality: primary.quality.label(),
         source: primary.source.clone(),
     })
+}
+
+fn compact_volume(volume: u64) -> String {
+    if volume >= 1_000_000_000 {
+        format!("{:.1}B", volume as f64 / 1_000_000_000.0)
+    } else if volume >= 1_000_000 {
+        format!("{:.1}M", volume as f64 / 1_000_000.0)
+    } else if volume >= 1_000 {
+        format!("{:.1}K", volume as f64 / 1_000.0)
+    } else {
+        volume.to_string()
+    }
 }
 
 fn padded_bounds(minimum: f64, maximum: f64) -> [f64; 2] {
@@ -655,6 +812,18 @@ mod tests {
         assert_eq!(workspace.specification.normalization, Normalization::PercentChange);
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE)));
         assert!(!workspace.specification.has_study(Study::Volume));
+    }
+
+    #[test]
+    fn inspection_cursor_moves_back_and_returns_to_latest() {
+        let mut workspace = ChartingWorkspace::new(Arc::new(StubHistory));
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::NONE)));
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::NONE)));
+        assert_eq!(workspace.cursor_offset, 2);
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('.'), KeyModifiers::NONE)));
+        assert_eq!(workspace.cursor_offset, 1);
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)));
+        assert_eq!(workspace.cursor_offset, 0);
     }
 
     #[test]
