@@ -1,5 +1,8 @@
 # Market Terminal
 
+<img width="592" height="877" alt="image" src="https://github.com/user-attachments/assets/19912571-d2f0-4ef8-8230-bb868e14389a" />
+
+
 A native Rust, open-source market workstation inspired by the information
 density and keyboard ergonomics of professional financial terminals.
 
