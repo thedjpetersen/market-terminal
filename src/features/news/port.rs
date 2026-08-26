@@ -1,6 +1,8 @@
+use std::fmt;
+
 use super::{NewsSnapshot, NewsWorkbench};
 
-pub trait NewsQuery: Send + Sync {
+pub trait NewsFeed: Send + Sync {
     fn load_news(&self) -> NewsSnapshot;
 
     /// Adapters may override this with full text, calendars, and entitlement-
@@ -8,4 +10,39 @@ pub trait NewsQuery: Send + Sync {
     fn load_workbench(&self) -> NewsWorkbench {
         NewsWorkbench::from_snapshot(self.load_news())
     }
+
+    fn status(&self) -> String {
+        "DETERMINISTIC DEMO FEED".to_owned()
+    }
+
+    fn request_refresh(&self) {}
 }
+
+/// Opens a publisher-owned article outside the terminal.
+///
+/// Keeping this behind a news-owned port lets the workspace remain testable
+/// and leaves URL validation and operating-system integration to adapters.
+pub trait NewsArticleOpener: Send + Sync {
+    fn open(&self, url: &str) -> Result<(), NewsArticleOpenError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NewsArticleOpenError {
+    InvalidUrl,
+    UnsupportedScheme(String),
+    Launch(String),
+}
+
+impl fmt::Display for NewsArticleOpenError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidUrl => write!(formatter, "publisher link is not a valid URL"),
+            Self::UnsupportedScheme(scheme) => {
+                write!(formatter, "publisher link uses unsupported {scheme} scheme")
+            }
+            Self::Launch(message) => write!(formatter, "could not open publisher link: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for NewsArticleOpenError {}

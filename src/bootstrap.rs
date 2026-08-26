@@ -10,35 +10,52 @@ use crate::{
         instrument::{InstrumentSearch, InstrumentSearchWorkspace},
         market_data::MarketDataQuery,
         markets::{MarketsQuery, MarketsWorkspace},
-        news::{NewsQuery, NewsWorkspace},
-        overview::{OverviewQuery, OverviewWorkspace, ID as OVERVIEW},
-        portfolio::{PortfolioQuery, PortfolioWorkspace},
+        news::{NewsArticleOpener, NewsFeed, NewsWorkspace},
+        overview::{ID as OVERVIEW, OverviewQuery, OverviewWorkspace},
+        portfolio::{PortfolioRepository, PortfolioWorkspace},
         security::{SecurityQuery, SecurityWorkspace},
         spreadsheet::{SpreadsheetMarketData, SpreadsheetWorkspace},
         watchlist::{WatchlistCatalog, WatchlistWorkspace},
     },
     infrastructure::{
-        DemoAlertsReplay, DemoChartHistory, DemoChatGateway, DemoData, DemoInstrumentSearch,
-        DemoMarketDataReplay, DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway,
-        LocalPersistence, OpenRouterConfig, OpenRouterGateway,
+        CodexAppServerConfig, CodexAppServerGateway, CsvPortfolioRepository, DemoAlertsReplay,
+        DemoChartHistory, DemoChatGateway, DemoData, DemoInstrumentSearch, DemoMarketDataReplay,
+        DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway, LiveNewsFeed,
+        LocalPersistence, OpenRouterConfig, OpenRouterGateway, SystemNewsArticleOpener,
     },
 };
 
 pub fn demo_app() -> App {
-    build_app(Arc::new(DemoChatGateway::new()))
+    let data = Arc::new(DemoData);
+    let portfolio_query: Arc<dyn PortfolioRepository> = data.clone();
+    let news_query: Arc<dyn NewsFeed> = data;
+    build_app(
+        Arc::new(DemoChatGateway::new()),
+        portfolio_query,
+        news_query,
+        None,
+    )
 }
 
-fn build_app(chat_gateway: Arc<dyn ChatGateway>) -> App {
+fn build_app(
+    chat_gateway: Arc<dyn ChatGateway>,
+    portfolio_query: Arc<dyn PortfolioRepository>,
+    news_query: Arc<dyn NewsFeed>,
+    article_opener: Option<Arc<dyn NewsArticleOpener>>,
+) -> App {
     let data = Arc::new(DemoData);
     let overview_query: Arc<dyn OverviewQuery> = data.clone();
     let markets_query: Arc<dyn MarketsQuery> = data.clone();
     let security_query: Arc<dyn SecurityQuery> = data.clone();
-    let portfolio_query: Arc<dyn PortfolioQuery> = data.clone();
-    let news_query: Arc<dyn NewsQuery> = data;
     let spreadsheet_market_data: Arc<dyn SpreadsheetMarketData> =
         Arc::new(DemoSpreadsheetMarketData);
-    let assistant_gateway: Arc<dyn AssistantGateway> =
-        Arc::new(OpenRouterGateway::new(OpenRouterConfig::from_env()));
+    let assistant_provider = std::env::var("MARKET_TERMINAL_AI_PROVIDER")
+        .unwrap_or_else(|_| "codex".to_owned())
+        .to_ascii_lowercase();
+    let assistant_gateway: Arc<dyn AssistantGateway> = match assistant_provider.as_str() {
+        "codex" => Arc::new(CodexAppServerGateway::new(CodexAppServerConfig::from_env())),
+        _ => Arc::new(OpenRouterGateway::new(OpenRouterConfig::from_env())),
+    };
     let instrument_search: Arc<dyn InstrumentSearch> = Arc::new(DemoInstrumentSearch);
     let chart_history: Arc<dyn ChartHistoryQuery> = Arc::new(DemoChartHistory);
     let market_data: Arc<dyn MarketDataQuery> = Arc::new(DemoMarketDataReplay::new());
@@ -72,7 +89,10 @@ fn build_app(chat_gateway: Arc<dyn ChatGateway>) -> App {
         Box::new(AlertsWorkspace::new(alerts_query)),
         Box::new(SecurityWorkspace::new(security_query)),
         Box::new(PortfolioWorkspace::new(portfolio_query)),
-        Box::new(NewsWorkspace::new(news_query)),
+        Box::new(match article_opener {
+            Some(opener) => NewsWorkspace::with_article_opener(news_query, opener),
+            None => NewsWorkspace::new(news_query),
+        }),
         Box::new(SpreadsheetWorkspace::new(spreadsheet_market_data)),
     ]);
     App::new(workspaces, OVERVIEW)
@@ -81,7 +101,16 @@ fn build_app(chat_gateway: Arc<dyn ChatGateway>) -> App {
 /// Builds the interactive application with durable shell state enabled.
 pub fn persistent_app() -> App {
     let repository = Arc::new(LocalPersistence::new(default_state_directory()));
-    build_app(Arc::new(IrcChatGateway::from_env())).with_session_repository(repository)
+    let portfolio_query: Arc<dyn PortfolioRepository> =
+        Arc::new(CsvPortfolioRepository::from_env());
+    let news_query: Arc<dyn NewsFeed> = Arc::new(LiveNewsFeed::from_env());
+    build_app(
+        Arc::new(IrcChatGateway::from_env()),
+        portfolio_query,
+        news_query,
+        Some(Arc::new(SystemNewsArticleOpener)),
+    )
+    .with_session_repository(repository)
 }
 
 pub fn default_state_directory() -> PathBuf {

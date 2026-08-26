@@ -2,21 +2,17 @@ use std::{env, time::Duration};
 
 use reqwest::blocking::Client;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::features::assistant::{
-    domain::{AssistantRequest, AssistantResponse, AssistantRole, UiAction},
     AssistantError, AssistantGateway,
+    domain::{
+        AssistantRequest, AssistantResponse, AssistantRole, COMMAND_PLANE_SYSTEM_PROMPT, UiAction,
+    },
 };
 
 const DEFAULT_ENDPOINT: &str = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL: &str = "openrouter/auto";
-const SYSTEM_PROMPT: &str = "You are the command plane for a native financial terminal. \
-Answer financial and product questions concisely. When the user asks to change the terminal UI, \
-request only the supplied tools. Never invent a workspace or command. Prefer bring_workspace_forward \
-when the user asks to prioritize, foreground, rearrange, or put a feature first. Prefer open_workspace \
-when they only ask to view a feature. You cannot execute shell commands, access credentials, trade, \
-or perform external side effects.";
 
 #[derive(Clone)]
 pub struct OpenRouterConfig {
@@ -29,7 +25,9 @@ pub struct OpenRouterConfig {
 impl OpenRouterConfig {
     pub fn from_env() -> Self {
         Self {
-            api_key: env::var("OPENROUTER_API_KEY").ok().filter(|key| !key.trim().is_empty()),
+            api_key: env::var("OPENROUTER_API_KEY")
+                .ok()
+                .filter(|key| !key.trim().is_empty()),
             model: env::var("OPENROUTER_MODEL")
                 .ok()
                 .filter(|model| !model.trim().is_empty())
@@ -48,14 +46,16 @@ pub struct OpenRouterGateway {
 }
 
 impl OpenRouterGateway {
-    pub fn new(config: OpenRouterConfig) -> Self { Self { config } }
+    pub fn new(config: OpenRouterConfig) -> Self {
+        Self { config }
+    }
 
     fn request_body(&self, request: AssistantRequest) -> Value {
         let workspace_catalog = request.available_workspaces.join(", ");
         let mut messages = vec![json!({
             "role": "system",
             "content": format!(
-                "{SYSTEM_PROMPT}\nCurrent workspace: {}\nWorkspace order: {workspace_catalog}",
+                "{COMMAND_PLANE_SYSTEM_PROMPT}\nCurrent workspace: {}\nWorkspace order: {workspace_catalog}",
                 request.active_workspace
             )
         })];
@@ -85,11 +85,9 @@ impl OpenRouterGateway {
         if let Some(error) = response.error {
             return Err(AssistantError::Provider(error.message));
         }
-        let choice = response
-            .choices
-            .into_iter()
-            .next()
-            .ok_or_else(|| AssistantError::InvalidResponse("missing completion choice".to_owned()))?;
+        let choice = response.choices.into_iter().next().ok_or_else(|| {
+            AssistantError::InvalidResponse("missing completion choice".to_owned())
+        })?;
         let actions = choice
             .message
             .tool_calls
@@ -108,7 +106,11 @@ impl OpenRouterGateway {
 
 impl AssistantGateway for OpenRouterGateway {
     fn complete(&self, request: AssistantRequest) -> Result<AssistantResponse, AssistantError> {
-        let api_key = self.config.api_key.as_ref().ok_or(AssistantError::NotConfigured)?;
+        let api_key = self
+            .config
+            .api_key
+            .as_ref()
+            .ok_or(AssistantError::NotConfigured)?;
         let client = Client::builder()
             .timeout(self.config.timeout)
             .build()
@@ -116,7 +118,10 @@ impl AssistantGateway for OpenRouterGateway {
         let response = client
             .post(&self.config.endpoint)
             .bearer_auth(api_key)
-            .header("HTTP-Referer", "https://github.com/thedjpetersen/market-terminal")
+            .header(
+                "HTTP-Referer",
+                "https://github.com/thedjpetersen/market-terminal",
+            )
             .header("X-OpenRouter-Title", "Market Terminal")
             .json(&self.request_body(request))
             .send()
@@ -135,24 +140,38 @@ impl AssistantGateway for OpenRouterGateway {
         Self::parse_response(&body)
     }
 
-    fn model_label(&self) -> &str { &self.config.model }
+    fn model_label(&self) -> &str {
+        &self.config.model
+    }
 
-    fn is_configured(&self) -> bool { self.config.api_key.is_some() }
+    fn is_configured(&self) -> bool {
+        self.config.api_key.is_some()
+    }
+
+    fn configuration_hint(&self) -> &str {
+        "SET OPENROUTER_API_KEY TO ENABLE AI"
+    }
 }
 
 fn parse_tool_call(call: ToolCall) -> Result<UiAction, AssistantError> {
     match call.function.name.as_str() {
         "open_workspace" => {
             let arguments: TargetArguments = parse_arguments(&call.function.arguments)?;
-            Ok(UiAction::OpenWorkspace { target: arguments.target })
+            Ok(UiAction::OpenWorkspace {
+                target: arguments.target,
+            })
         }
         "bring_workspace_forward" => {
             let arguments: TargetArguments = parse_arguments(&call.function.arguments)?;
-            Ok(UiAction::BringForward { target: arguments.target })
+            Ok(UiAction::BringForward {
+                target: arguments.target,
+            })
         }
         "run_terminal_command" => {
             let arguments: CommandArguments = parse_arguments(&call.function.arguments)?;
-            Ok(UiAction::RunCommand { command: arguments.command })
+            Ok(UiAction::RunCommand {
+                command: arguments.command,
+            })
         }
         "restore_workspace_layout" => Ok(UiAction::RestoreLayout),
         unknown => Err(AssistantError::InvalidResponse(format!(
@@ -162,7 +181,8 @@ fn parse_tool_call(call: ToolCall) -> Result<UiAction, AssistantError> {
 }
 
 fn parse_arguments<T: for<'de> Deserialize<'de>>(arguments: &str) -> Result<T, AssistantError> {
-    serde_json::from_str(arguments).map_err(|error| AssistantError::InvalidResponse(error.to_string()))
+    serde_json::from_str(arguments)
+        .map_err(|error| AssistantError::InvalidResponse(error.to_string()))
 }
 
 fn tool_definitions() -> Value {
@@ -290,7 +310,9 @@ mod tests {
         assert_eq!(response.model.as_deref(), Some("openai/test"));
         assert_eq!(
             response.actions,
-            vec![UiAction::BringForward { target: "portfolio".to_owned() }]
+            vec![UiAction::BringForward {
+                target: "portfolio".to_owned()
+            }]
         );
     }
 
@@ -323,8 +345,10 @@ mod tests {
         assert_eq!(body["model"], "test/model");
         assert_eq!(body["parallel_tool_calls"], false);
         assert_eq!(body["tools"].as_array().map(Vec::len), Some(4));
-        assert!(body["messages"][0]["content"]
-            .as_str()
-            .is_some_and(|content| content.contains("overview, markets")));
+        assert!(
+            body["messages"][0]["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("overview, markets"))
+        );
     }
 }

@@ -1,8 +1,8 @@
 use std::{
     env,
     sync::{
-        mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
         Mutex,
+        mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -12,8 +12,8 @@ use futures_util::StreamExt;
 use irc::client::prelude::{Client, Command, Config};
 
 use crate::features::chat::{
-    validate_chat_message, ChatConnectionState, ChatEndpoint, ChatEvent, ChatGateway,
-    ChatGatewayError, ChatMessage, ChatMessageKind, MAX_CHAT_EVENTS_PER_POLL,
+    ChatConnectionState, ChatEndpoint, ChatEvent, ChatGateway, ChatGatewayError, ChatMessage,
+    ChatMessageKind, MAX_CHAT_EVENTS_PER_POLL, validate_chat_message,
 };
 
 const COMMAND_CAPACITY: usize = 64;
@@ -43,12 +43,20 @@ impl IrcChatGateway {
         let (event_sender, event_receiver) = mpsc::sync_channel(EVENT_CAPACITY);
 
         if !endpoint.configured {
-            return Self { endpoint, commands: None, events: Mutex::new(event_receiver) };
+            return Self {
+                endpoint,
+                commands: None,
+                events: Mutex::new(event_receiver),
+            };
         }
         if let Err(error) = endpoint.validate() {
             let _ = event_sender.try_send(ChatEvent::Status(error.to_string()));
             let _ = event_sender.try_send(ChatEvent::State(ChatConnectionState::Disabled));
-            return Self { endpoint, commands: None, events: Mutex::new(event_receiver) };
+            return Self {
+                endpoint,
+                commands: None,
+                events: Mutex::new(event_receiver),
+            };
         }
 
         let server_password = env::var("IRC_SERVER_PASSWORD").ok();
@@ -70,15 +78,18 @@ impl IrcChatGateway {
                         event_sender,
                     )),
                     Err(error) => {
-                        let _ = event_sender.try_send(ChatEvent::Status(format!(
-                            "IRC RUNTIME FAILED · {error}"
-                        )));
+                        let _ = event_sender
+                            .try_send(ChatEvent::Status(format!("IRC RUNTIME FAILED · {error}")));
                     }
                 }
             });
 
         if spawn.is_err() {
-            return Self { endpoint, commands: None, events: Mutex::new(event_receiver) };
+            return Self {
+                endpoint,
+                commands: None,
+                events: Mutex::new(event_receiver),
+            };
         }
         Self {
             endpoint,
@@ -99,11 +110,15 @@ impl IrcChatGateway {
 }
 
 impl Default for IrcChatGateway {
-    fn default() -> Self { Self::from_env() }
+    fn default() -> Self {
+        Self::from_env()
+    }
 }
 
 impl ChatGateway for IrcChatGateway {
-    fn endpoint(&self) -> ChatEndpoint { self.endpoint.clone() }
+    fn endpoint(&self) -> ChatEndpoint {
+        self.endpoint.clone()
+    }
 
     fn drain_events(&self) -> Vec<ChatEvent> {
         let events = self.events.lock().expect("IRC event queue lock");
@@ -117,11 +132,15 @@ impl ChatGateway for IrcChatGateway {
         self.queue(WorkerCommand::Send(message.to_owned()))
     }
 
-    fn reconnect(&self) -> Result<(), ChatGatewayError> { self.queue(WorkerCommand::Reconnect) }
+    fn reconnect(&self) -> Result<(), ChatGatewayError> {
+        self.queue(WorkerCommand::Reconnect)
+    }
 }
 
 fn endpoint_from_env() -> ChatEndpoint {
-    let Ok(server) = env::var("IRC_SERVER") else { return ChatEndpoint::offline() };
+    let Ok(server) = env::var("IRC_SERVER") else {
+        return ChatEndpoint::offline();
+    };
     if server.trim().is_empty() {
         return ChatEndpoint::offline();
     }
@@ -178,7 +197,10 @@ async fn run_worker(
             ConnectionExit::Reconnect => continue,
             ConnectionExit::Disconnected(error) => {
                 emit(&events, ChatEvent::State(ChatConnectionState::Disconnected));
-                emit(&events, ChatEvent::Status(format!("IRC DISCONNECTED · {error}")));
+                emit(
+                    &events,
+                    ChatEvent::Status(format!("IRC DISCONNECTED · {error}")),
+                );
             }
         }
 

@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, InputMode},
+    app::{App, CommandEditMode, InputMode, WorkspaceNavigationItem},
     ui::theme::{AMBER, BG, CYAN, FOOTER_BG, GREEN, INK, MUTED, NAV_BG},
 };
 
@@ -28,24 +28,57 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         columns[0],
     );
 
-    let command = if app.command.is_empty() {
-        if app.input_mode == InputMode::Command {
-            "TYPE FUNCTION OR SECURITY"
-        } else {
-            "PRESS / FOR COMMAND"
-        }
+    let command = if app.tmux_prefix_pending() {
+        "TMUX PREFIX · ←/→ OR N/P · 1–9/0 SELECT · ? HELP"
+    } else if app.command.is_empty() {
+        "PRESS / FOR COMMAND"
     } else {
         app.command.as_str()
     };
-    let command_border = if app.input_mode == InputMode::Command { CYAN } else { MUTED };
+    let command_border = if app.input_mode == InputMode::Command || app.tmux_prefix_pending() {
+        CYAN
+    } else {
+        MUTED
+    };
+    let command_area = columns[1];
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" ⌘ ", AMBER),
-            Span::styled(command, if app.command.is_empty() { Style::new().fg(MUTED) } else { Style::new().fg(INK) }),
-            Span::styled("  GO ", Style::new().bg(CYAN).fg(BG).bold()),
-        ]))
-        .block(Block::new().borders(Borders::ALL).border_style(command_border)),
-        columns[1],
+        Block::new()
+            .borders(Borders::ALL)
+            .border_style(command_border),
+        command_area,
+    );
+    let command_inner = Rect::new(
+        command_area.x.saturating_add(1),
+        command_area.y.saturating_add(1),
+        command_area.width.saturating_sub(2),
+        command_area.height.saturating_sub(2),
+    );
+    let command_parts = Layout::horizontal([
+        Constraint::Length(3),
+        Constraint::Min(1),
+        Constraint::Length(5),
+    ])
+    .split(command_inner);
+    frame.render_widget(Paragraph::new(Span::styled(" ⌘ ", AMBER)), command_parts[0]);
+    if app.input_mode == InputMode::Command {
+        frame.render_widget(Paragraph::new(command_editor_line(app)), command_parts[1]);
+    } else {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                command,
+                if app.command.is_empty() {
+                    Style::new().fg(MUTED)
+                } else {
+                    Style::new().fg(INK)
+                },
+            )),
+            command_parts[1],
+        );
+    }
+    frame.render_widget(
+        Paragraph::new(Span::styled(" GO ", Style::new().bg(CYAN).fg(BG).bold()))
+            .alignment(Alignment::Center),
+        command_parts[2],
     );
 
     let seconds = (app.ticks / 5) % 60;
@@ -61,16 +94,47 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+fn command_editor_line(app: &App) -> Line<'_> {
+    let mode_style = match app.command_edit_mode() {
+        CommandEditMode::Insert => Style::new().bg(GREEN).fg(BG).bold(),
+        CommandEditMode::Normal => Style::new().bg(AMBER).fg(BG).bold(),
+    };
+    let mode = match app.command_edit_mode() {
+        CommandEditMode::Insert => " INSERT ",
+        CommandEditMode::Normal => " NORMAL ",
+    };
+    let command = app.command();
+    let cursor = app.command_cursor().min(command.len());
+    let (before, rest) = command.split_at(cursor);
+    let (under_cursor, after) = rest
+        .chars()
+        .next()
+        .map(|character| rest.split_at(character.len_utf8()))
+        .unwrap_or((" ", ""));
+    let cursor_style = match app.command_edit_mode() {
+        CommandEditMode::Insert => Style::new().bg(CYAN).fg(BG),
+        CommandEditMode::Normal => Style::new().bg(AMBER).fg(BG),
+    };
+    let mut spans = vec![
+        Span::styled(mode, mode_style),
+        Span::styled(before, INK),
+        Span::styled(under_cursor, cursor_style),
+        Span::styled(after, INK),
+    ];
+    if command.is_empty() {
+        spans.push(Span::styled(" TYPE FUNCTION OR SECURITY", MUTED));
+    }
+    Line::from(spans)
+}
+
 pub fn render_navigation(frame: &mut Frame, area: Rect, app: &App) {
     let mut spans = Vec::new();
     for (index, item) in app.workspaces.navigation_items().enumerate() {
-        let shortcut = item
-            .hotkey
-            .map(|hotkey| format!(" [{}]", hotkey.to_ascii_uppercase()))
-            .unwrap_or_default();
-        let text = format!(" {} {}{} ", index + 1, item.label, shortcut);
+        let text = navigation_item_text(index, item);
         let style = if item.id == app.active_workspace {
             Style::new().bg(CYAN).fg(BG).bold()
+        } else if app.assistant_drawer_visible() && Some(item.id) == app.assistant_workspace() {
+            Style::new().bg(AMBER).fg(BG).bold()
         } else {
             Style::new().fg(INK)
         };
@@ -82,10 +146,84 @@ pub fn render_navigation(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled("  NDX 18,658.32 ", MUTED),
         Span::styled("+1.00%", GREEN),
     ]);
-    frame.render_widget(Paragraph::new(Line::from(spans)).style(Style::new().bg(NAV_BG)), area);
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::new().bg(NAV_BG)),
+        area,
+    );
 }
 
-pub fn render_footer(frame: &mut Frame, area: Rect) {
+pub(super) fn navigation_item_text(index: usize, item: WorkspaceNavigationItem) -> String {
+    let shortcut = item
+        .hotkey
+        .map(|hotkey| format!(" [{}]", hotkey.to_ascii_uppercase()))
+        .unwrap_or_default();
+    format!(" {} {}{} ", index + 1, item.label, shortcut)
+}
+
+pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
+    if app.help_visible() {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" ESC/Q/F1 ", AMBER),
+                Span::raw("CLOSE HELP   "),
+                Span::styled("/ ", AMBER),
+                Span::raw("COMMAND   "),
+                Span::styled("CLICK ", AMBER),
+                Span::raw("WORKSPACE TAB TO LEAVE"),
+            ]))
+            .style(Style::new().bg(FOOTER_BG)),
+            area,
+        );
+        return;
+    }
+    if app.assistant_drawer_visible() {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" AI DRAWER ", Style::new().bg(CYAN).fg(BG).bold()),
+                Span::raw("  TYPE PROMPT   ENTER SEND   ESC CLOSE   CLICK OUTSIDE CLOSES"),
+            ]))
+            .style(Style::new().bg(FOOTER_BG)),
+            area,
+        );
+        return;
+    }
+    if app.tmux_prefix_pending() {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" TMUX PREFIX ", Style::new().bg(CYAN).fg(BG).bold()),
+                Span::raw("  ←/→ N/P PREV/NEXT   1–9/0 SELECT   ? HELP   ESC CANCEL"),
+            ]))
+            .style(Style::new().bg(FOOTER_BG)),
+            area,
+        );
+        return;
+    }
+    if app.input_mode() == InputMode::Command {
+        let (mode, bindings) = match app.command_edit_mode() {
+            CommandEditMode::Insert => (
+                " INSERT ",
+                "TYPE NORMALLY   ESC NORMAL   ENTER RUN   ↑/↓ HISTORY   ^W WORD   ^U CLEAR",
+            ),
+            CommandEditMode::Normal => (
+                " NORMAL ",
+                "h/l 0/$ w/b MOVE   i/a/I/A INSERT   x D dd DELETE   ENTER RUN   ESC CANCEL",
+            ),
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(mode, Style::new().bg(CYAN).fg(BG).bold()),
+                Span::raw(format!("  {bindings}")),
+            ]))
+            .style(Style::new().bg(FOOTER_BG)),
+            area,
+        );
+        return;
+    }
+    let provenance = match app.active_workspace().as_str() {
+        "news" => "LIVE NEWS · VERIFY PUBLISHER SOURCE",
+        "portfolio" => "IMPORTED SNAPSHOT · VERIFY SOURCE AND AS-OF",
+        _ => "DELAYED DEMO DATA · NOT INVESTMENT ADVICE",
+    };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(" Q/ESC ", AMBER),
@@ -94,9 +232,13 @@ pub fn render_footer(frame: &mut Frame, area: Rect) {
             Span::raw("FAVORITES   "),
             Span::styled("/ ", AMBER),
             Span::raw("COMMAND   "),
+            Span::styled("F1 ", AMBER),
+            Span::raw("HELP   "),
+            Span::styled("^B ", AMBER),
+            Span::raw("PANELS   "),
             Span::styled("↑↓/JK ", AMBER),
             Span::raw("MOVE"),
-            Span::styled("   DELAYED DEMO DATA · NOT INVESTMENT ADVICE", MUTED),
+            Span::styled(format!("   {provenance}"), MUTED),
         ]))
         .style(Style::new().bg(FOOTER_BG)),
         area,

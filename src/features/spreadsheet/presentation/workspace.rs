@@ -1,6 +1,13 @@
-use std::{cell::Cell as StateCell, collections::HashMap, sync::Arc};
+use std::{
+    cell::Cell as StateCell,
+    collections::HashMap,
+    sync::{
+        mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
+        Arc,
+    },
+};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
@@ -13,17 +20,37 @@ use crate::{
     app::{CommandInvocation, Workspace, WorkspaceDescriptor},
     ui::{
         components::terminal_block,
-        theme::{AMBER, BG, CYAN, FOOTER_BG, INK, MUTED, NAV_BG, RED},
+        is_primary_click, scroll_key,
+        theme::{AMBER, BG, CYAN, FOOTER_BG, INK, MUTED, NAV_BG, RED, YELLOW},
     },
 };
 
 use super::super::{
-    domain::{CellAddress, CellValue, MAX_COLUMNS, MAX_ROWS},
-    MarketDataRequest, Spreadsheet, SpreadsheetMarketData, ID,
+    domain::{
+        parse_formula, AggregateFunction, CellAddress, CellValue, Expr, MAX_COLUMNS, MAX_ROWS,
+    },
+    MarketDataPoint, MarketDataRequest, MarketDataState, Spreadsheet, SpreadsheetMarketData, ID,
 };
 
 const CELL_WIDTH: u16 = 12;
 const ROW_HEADER_WIDTH: u16 = 5;
+
+struct MarketDataRefresh {
+    generation: u64,
+    requests: Vec<MarketDataRequest>,
+}
+
+struct MarketDataRefreshResult {
+    generation: u64,
+    requests: Vec<MarketDataRequest>,
+    points: Vec<MarketDataPoint>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ExternalCellState {
+    Loading,
+    Resolved(MarketDataState),
+}
 
 #[derive(Debug)]
 struct EditSession {
@@ -38,7 +65,9 @@ impl EditSession {
         Self { characters, cursor }
     }
 
-    fn text(&self) -> String { self.characters.iter().collect() }
+    fn text(&self) -> String {
+        self.characters.iter().collect()
+    }
 
     fn insert(&mut self, character: char) {
         self.characters.insert(self.cursor, character);
@@ -61,7 +90,12 @@ impl EditSession {
 
 pub struct SpreadsheetWorkspace {
     spreadsheet: Spreadsheet,
-    market_data: Arc<dyn SpreadsheetMarketData>,
+    refresh_sender: SyncSender<MarketDataRefresh>,
+    refresh_receiver: Receiver<MarketDataRefreshResult>,
+    next_refresh_generation: u64,
+    applied_refresh_generation: u64,
+    external_cells: HashMap<CellAddress, MarketDataRequest>,
+    external_states: HashMap<MarketDataRequest, ExternalCellState>,
     cursor: CellAddress,
     first_column: u8,
     first_row: u16,
@@ -74,9 +108,32 @@ pub struct SpreadsheetWorkspace {
 
 impl SpreadsheetWorkspace {
     pub fn new(market_data: Arc<dyn SpreadsheetMarketData>) -> Self {
+        let (refresh_sender, worker_receiver) = sync_channel::<MarketDataRefresh>(1);
+        let (worker_sender, refresh_receiver) = sync_channel::<MarketDataRefreshResult>(1);
+        std::thread::Builder::new()
+            .name("spreadsheet-market-data".to_owned())
+            .spawn(move || {
+                while let Ok(refresh) = worker_receiver.recv() {
+                    let points = market_data.load_batch(&refresh.requests);
+                    let result = MarketDataRefreshResult {
+                        generation: refresh.generation,
+                        requests: refresh.requests,
+                        points,
+                    };
+                    if worker_sender.send(result).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("spreadsheet market-data worker should start");
         let mut workspace = Self {
             spreadsheet: Spreadsheet::new(),
-            market_data,
+            refresh_sender,
+            refresh_receiver,
+            next_refresh_generation: 0,
+            applied_refresh_generation: 0,
+            external_cells: HashMap::new(),
+            external_states: HashMap::new(),
             cursor: CellAddress::new(1, 1).expect("A1 is in bounds"),
             first_column: 1,
             first_row: 1,
@@ -97,6 +154,26 @@ impl SpreadsheetWorkspace {
             ("C1", "DAY %"),
             ("D1", "SHARES"),
             ("E1", "MARKET VALUE"),
+            ("A2", "SPY US Equity"),
+            ("B2", "=PX_LAST(A2)"),
+            ("C2", "=PX_CHANGE(A2, \"1D\")"),
+            ("D2", "250"),
+            ("E2", "=B2*D2"),
+            ("A3", "QQQ US Equity"),
+            ("B3", "=PX_LAST(A3)"),
+            ("C3", "=PX_CHANGE(A3, \"1D\")"),
+            ("D3", "180"),
+            ("E3", "=B3*D3"),
+            ("A4", "AVGO US Equity"),
+            ("B4", "=PX_LAST(A4)"),
+            ("C4", "=PX_CHANGE(A4, \"1D\")"),
+            ("D4", "120"),
+            ("E4", "=B4*D4"),
+            ("A5", "NVDA US Equity"),
+            ("B5", "=PX_LAST(A5)"),
+            ("C5", "=PX_CHANGE(A5, \"1D\")"),
+            ("D5", "300"),
+            ("E5", "=B5*D5"),
             ("A7", "PORTFOLIO VALUE"),
             ("E7", "=SUM(E2:E5)"),
             ("A9", "MODEL INPUTS"),
@@ -111,8 +188,12 @@ impl SpreadsheetWorkspace {
                 .set_cell(address, raw)
                 .expect("demo seed addresses are valid");
         }
-        self.spreadsheet.add_sheet("Assumptions").expect("demo sheet name is unique");
-        self.spreadsheet.select_sheet("Assumptions").expect("demo sheet exists");
+        self.spreadsheet
+            .add_sheet("Assumptions")
+            .expect("demo sheet name is unique");
+        self.spreadsheet
+            .select_sheet("Assumptions")
+            .expect("demo sheet exists");
         self.spreadsheet
             .set_cells([
                 ("A9", "MODEL ASSUMPTIONS"),
@@ -122,62 +203,163 @@ impl SpreadsheetWorkspace {
                 ("B11", "0.12"),
             ])
             .expect("assumption seed addresses are valid");
-        self.spreadsheet.select_sheet("Sheet1").expect("default demo sheet exists");
+        self.spreadsheet
+            .select_sheet("Sheet1")
+            .expect("default demo sheet exists");
         self.refresh_market_data();
         self.spreadsheet.clear_history();
-        self.status = "READY · LIVE FIELDS LOADED".to_owned();
     }
 
     fn refresh_market_data(&mut self) {
-        let securities = [
-            ("SPY US Equity", 250.0),
-            ("QQQ US Equity", 180.0),
-            ("AVGO US Equity", 120.0),
-            ("NVDA US Equity", 300.0),
-        ];
-        let requests = securities
-            .iter()
-            .flat_map(|(security, _)| {
-                [
-                    MarketDataRequest::new(*security, "PX_LAST"),
-                    MarketDataRequest::new(*security, "CHG_PCT_1D"),
-                ]
-            })
-            .collect::<Vec<_>>();
-        let values = self
-            .market_data
-            .load_batch(&requests)
-            .into_iter()
-            .map(|point| ((point.request.security, point.request.field), point.value))
-            .collect::<HashMap<_, _>>();
+        let formulas = self.financial_formula_requests();
+        let mut requests = formulas.values().cloned().collect::<Vec<_>>();
+        requests.sort_by(|left, right| {
+            (&left.security, &left.field).cmp(&(&right.security, &right.field))
+        });
+        requests.dedup();
+        if requests.is_empty() {
+            self.external_cells.clear();
+            self.external_states.clear();
+            self.status = "NO FINANCIAL FUNCTIONS TO REFRESH".to_owned();
+            return;
+        }
 
-        let mut cells = Vec::new();
-        for (index, (security, shares)) in securities.into_iter().enumerate() {
-            let row = index + 2;
-            let price = values
-                .get(&(security.to_owned(), "PX_LAST".to_owned()))
-                .copied()
-                .unwrap_or_default();
-            let change = values
-                .get(&(security.to_owned(), "CHG_PCT_1D".to_owned()))
-                .copied()
-                .unwrap_or_default();
-            for (column, raw) in [
-                ('A', security.to_owned()),
-                ('B', price.to_string()),
-                ('C', change.to_string()),
-                ('D', shares.to_string()),
-                ('E', format!("=B{row}*D{row}")),
-            ] {
-                cells.push((format!("{column}{row}"), raw));
+        let generation = self.next_refresh_generation.wrapping_add(1);
+        let refresh = MarketDataRefresh {
+            generation,
+            requests: requests.clone(),
+        };
+        match self.refresh_sender.try_send(refresh) {
+            Ok(()) => {
+                self.next_refresh_generation = generation;
+                self.external_cells = formulas;
+                self.external_states = requests
+                    .into_iter()
+                    .map(|request| (request, ExternalCellState::Loading))
+                    .collect();
+                self.status = "LOADING FINANCIAL FUNCTIONS…".to_owned();
+            }
+            Err(TrySendError::Full(_)) => {
+                self.status = "REFRESH ALREADY IN PROGRESS".to_owned();
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.status = "ERROR · MARKET-DATA WORKER IS UNAVAILABLE".to_owned();
             }
         }
-        self.spreadsheet
-            .set_cells(cells)
-            .expect("market-data seed addresses are valid");
     }
 
-    fn selected_address(&self) -> String { self.cursor.to_string() }
+    fn poll_market_data(&mut self) {
+        while let Ok(result) = self.refresh_receiver.try_recv() {
+            if result.generation < self.applied_refresh_generation {
+                continue;
+            }
+            self.applied_refresh_generation = result.generation;
+            let mut states = result
+                .points
+                .into_iter()
+                .map(|point| (point.request, ExternalCellState::Resolved(point.state)))
+                .collect::<HashMap<_, _>>();
+            for request in result.requests {
+                states.entry(request).or_insert_with(|| {
+                    ExternalCellState::Resolved(MarketDataState::Unavailable {
+                        reason: "provider returned no value".to_owned(),
+                    })
+                });
+            }
+            let loaded = states
+                .values()
+                .filter(|state| {
+                    matches!(
+                        state,
+                        ExternalCellState::Resolved(MarketDataState::Ready { .. })
+                    )
+                })
+                .count();
+            let degraded = states.len().saturating_sub(loaded);
+            self.external_states = states;
+            self.status = if degraded == 0 {
+                format!("FINANCIAL FUNCTIONS READY · {loaded} FIELDS")
+            } else {
+                format!("FINANCIAL FUNCTIONS READY · {loaded} FIELDS · {degraded} DEGRADED")
+            };
+        }
+    }
+
+    fn financial_formula_requests(&self) -> HashMap<CellAddress, MarketDataRequest> {
+        self.spreadsheet
+            .workbook()
+            .active_sheet()
+            .populated_cells()
+            .filter_map(|(address, cell)| {
+                let expression = parse_formula(cell.raw()).ok()?;
+                self.financial_request(&expression)
+                    .map(|request| (address, request))
+            })
+            .collect()
+    }
+
+    fn financial_request(&self, expression: &Expr) -> Option<MarketDataRequest> {
+        let Expr::Function {
+            function,
+            arguments,
+        } = expression
+        else {
+            return None;
+        };
+        let security = self.expression_text(arguments.first()?)?;
+        match function {
+            AggregateFunction::PriceLast if arguments.len() == 1 => {
+                Some(MarketDataRequest::new(security, "PX_LAST"))
+            }
+            AggregateFunction::PriceChange if arguments.len() == 2 => {
+                let period = self.expression_text(&arguments[1])?.to_ascii_uppercase();
+                Some(MarketDataRequest::new(
+                    security,
+                    format!("CHG_PCT_{period}"),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn expression_text(&self, expression: &Expr) -> Option<String> {
+        match expression {
+            Expr::Text(text) => Some(text.clone()),
+            Expr::Reference(reference) => {
+                let sheet = match reference.sheet() {
+                    Some(name) => self.spreadsheet.workbook().sheet(name)?,
+                    None => self.spreadsheet.workbook().active_sheet(),
+                };
+                let raw = sheet.cell(reference.cell().address())?.raw().trim();
+                (!raw.is_empty() && !raw.starts_with('=')).then(|| raw.to_owned())
+            }
+            _ => None,
+        }
+    }
+
+    fn evaluated_spreadsheet(&self) -> Spreadsheet {
+        let mut evaluated = self.spreadsheet.clone();
+        for (address, request) in &self.external_cells {
+            let Some(ExternalCellState::Resolved(state)) = self.external_states.get(request) else {
+                continue;
+            };
+            let value = match state {
+                MarketDataState::Ready { value, .. } | MarketDataState::Stale { value, .. } => {
+                    *value
+                }
+                MarketDataState::PermissionDenied { .. } | MarketDataState::Unavailable { .. } => {
+                    continue
+                }
+            };
+            let _ = evaluated.set_cell(&address.to_string(), value.to_string());
+        }
+        evaluated.clear_history();
+        evaluated
+    }
+
+    fn selected_address(&self) -> String {
+        self.cursor.to_string()
+    }
 
     fn selected_raw(&self) -> String {
         self.spreadsheet
@@ -187,7 +369,9 @@ impl SpreadsheetWorkspace {
     }
 
     fn begin_edit(&mut self, initial: Option<&str>) {
-        let value = initial.map(ToOwned::to_owned).unwrap_or_else(|| self.selected_raw());
+        let value = initial
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| self.selected_raw());
         self.edit = Some(EditSession::new(&value));
         self.status = "EDIT · ENTER TO COMMIT · ESC TO CANCEL".to_owned();
     }
@@ -196,7 +380,10 @@ impl SpreadsheetWorkspace {
         let Some(edit) = self.edit.take() else { return };
         let address = self.selected_address();
         match self.spreadsheet.set_cell(&address, edit.text()) {
-            Ok(value) => self.status = format!("{address} = {value}"),
+            Ok(value) => {
+                self.status = format!("{address} = {value}");
+                self.refresh_market_data();
+            }
             Err(error) => self.status = format!("ERROR · {error}"),
         }
     }
@@ -236,16 +423,24 @@ impl SpreadsheetWorkspace {
             KeyCode::Esc => self.cancel_edit(),
             KeyCode::Enter => self.commit_edit(),
             KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if let Some(edit) = &mut self.edit { edit.insert(character); }
+                if let Some(edit) = &mut self.edit {
+                    edit.insert(character);
+                }
             }
             KeyCode::Backspace => {
-                if let Some(edit) = &mut self.edit { edit.backspace(); }
+                if let Some(edit) = &mut self.edit {
+                    edit.backspace();
+                }
             }
             KeyCode::Delete => {
-                if let Some(edit) = &mut self.edit { edit.delete(); }
+                if let Some(edit) = &mut self.edit {
+                    edit.delete();
+                }
             }
             KeyCode::Left => {
-                if let Some(edit) = &mut self.edit { edit.cursor = edit.cursor.saturating_sub(1); }
+                if let Some(edit) = &mut self.edit {
+                    edit.cursor = edit.cursor.saturating_sub(1);
+                }
             }
             KeyCode::Right => {
                 if let Some(edit) = &mut self.edit {
@@ -253,10 +448,14 @@ impl SpreadsheetWorkspace {
                 }
             }
             KeyCode::Home => {
-                if let Some(edit) = &mut self.edit { edit.cursor = 0; }
+                if let Some(edit) = &mut self.edit {
+                    edit.cursor = 0;
+                }
             }
             KeyCode::End => {
-                if let Some(edit) = &mut self.edit { edit.cursor = edit.characters.len(); }
+                if let Some(edit) = &mut self.edit {
+                    edit.cursor = edit.characters.len();
+                }
             }
             _ => {}
         }
@@ -268,6 +467,7 @@ impl SpreadsheetWorkspace {
             self.status = format!("ERROR · {error}");
         } else {
             self.status = format!("CLEARED {address}");
+            self.refresh_market_data();
         }
     }
 
@@ -289,31 +489,52 @@ impl SpreadsheetWorkspace {
         let source = source.to_string();
         let target = self.selected_address();
         match self.spreadsheet.copy_cell(&source, &target) {
-            Ok(value) => self.status = format!("PASTED {source} → {target} · {value}"),
+            Ok(value) => {
+                self.status = format!("PASTED {source} → {target} · {value}");
+                self.refresh_market_data();
+            }
             Err(error) => self.status = format!("ERROR · {error}"),
         }
     }
 
     fn fill_from_adjacent(&mut self, vertical: bool) {
         let source = if vertical {
-            self.cursor.row().checked_sub(1).and_then(|row| CellAddress::new(self.cursor.column(), row).ok())
+            self.cursor
+                .row()
+                .checked_sub(1)
+                .and_then(|row| CellAddress::new(self.cursor.column(), row).ok())
         } else {
-            self.cursor.column().checked_sub(1).and_then(|column| CellAddress::new(column, self.cursor.row()).ok())
+            self.cursor
+                .column()
+                .checked_sub(1)
+                .and_then(|column| CellAddress::new(column, self.cursor.row()).ok())
         };
         let Some(source) = source else {
-            self.status = if vertical { "NO CELL ABOVE TO FILL" } else { "NO CELL LEFT TO FILL" }.to_owned();
+            self.status = if vertical {
+                "NO CELL ABOVE TO FILL"
+            } else {
+                "NO CELL LEFT TO FILL"
+            }
+            .to_owned();
             return;
         };
         let target = self.selected_address();
         match self.spreadsheet.copy_cell(&source.to_string(), &target) {
-            Ok(value) => self.status = format!("FILLED {source} → {target} · {value}"),
+            Ok(value) => {
+                self.status = format!("FILLED {source} → {target} · {value}");
+                self.refresh_market_data();
+            }
             Err(error) => self.status = format!("ERROR · {error}"),
         }
     }
 
     fn undo(&mut self) {
         self.status = if self.spreadsheet.undo() {
-            format!("UNDID CHANGE · {}", self.spreadsheet.workbook().active_sheet().name())
+            self.refresh_market_data();
+            format!(
+                "UNDID CHANGE · {}",
+                self.spreadsheet.workbook().active_sheet().name()
+            )
         } else {
             "NOTHING TO UNDO".to_owned()
         };
@@ -321,7 +542,11 @@ impl SpreadsheetWorkspace {
 
     fn redo(&mut self) {
         self.status = if self.spreadsheet.redo() {
-            format!("REDID CHANGE · {}", self.spreadsheet.workbook().active_sheet().name())
+            self.refresh_market_data();
+            format!(
+                "REDID CHANGE · {}",
+                self.spreadsheet.workbook().active_sheet().name()
+            )
         } else {
             "NOTHING TO REDO".to_owned()
         };
@@ -333,7 +558,11 @@ impl SpreadsheetWorkspace {
                 self.cursor = CellAddress::new(1, 1).expect("A1 is in bounds");
                 self.first_column = 1;
                 self.first_row = 1;
-                self.status = format!("SELECTED SHEET {}", self.spreadsheet.workbook().active_sheet().name());
+                self.status = format!(
+                    "SELECTED SHEET {}",
+                    self.spreadsheet.workbook().active_sheet().name()
+                );
+                self.refresh_market_data();
             }
             Err(error) => self.status = format!("ERROR · {error}"),
         }
@@ -369,23 +598,44 @@ impl SpreadsheetWorkspace {
         self.cursor = CellAddress::new(1, 1).expect("A1 is in bounds");
         self.first_column = 1;
         self.first_row = 1;
-        self.status = format!("SELECTED SHEET {}", self.spreadsheet.workbook().active_sheet().name());
+        self.status = format!(
+            "SELECTED SHEET {}",
+            self.spreadsheet.workbook().active_sheet().name()
+        );
+        self.refresh_market_data();
     }
 
     fn render_formula_bar(&self, frame: &mut Frame, area: Rect) {
-        let raw = self.edit.as_ref().map(EditSession::text).unwrap_or_else(|| self.selected_raw());
+        let raw = self
+            .edit
+            .as_ref()
+            .map(EditSession::text)
+            .unwrap_or_else(|| self.selected_raw());
         let editing = self.edit.is_some();
         let cursor = if let Some(edit) = &self.edit {
             let before = edit.characters.iter().take(edit.cursor).collect::<String>();
-            format!("{before}▌{}", edit.characters.iter().skip(edit.cursor).collect::<String>())
+            format!(
+                "{before}▌{}",
+                edit.characters.iter().skip(edit.cursor).collect::<String>()
+            )
         } else {
             raw
         };
         let border = if editing { CYAN } else { AMBER };
         let line = Line::from(vec![
-            Span::styled(format!(" {:<5} ", self.cursor), Style::new().bg(AMBER).fg(BG).bold()),
+            Span::styled(
+                format!(" {:<5} ", self.cursor),
+                Style::new().bg(AMBER).fg(BG).bold(),
+            ),
             Span::styled(" ƒx  ", CYAN),
-            Span::styled(cursor, if editing { Style::new().fg(CYAN) } else { Style::new().fg(INK) }),
+            Span::styled(
+                cursor,
+                if editing {
+                    Style::new().fg(CYAN)
+                } else {
+                    Style::new().fg(INK)
+                },
+            ),
         ]);
         frame.render_widget(
             Paragraph::new(line).block(Block::new().borders(Borders::ALL).border_style(border)),
@@ -398,11 +648,15 @@ impl SpreadsheetWorkspace {
         let columns = (available_width / (CELL_WIDTH + 1))
             .max(1)
             .min(u16::from(MAX_COLUMNS - self.first_column + 1)) as u8;
-        let rows = area.height.saturating_sub(3).max(1).min(MAX_ROWS - self.first_row + 1);
+        let rows = area
+            .height
+            .saturating_sub(3)
+            .max(1)
+            .min(MAX_ROWS - self.first_row + 1);
         self.visible_columns.set(columns);
         self.visible_rows.set(rows);
-        let visible_values = self
-            .spreadsheet
+        let evaluated = self.evaluated_spreadsheet();
+        let visible_values = evaluated
             .visible_region(self.first_column, self.first_row, columns, rows)
             .expect("clamped viewport is in bounds")
             .into_iter()
@@ -433,11 +687,14 @@ impl SpreadsheetWorkspace {
                 };
                 let mut cells = vec![TableCell::from(format!("{row:>4}")).style(row_style)];
                 for column in self.first_column..self.first_column + columns {
-                    let address = CellAddress::new(column, row).expect("render region is in bounds");
-                    let value = visible_values
-                        .get(&address)
-                        .map(format_value)
-                        .unwrap_or_default();
+                    let address =
+                        CellAddress::new(column, row).expect("render region is in bounds");
+                    let value = self.external_display(address).unwrap_or_else(|| {
+                        visible_values
+                            .get(&address)
+                            .map(format_value)
+                            .unwrap_or_default()
+                    });
                     let selected = address == self.cursor;
                     let style = if selected {
                         Style::new().bg(CYAN).fg(BG).add_modifier(Modifier::BOLD)
@@ -466,7 +723,10 @@ impl SpreadsheetWorkspace {
             } else {
                 Style::new().fg(MUTED)
             };
-            tabs.push(Span::styled(format!(" {}:{} ", index + 1, sheet.name()), style));
+            tabs.push(Span::styled(
+                format!(" {}:{} ", index + 1, sheet.name()),
+                style,
+            ));
             tabs.push(Span::raw(" "));
         }
         frame.render_widget(
@@ -477,15 +737,77 @@ impl SpreadsheetWorkspace {
 
     fn render_status(&self, frame: &mut Frame, area: Rect) {
         let mode = if self.edit.is_some() { "EDIT" } else { "NAV" };
+        let status = self
+            .selected_external_status()
+            .unwrap_or_else(|| self.status.clone());
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(format!(" {mode} "), Style::new().bg(AMBER).fg(BG).bold()),
-                Span::styled(format!(" {}   ", self.status), INK),
-                Span::styled("Y COPY  P PASTE  CTRL-D/R FILL  CTRL-Z/Y UNDO/REDO  F2 EDIT", MUTED),
+                Span::styled(format!(" {status}   "), INK),
+                Span::styled(
+                    "F9 REFRESH  Y COPY  P PASTE  CTRL-D/R FILL  CTRL-Z/Y UNDO/REDO  F2 EDIT",
+                    MUTED,
+                ),
             ]))
             .style(Style::new().bg(FOOTER_BG)),
             area,
         );
+    }
+
+    fn external_display(&self, address: CellAddress) -> Option<String> {
+        let request = self.external_cells.get(&address)?;
+        Some(match self.external_states.get(request)? {
+            ExternalCellState::Loading => "…LOADING".to_owned(),
+            ExternalCellState::Resolved(MarketDataState::Ready { value, .. }) => {
+                format_value(&CellValue::Number(*value))
+            }
+            ExternalCellState::Resolved(MarketDataState::Stale { value, .. }) => {
+                format!("~{}", format_value(&CellValue::Number(*value)))
+            }
+            ExternalCellState::Resolved(MarketDataState::PermissionDenied { .. }) => {
+                "#DENIED".to_owned()
+            }
+            ExternalCellState::Resolved(MarketDataState::Unavailable { .. }) => "#N/A".to_owned(),
+        })
+    }
+
+    fn selected_external_status(&self) -> Option<String> {
+        let request = self.external_cells.get(&self.cursor)?;
+        Some(match self.external_states.get(request)? {
+            ExternalCellState::Loading => {
+                format!("LOADING · {} · {}", request.security, request.field)
+            }
+            ExternalCellState::Resolved(MarketDataState::Ready { provenance, .. }) => format!(
+                "{} · {} · {} · OBS {} · RX {} · {}",
+                request.security,
+                request.field,
+                provenance.provider,
+                provenance.observed_at,
+                provenance.received_at,
+                provenance.quality.label(),
+            ),
+            ExternalCellState::Resolved(MarketDataState::Stale { provenance, .. }) => format!(
+                "STALE · {} · {} · {} · OBS {} · RX {} · {}",
+                request.security,
+                request.field,
+                provenance.provider,
+                provenance.observed_at,
+                provenance.received_at,
+                provenance.quality.label(),
+            ),
+            ExternalCellState::Resolved(MarketDataState::PermissionDenied { provider }) => {
+                format!(
+                    "PERMISSION DENIED · {} · {} · {provider}",
+                    request.security, request.field
+                )
+            }
+            ExternalCellState::Resolved(MarketDataState::Unavailable { reason }) => {
+                format!(
+                    "UNAVAILABLE · {} · {} · {reason}",
+                    request.security, request.field
+                )
+            }
+        })
     }
 }
 
@@ -499,12 +821,18 @@ impl Workspace for SpreadsheetWorkspace {
         }
     }
 
-    fn hotkey(&self) -> Option<char> { None }
+    fn hotkey(&self) -> Option<char> {
+        None
+    }
 
-    fn is_favorite(&self) -> bool { true }
+    fn is_favorite(&self) -> bool {
+        true
+    }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
-        let Some(first) = invocation.args.first() else { return true };
+        let Some(first) = invocation.args.first() else {
+            return true;
+        };
         if let Ok(address) = first.parse::<CellAddress>() {
             self.cursor = address;
             self.first_column = address.column();
@@ -519,18 +847,28 @@ impl Workspace for SpreadsheetWorkspace {
             "ADD" | "NEW" => self.add_sheet((!name.is_empty()).then_some(name)),
             "NEXT" => self.select_adjacent_sheet(true),
             "PREV" | "PREVIOUS" => self.select_adjacent_sheet(false),
-            "SELECT" if name.is_empty() => self.status = "ERROR · SHEET SELECT REQUIRES A NAME".to_owned(),
+            "SELECT" if name.is_empty() => {
+                self.status = "ERROR · SHEET SELECT REQUIRES A NAME".to_owned()
+            }
             "SELECT" => self.select_sheet(&name),
-            "RENAME" if name.is_empty() => self.status = "ERROR · SHEET RENAME REQUIRES A NAME".to_owned(),
+            "RENAME" if name.is_empty() => {
+                self.status = "ERROR · SHEET RENAME REQUIRES A NAME".to_owned()
+            }
             "RENAME" => match self.spreadsheet.rename_active_sheet(name) {
                 Ok(()) => {
-                    self.status = format!("RENAMED SHEET {}", self.spreadsheet.workbook().active_sheet().name());
+                    self.status = format!(
+                        "RENAMED SHEET {}",
+                        self.spreadsheet.workbook().active_sheet().name()
+                    );
                 }
                 Err(error) => self.status = format!("ERROR · {error}"),
             },
             "DELETE" | "REMOVE" => match self.spreadsheet.remove_active_sheet() {
                 Ok(()) => {
-                    self.status = format!("REMOVED SHEET · NOW ON {}", self.spreadsheet.workbook().active_sheet().name());
+                    self.status = format!(
+                        "REMOVED SHEET · NOW ON {}",
+                        self.spreadsheet.workbook().active_sheet().name()
+                    );
                 }
                 Err(error) => self.status = format!("ERROR · {error}"),
             },
@@ -566,13 +904,108 @@ impl Workspace for SpreadsheetWorkspace {
             KeyCode::Enter | KeyCode::F(2) => self.begin_edit(None),
             KeyCode::Char('=') => self.begin_edit(Some("=")),
             KeyCode::Delete => self.clear_selected(),
-            KeyCode::F(9) => {
-                self.refresh_market_data();
-                self.status = "MARKET DATA REFRESHED".to_owned();
-            }
+            KeyCode::F(9) => self.refresh_market_data(),
             _ => return false,
         }
         true
+    }
+
+    fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
+        let regions = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(area);
+        if let Some(key) = scroll_key(event, regions[1]) {
+            return self.handle_key(key);
+        }
+        if is_primary_click(event, regions[0]) {
+            if self.edit.is_none() {
+                self.begin_edit(None);
+            }
+            return true;
+        }
+        if is_primary_click(event, regions[2]) {
+            if self.edit.is_some() {
+                self.commit_edit();
+            }
+            let mut x = regions[2].x;
+            if event.column < x.saturating_add(3) {
+                self.add_sheet(None);
+                return true;
+            }
+            x = x.saturating_add(3);
+            let target = self
+                .spreadsheet
+                .workbook()
+                .sheets()
+                .iter()
+                .enumerate()
+                .find_map(|(index, sheet)| {
+                    let width = format!(" {}:{} ", index + 1, sheet.name()).chars().count() as u16;
+                    let hit = event.column >= x && event.column < x.saturating_add(width);
+                    x = x.saturating_add(width).saturating_add(1);
+                    hit.then(|| sheet.name().to_owned())
+                });
+            if let Some(name) = target {
+                self.select_sheet(&name);
+            }
+            return true;
+        }
+        if !is_primary_click(event, regions[1]) {
+            return false;
+        }
+        if self.edit.is_some() {
+            self.commit_edit();
+        }
+
+        let grid = regions[1];
+        let available_width = grid.width.saturating_sub(ROW_HEADER_WIDTH + 3);
+        let columns = (available_width / (CELL_WIDTH + 1))
+            .max(1)
+            .min(u16::from(MAX_COLUMNS - self.first_column + 1)) as u8;
+        let rows = grid
+            .height
+            .saturating_sub(3)
+            .max(1)
+            .min(MAX_ROWS - self.first_row + 1);
+        let data_y = grid.y.saturating_add(2);
+        if event.row < data_y || event.row >= data_y.saturating_add(rows) {
+            return true;
+        }
+        let row = self.first_row.saturating_add(event.row - data_y);
+        let row_header_x = grid.x.saturating_add(1);
+        let data_x = row_header_x.saturating_add(ROW_HEADER_WIDTH + 1);
+        let column = if event.column >= row_header_x
+            && event.column < row_header_x.saturating_add(ROW_HEADER_WIDTH)
+        {
+            self.cursor.column()
+        } else if event.column >= data_x {
+            let relative = event.column - data_x;
+            let offset = relative / (CELL_WIDTH + 1);
+            if offset >= u16::from(columns) || relative % (CELL_WIDTH + 1) >= CELL_WIDTH {
+                return true;
+            }
+            self.first_column.saturating_add(offset as u8)
+        } else {
+            return true;
+        };
+        self.cursor = CellAddress::new(column, row).expect("visible grid click is in bounds");
+        self.status = format!("SELECTED {}", self.cursor);
+        true
+    }
+
+    fn poll_intents(&mut self) -> Vec<crate::app::AppIntent> {
+        self.poll_market_data();
+        Vec::new()
+    }
+
+    fn on_blur(&mut self) {
+        if self.edit.is_some() {
+            self.cancel_edit();
+        }
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
@@ -606,6 +1039,10 @@ fn format_value(value: &CellValue) -> String {
 fn value_style(value: &str) -> Style {
     if value.starts_with('#') {
         Style::new().fg(RED)
+    } else if value.starts_with('…') {
+        Style::new().fg(YELLOW)
+    } else if value.starts_with('~') {
+        Style::new().fg(AMBER)
     } else {
         Style::new().fg(INK)
     }
@@ -616,7 +1053,13 @@ fn truncate(value: &str, width: usize) -> String {
     let mut characters = value.chars();
     let shortened = characters.by_ref().take(max).collect::<String>();
     if characters.next().is_some() && max > 0 {
-        format!("{}…", shortened.chars().take(max.saturating_sub(1)).collect::<String>())
+        format!(
+            "{}…",
+            shortened
+                .chars()
+                .take(max.saturating_sub(1))
+                .collect::<String>()
+        )
     } else {
         shortened
     }
@@ -625,7 +1068,17 @@ fn truncate(value: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::spreadsheet::MarketDataPoint;
+    use crate::features::spreadsheet::{MarketDataPoint, MarketDataProvenance, MarketDataQuality};
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    fn provenance() -> MarketDataProvenance {
+        MarketDataProvenance {
+            provider: "TEST FEED".to_owned(),
+            observed_at: "2026-08-26T13:00:00-07:00".to_owned(),
+            received_at: "2026-08-26T13:00:01-07:00".to_owned(),
+            quality: MarketDataQuality::Realtime,
+        }
+    }
 
     struct StubMarketData;
 
@@ -642,31 +1095,74 @@ mod tests {
                         (_, "CHG_PCT_1D") => 1.0,
                         _ => return None,
                     };
-                    Some(MarketDataPoint {
-                        request: request.clone(),
-                        value,
-                    })
+                    Some(MarketDataPoint::ready(request.clone(), value, provenance()))
                 })
                 .collect()
         }
     }
 
     fn workspace() -> SpreadsheetWorkspace {
-        SpreadsheetWorkspace::new(Arc::new(StubMarketData))
+        let mut workspace = SpreadsheetWorkspace::new(Arc::new(StubMarketData));
+        wait_for_data(&mut workspace);
+        workspace
     }
 
-    fn key(code: KeyCode) -> KeyEvent { KeyEvent::new(code, KeyModifiers::NONE) }
+    fn wait_for_data(workspace: &mut SpreadsheetWorkspace) {
+        for _ in 0..100 {
+            workspace.poll_market_data();
+            if !workspace
+                .external_states
+                .values()
+                .any(|state| matches!(state, ExternalCellState::Loading))
+            {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        panic!("spreadsheet market-data worker did not respond");
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
 
     fn modified_key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
         KeyEvent::new(code, modifiers)
     }
 
+    fn click(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
     #[test]
     fn seeds_market_data_and_formulas() {
         let workspace = workspace();
-        assert_eq!(workspace.spreadsheet.cell("A2").unwrap().raw, "SPY US Equity");
-        assert_eq!(workspace.spreadsheet.cell("E2").unwrap().value, CellValue::Number(132_617.5));
-        assert!(matches!(workspace.spreadsheet.cell("E7").unwrap().value, CellValue::Number(_)));
+        assert_eq!(
+            workspace.spreadsheet.cell("A2").unwrap().raw,
+            "SPY US Equity"
+        );
+        assert_eq!(
+            workspace.spreadsheet.cell("B2").unwrap().raw,
+            "=PX_LAST(A2)"
+        );
+        assert_eq!(
+            workspace.spreadsheet.cell("C2").unwrap().raw,
+            "=PX_CHANGE(A2, \"1D\")"
+        );
+        let evaluated = workspace.evaluated_spreadsheet();
+        assert_eq!(
+            evaluated.cell("E2").unwrap().value,
+            CellValue::Number(132_617.5)
+        );
+        assert!(matches!(
+            evaluated.cell("E7").unwrap().value,
+            CellValue::Number(_)
+        ));
         let forward_revenue = workspace
             .spreadsheet
             .cell("B12")
@@ -679,14 +1175,84 @@ mod tests {
     }
 
     #[test]
+    fn financial_cells_begin_loading_and_expose_provenance_when_ready() {
+        let loading = SpreadsheetWorkspace::new(Arc::new(StubMarketData));
+        assert_eq!(
+            loading.external_display("B2".parse().unwrap()),
+            Some("…LOADING".to_owned())
+        );
+
+        let mut ready = workspace();
+        ready.cursor = "B2".parse().unwrap();
+        let status = ready.selected_external_status().unwrap();
+        assert!(status.contains("SPY US Equity · PX_LAST · TEST FEED"));
+        assert!(status.contains("OBS 2026-08-26T13:00:00-07:00"));
+        assert!(status.contains("REALTIME"));
+    }
+
+    #[test]
+    fn financial_cells_render_stale_permission_and_unavailable_states() {
+        let mut workspace = workspace();
+        let spy = MarketDataRequest::new("SPY US Equity", "PX_LAST");
+        let qqq = MarketDataRequest::new("QQQ US Equity", "PX_LAST");
+        let avgo = MarketDataRequest::new("AVGO US Equity", "PX_LAST");
+        workspace.external_states.insert(
+            spy,
+            ExternalCellState::Resolved(MarketDataState::Stale {
+                value: 529.0,
+                provenance: provenance(),
+            }),
+        );
+        workspace.external_states.insert(
+            qqq,
+            ExternalCellState::Resolved(MarketDataState::PermissionDenied {
+                provider: "TEST FEED".to_owned(),
+            }),
+        );
+        workspace.external_states.insert(
+            avgo,
+            ExternalCellState::Resolved(MarketDataState::Unavailable {
+                reason: "no observation".to_owned(),
+            }),
+        );
+
+        assert_eq!(
+            workspace.external_display("B2".parse().unwrap()),
+            Some("~529".to_owned())
+        );
+        assert_eq!(
+            workspace.external_display("B3".parse().unwrap()),
+            Some("#DENIED".to_owned())
+        );
+        assert_eq!(
+            workspace.external_display("B4".parse().unwrap()),
+            Some("#N/A".to_owned())
+        );
+    }
+
+    #[test]
     fn navigation_is_bounded_and_scrolls_the_viewport() {
         let mut workspace = workspace();
         workspace.visible_rows.set(3);
-        for _ in 0..5 { assert!(workspace.handle_key(key(KeyCode::Down))); }
+        for _ in 0..5 {
+            assert!(workspace.handle_key(key(KeyCode::Down)));
+        }
         assert_eq!(workspace.cursor.to_string(), "A6");
         assert_eq!(workspace.first_row, 4);
         workspace.handle_key(key(KeyCode::Left));
         assert_eq!(workspace.cursor.to_string(), "A6");
+    }
+
+    #[test]
+    fn clicking_grid_cells_and_formula_bar_updates_focus() {
+        let mut workspace = workspace();
+        let area = Rect::new(0, 0, 120, 30);
+
+        assert!(workspace.handle_mouse(click(34, 7), area));
+        assert_eq!(workspace.cursor.to_string(), "C3");
+
+        assert!(workspace.handle_mouse(click(20, 1), area));
+        assert!(workspace.edit.is_some());
     }
 
     #[test]
@@ -698,7 +1264,11 @@ mod tests {
         }
         assert!(workspace.handle_key(key(KeyCode::Enter)));
         assert!(workspace.edit.is_none());
-        assert!(matches!(workspace.spreadsheet.cell("A1").unwrap().value, CellValue::Number(_)));
+        wait_for_data(&mut workspace);
+        assert!(matches!(
+            workspace.evaluated_spreadsheet().cell("A1").unwrap().value,
+            CellValue::Number(_)
+        ));
     }
 
     #[test]
@@ -733,38 +1303,32 @@ mod tests {
         workspace.handle_key(key(KeyCode::Enter));
         assert_eq!(workspace.spreadsheet.cell("A1").unwrap().raw, "x");
 
-        assert!(workspace.handle_key(modified_key(
-            KeyCode::Char('z'),
-            KeyModifiers::CONTROL,
-        )));
+        assert!(workspace.handle_key(modified_key(KeyCode::Char('z'), KeyModifiers::CONTROL,)));
         assert_eq!(workspace.spreadsheet.cell("A1").unwrap().raw, original);
-        assert!(workspace.handle_key(modified_key(
-            KeyCode::Char('y'),
-            KeyModifiers::CONTROL,
-        )));
+        assert!(workspace.handle_key(modified_key(KeyCode::Char('y'), KeyModifiers::CONTROL,)));
         assert_eq!(workspace.spreadsheet.cell("A1").unwrap().raw, "x");
     }
 
     #[test]
     fn keyboard_creates_and_cycles_workbook_tabs() {
         let mut workspace = workspace();
-        assert!(workspace.handle_key(modified_key(
-            KeyCode::F(11),
-            KeyModifiers::SHIFT,
-        )));
+        assert!(workspace.handle_key(modified_key(KeyCode::F(11), KeyModifiers::SHIFT,)));
         assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 3);
-        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Sheet3");
+        assert_eq!(
+            workspace.spreadsheet.workbook().active_sheet().name(),
+            "Sheet3"
+        );
 
-        assert!(workspace.handle_key(modified_key(
-            KeyCode::PageUp,
-            KeyModifiers::CONTROL,
-        )));
-        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Assumptions");
-        assert!(workspace.handle_key(modified_key(
-            KeyCode::PageDown,
-            KeyModifiers::CONTROL,
-        )));
-        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Sheet3");
+        assert!(workspace.handle_key(modified_key(KeyCode::PageUp, KeyModifiers::CONTROL,)));
+        assert_eq!(
+            workspace.spreadsheet.workbook().active_sheet().name(),
+            "Assumptions"
+        );
+        assert!(workspace.handle_key(modified_key(KeyCode::PageDown, KeyModifiers::CONTROL,)));
+        assert_eq!(
+            workspace.spreadsheet.workbook().active_sheet().name(),
+            "Sheet3"
+        );
     }
 
     #[test]
@@ -774,12 +1338,18 @@ mod tests {
             function: "SHEET".to_owned(),
             args: vec!["ADD".to_owned(), "DCF".to_owned(), "Model".to_owned()],
         });
-        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "DCF Model");
+        assert_eq!(
+            workspace.spreadsheet.workbook().active_sheet().name(),
+            "DCF Model"
+        );
         workspace.handle_command(&CommandInvocation {
             function: "SHEET".to_owned(),
             args: vec!["RENAME".to_owned(), "Base".to_owned(), "Case".to_owned()],
         });
-        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Base Case");
+        assert_eq!(
+            workspace.spreadsheet.workbook().active_sheet().name(),
+            "Base Case"
+        );
 
         workspace.handle_command(&CommandInvocation {
             function: "SHEET".to_owned(),
@@ -788,7 +1358,10 @@ mod tests {
         assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 2);
         workspace.handle_key(modified_key(KeyCode::Char('z'), KeyModifiers::CONTROL));
         assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 3);
-        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Base Case");
+        assert_eq!(
+            workspace.spreadsheet.workbook().active_sheet().name(),
+            "Base Case"
+        );
     }
 
     #[test]

@@ -67,9 +67,11 @@ fn anchor_price(symbol: &str, seed: u64) -> f64 {
 }
 
 fn stable_hash(value: &str) -> u64 {
-    value.bytes().fold(14_695_981_039_346_656_037, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(1_099_511_628_211)
-    })
+    value
+        .bytes()
+        .fold(14_695_981_039_346_656_037, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(1_099_511_628_211)
+        })
 }
 
 #[cfg(test)]
@@ -95,17 +97,22 @@ mod tests {
     fn periods_have_stable_expected_observation_counts() {
         let adapter = DemoChartHistory;
         for period in ChartPeriod::ALL {
-            let request = HistoryRequest::new(
-                ChartInstrument::from_terminal_subject("MSFT"),
-                period,
-            );
+            let request =
+                HistoryRequest::new(ChartInstrument::from_terminal_subject("MSFT"), period);
             let history = adapter.load_history(&request).unwrap();
             assert_eq!(history.bars.len(), period.sample_count());
-            assert!(history.bars.windows(2).all(|bars| bars[0].timestamp < bars[1].timestamp));
-            assert!(history
-                .bars
-                .iter()
-                .all(|bar| bar.low <= bar.open && bar.open <= bar.high));
+            assert!(
+                history
+                    .bars
+                    .windows(2)
+                    .all(|bars| bars[0].timestamp < bars[1].timestamp)
+            );
+            assert!(
+                history
+                    .bars
+                    .iter()
+                    .all(|bar| bar.low <= bar.open && bar.open <= bar.high)
+            );
         }
     }
 

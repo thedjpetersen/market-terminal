@@ -76,19 +76,25 @@ pub struct CellReference {
 }
 
 impl CellReference {
-    pub const fn new(
-        address: CellAddress,
-        absolute_column: bool,
-        absolute_row: bool,
-    ) -> Self {
-        Self { address, absolute_column, absolute_row }
+    pub const fn new(address: CellAddress, absolute_column: bool, absolute_row: bool) -> Self {
+        Self {
+            address,
+            absolute_column,
+            absolute_row,
+        }
     }
 
-    pub const fn address(self) -> CellAddress { self.address }
+    pub const fn address(self) -> CellAddress {
+        self.address
+    }
 
-    pub const fn absolute_column(self) -> bool { self.absolute_column }
+    pub const fn absolute_column(self) -> bool {
+        self.absolute_column
+    }
 
-    pub const fn absolute_row(self) -> bool { self.absolute_row }
+    pub const fn absolute_row(self) -> bool {
+        self.absolute_row
+    }
 
     pub fn translated(self, column_delta: i16, row_delta: i32) -> Result<Self, AddressError> {
         let column = if self.absolute_column {
@@ -216,15 +222,27 @@ mod tests {
 
     #[test]
     fn rejects_addresses_outside_the_sheet() {
-        assert_eq!("AA1".parse::<CellAddress>(), Err(AddressError::InvalidFormat));
-        assert_eq!("A0".parse::<CellAddress>(), Err(AddressError::RowOutOfBounds(0)));
-        assert_eq!("Z101".parse::<CellAddress>(), Err(AddressError::RowOutOfBounds(101)));
+        assert_eq!(
+            "AA1".parse::<CellAddress>(),
+            Err(AddressError::InvalidFormat)
+        );
+        assert_eq!(
+            "A0".parse::<CellAddress>(),
+            Err(AddressError::RowOutOfBounds(0))
+        );
+        assert_eq!(
+            "Z101".parse::<CellAddress>(),
+            Err(AddressError::RowOutOfBounds(101))
+        );
     }
 
     #[test]
     fn ranges_are_normalized_and_iterate_by_row() {
         let range = CellRange::new("B2".parse().unwrap(), "A1".parse().unwrap());
-        let addresses = range.addresses().map(|address| address.to_string()).collect::<Vec<_>>();
+        let addresses = range
+            .addresses()
+            .map(|address| address.to_string())
+            .collect::<Vec<_>>();
         assert_eq!(addresses, ["A1", "B1", "A2", "B2"]);
     }
 

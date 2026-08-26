@@ -5,7 +5,7 @@ mod workspace;
 pub use domain::{
     EventImportance, Headline, NewsEvent, NewsFilter, NewsSnapshot, NewsStory, NewsWorkbench,
 };
-pub use port::NewsQuery;
+pub use port::{NewsArticleOpenError, NewsArticleOpener, NewsFeed};
 pub use workspace::NewsWorkspace;
 
 use crate::app::WorkspaceId;

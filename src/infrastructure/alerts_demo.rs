@@ -12,16 +12,25 @@ pub struct DemoAlertsReplay {
 }
 
 impl DemoAlertsReplay {
-    pub fn new() -> Self { Self { cursor: Mutex::new(0) } }
+    pub fn new() -> Self {
+        Self {
+            cursor: Mutex::new(0),
+        }
+    }
 }
 
 impl Default for DemoAlertsReplay {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AlertsQuery for DemoAlertsReplay {
     fn load_snapshot(&self) -> AlertSnapshot {
-        let mut cursor = self.cursor.lock().expect("demo alerts replay cursor poisoned");
+        let mut cursor = self
+            .cursor
+            .lock()
+            .expect("demo alerts replay cursor poisoned");
         let frame = ALERT_FRAMES[(*cursor).min(ALERT_FRAMES.len() - 1)];
         *cursor = (*cursor + 1).min(ALERT_FRAMES.len() - 1);
 
@@ -29,7 +38,12 @@ impl AlertsQuery for DemoAlertsReplay {
             frame.sequence,
             frame.as_of,
             (frame.sequence == 0).then(demo_rules).unwrap_or_default(),
-            frame.observations.iter().copied().map(DemoObservation::into_domain).collect(),
+            frame
+                .observations
+                .iter()
+                .copied()
+                .map(DemoObservation::into_domain)
+                .collect(),
             "DETERMINISTIC REPLAY · SIMULATED LOCAL",
         )
     }
@@ -87,27 +101,93 @@ impl DemoObservation {
 }
 
 const FRAME_0: [DemoObservation; 3] = [
-    observation("alert-replay-0-aapl", "us:xnas:aapl", 205.30, 0.84, "2026-08-25T20:00:00Z"),
-    observation("alert-replay-0-nvda", "us:xnas:nvda", 184.92, 2.36, "2026-08-25T20:00:00Z"),
-    observation("alert-replay-0-spy", "us:arcx:spy", 653.28, 0.64, "2026-08-25T20:00:00Z"),
+    observation(
+        "alert-replay-0-aapl",
+        "us:xnas:aapl",
+        205.30,
+        0.84,
+        "2026-08-25T20:00:00Z",
+    ),
+    observation(
+        "alert-replay-0-nvda",
+        "us:xnas:nvda",
+        184.92,
+        2.36,
+        "2026-08-25T20:00:00Z",
+    ),
+    observation(
+        "alert-replay-0-spy",
+        "us:arcx:spy",
+        653.28,
+        0.64,
+        "2026-08-25T20:00:00Z",
+    ),
 ];
 
 const FRAME_1: [DemoObservation; 3] = [
-    observation("alert-replay-1-aapl", "us:xnas:aapl", 205.36, 0.87, "2026-08-25T20:00:01Z"),
-    observation("alert-replay-1-nvda", "us:xnas:nvda", 185.10, 2.45, "2026-08-25T20:00:01Z"),
-    observation("alert-replay-1-spy", "us:arcx:spy", 649.80, -0.54, "2026-08-25T20:00:01Z"),
+    observation(
+        "alert-replay-1-aapl",
+        "us:xnas:aapl",
+        205.36,
+        0.87,
+        "2026-08-25T20:00:01Z",
+    ),
+    observation(
+        "alert-replay-1-nvda",
+        "us:xnas:nvda",
+        185.10,
+        2.45,
+        "2026-08-25T20:00:01Z",
+    ),
+    observation(
+        "alert-replay-1-spy",
+        "us:arcx:spy",
+        649.80,
+        -0.54,
+        "2026-08-25T20:00:01Z",
+    ),
 ];
 
 const FRAME_2: [DemoObservation; 3] = [
-    observation("alert-replay-2-aapl", "us:xnas:aapl", 205.42, 0.90, "2026-08-25T20:00:02Z"),
-    observation("alert-replay-2-nvda", "us:xnas:nvda", 183.40, 1.50, "2026-08-25T20:00:02Z"),
-    observation("alert-replay-2-spy", "us:arcx:spy", 649.50, -0.58, "2026-08-25T20:00:02Z"),
+    observation(
+        "alert-replay-2-aapl",
+        "us:xnas:aapl",
+        205.42,
+        0.90,
+        "2026-08-25T20:00:02Z",
+    ),
+    observation(
+        "alert-replay-2-nvda",
+        "us:xnas:nvda",
+        183.40,
+        1.50,
+        "2026-08-25T20:00:02Z",
+    ),
+    observation(
+        "alert-replay-2-spy",
+        "us:arcx:spy",
+        649.50,
+        -0.58,
+        "2026-08-25T20:00:02Z",
+    ),
 ];
 
 const ALERT_FRAMES: [DemoFrame; 3] = [
-    DemoFrame { sequence: 0, as_of: "2026-08-25T20:00:00Z", observations: &FRAME_0 },
-    DemoFrame { sequence: 1, as_of: "2026-08-25T20:00:01Z", observations: &FRAME_1 },
-    DemoFrame { sequence: 2, as_of: "2026-08-25T20:00:02Z", observations: &FRAME_2 },
+    DemoFrame {
+        sequence: 0,
+        as_of: "2026-08-25T20:00:00Z",
+        observations: &FRAME_0,
+    },
+    DemoFrame {
+        sequence: 1,
+        as_of: "2026-08-25T20:00:01Z",
+        observations: &FRAME_1,
+    },
+    DemoFrame {
+        sequence: 2,
+        as_of: "2026-08-25T20:00:02Z",
+        observations: &FRAME_2,
+    },
 ];
 
 const fn observation(
@@ -117,7 +197,13 @@ const fn observation(
     percent_move: f64,
     observed_at: &'static str,
 ) -> DemoObservation {
-    DemoObservation { evaluation_id, instrument_id, price, percent_move, observed_at }
+    DemoObservation {
+        evaluation_id,
+        instrument_id,
+        price,
+        percent_move,
+        observed_at,
+    }
 }
 
 #[cfg(test)]

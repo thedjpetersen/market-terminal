@@ -6,8 +6,8 @@ use std::{
 };
 
 use super::{
-    parse_formula, AggregateFunction, BinaryOperator, Cell, CellAddress, CellError, CellValue, Expr,
-    UnaryOperator,
+    parse_formula, AggregateFunction, BinaryOperator, Cell, CellAddress, CellError, CellValue,
+    Expr, UnaryOperator,
 };
 
 #[derive(Debug, Clone)]
@@ -128,7 +128,11 @@ impl Worksheet {
             })
             .unwrap_or_default();
         for dependency in &dependencies {
-            state.dependents.entry(*dependency).or_default().insert(address);
+            state
+                .dependents
+                .entry(*dependency)
+                .or_default()
+                .insert(address);
         }
         if !dependencies.is_empty() {
             state.dependencies.insert(address, dependencies);
@@ -213,7 +217,11 @@ impl Worksheet {
                     UnaryOperator::Minus => -number,
                 }))
             }
-            Expr::Binary { left, operator, right } => {
+            Expr::Binary {
+                left,
+                operator,
+                right,
+            } => {
                 let left = self.evaluate_expression(left, stack, cache)?;
                 let right = self.evaluate_expression(right, stack, cache)?;
                 if let CellValue::Error(error) = &left {
@@ -247,7 +255,8 @@ impl Worksheet {
                     | BinaryOperator::LessThanOrEqual
                     | BinaryOperator::GreaterThan
                     | BinaryOperator::GreaterThanOrEqual => {
-                        let ordering = compare_values(&left, &right).ok_or(CellError::InvalidValue)?;
+                        let ordering =
+                            compare_values(&left, &right).ok_or(CellError::InvalidValue)?;
                         let matches = match operator {
                             BinaryOperator::LessThan => ordering == Ordering::Less,
                             BinaryOperator::LessThanOrEqual => ordering != Ordering::Greater,
@@ -259,9 +268,10 @@ impl Worksheet {
                     }
                 }
             }
-            Expr::Function { function, arguments } => {
-                self.evaluate_function(*function, arguments, stack, cache)
-            }
+            Expr::Function {
+                function,
+                arguments,
+            } => self.evaluate_function(*function, arguments, stack, cache),
         }
     }
 
@@ -276,7 +286,11 @@ impl Worksheet {
             AggregateFunction::If => {
                 expect_arity(arguments, 3, 3)?;
                 let condition = self.evaluate_expression(&arguments[0], stack, cache)?;
-                let branch = if truthy(&condition)? { &arguments[1] } else { &arguments[2] };
+                let branch = if truthy(&condition)? {
+                    &arguments[1]
+                } else {
+                    &arguments[2]
+                };
                 self.evaluate_expression(branch, stack, cache)
             }
             AggregateFunction::And | AggregateFunction::Or => {
@@ -308,7 +322,9 @@ impl Worksheet {
             AggregateFunction::Length => {
                 expect_arity(arguments, 1, 1)?;
                 let value = self.evaluate_expression(&arguments[0], stack, cache)?;
-                Ok(CellValue::Number(value_as_text(value)?.chars().count() as f64))
+                Ok(CellValue::Number(
+                    value_as_text(value)?.chars().count() as f64
+                ))
             }
             AggregateFunction::Absolute => {
                 expect_arity(arguments, 1, 1)?;
@@ -328,9 +344,14 @@ impl Worksheet {
                     return Err(CellError::InvalidValue);
                 }
                 let factor = 10_f64.powi(digits as i32);
-                Ok(CellValue::Number((self.number(value)? * factor).round() / factor))
+                Ok(CellValue::Number(
+                    (self.number(value)? * factor).round() / factor,
+                ))
             }
             AggregateFunction::XLookup => self.evaluate_xlookup(arguments, stack, cache),
+            AggregateFunction::PriceLast | AggregateFunction::PriceChange => {
+                Err(CellError::NotAvailable)
+            }
             AggregateFunction::Sum
             | AggregateFunction::Average
             | AggregateFunction::Minimum
@@ -340,7 +361,10 @@ impl Worksheet {
                 let values = self.evaluate_arguments(arguments, stack, cache)?;
                 if function == AggregateFunction::CountA {
                     return Ok(CellValue::Number(
-                        values.iter().filter(|value| !matches!(value, CellValue::Blank)).count() as f64,
+                        values
+                            .iter()
+                            .filter(|value| !matches!(value, CellValue::Blank))
+                            .count() as f64,
                     ));
                 }
                 let numbers = values
@@ -371,7 +395,11 @@ impl Worksheet {
                 if !self.reference_is_local(range.sheet()) {
                     return Err(CellError::InvalidReference);
                 }
-                values.extend(range.addresses().map(|address| self.evaluate_cell(address, stack, cache)));
+                values.extend(
+                    range
+                        .addresses()
+                        .map(|address| self.evaluate_cell(address, stack, cache)),
+                );
             } else {
                 values.push(self.evaluate_expression(argument, stack, cache)?);
             }
@@ -431,8 +459,16 @@ impl Worksheet {
             AggregateFunction::Sum => Ok(numbers.iter().sum()),
             AggregateFunction::Average if numbers.is_empty() => Err(CellError::DivisionByZero),
             AggregateFunction::Average => Ok(numbers.iter().sum::<f64>() / numbers.len() as f64),
-            AggregateFunction::Minimum => numbers.iter().copied().reduce(f64::min).ok_or(CellError::InvalidValue),
-            AggregateFunction::Maximum => numbers.iter().copied().reduce(f64::max).ok_or(CellError::InvalidValue),
+            AggregateFunction::Minimum => numbers
+                .iter()
+                .copied()
+                .reduce(f64::min)
+                .ok_or(CellError::InvalidValue),
+            AggregateFunction::Maximum => numbers
+                .iter()
+                .copied()
+                .reduce(f64::max)
+                .ok_or(CellError::InvalidValue),
             _ => Err(CellError::InvalidValue),
         }
     }
@@ -579,10 +615,22 @@ mod tests {
         sheet.set(address("A2"), "=A1+1");
         sheet.set(address("A3"), "=SUM(");
         sheet.set(address("A4"), "=MISSING(A1)");
-        assert_eq!(sheet.value(address("A1")), CellValue::Error(CellError::DivisionByZero));
-        assert_eq!(sheet.value(address("A2")), CellValue::Error(CellError::DivisionByZero));
-        assert_eq!(sheet.value(address("A3")), CellValue::Error(CellError::Parse));
-        assert_eq!(sheet.value(address("A4")), CellValue::Error(CellError::UnknownFunction));
+        assert_eq!(
+            sheet.value(address("A1")),
+            CellValue::Error(CellError::DivisionByZero)
+        );
+        assert_eq!(
+            sheet.value(address("A2")),
+            CellValue::Error(CellError::DivisionByZero)
+        );
+        assert_eq!(
+            sheet.value(address("A3")),
+            CellValue::Error(CellError::Parse)
+        );
+        assert_eq!(
+            sheet.value(address("A4")),
+            CellValue::Error(CellError::UnknownFunction)
+        );
     }
 
     #[test]
@@ -591,9 +639,18 @@ mod tests {
         sheet.set(address("A1"), "=A1");
         sheet.set(address("B1"), "=C1+1");
         sheet.set(address("C1"), "=B1+1");
-        assert_eq!(sheet.value(address("A1")), CellValue::Error(CellError::CircularReference));
-        assert_eq!(sheet.value(address("B1")), CellValue::Error(CellError::CircularReference));
-        assert_eq!(sheet.value(address("C1")), CellValue::Error(CellError::CircularReference));
+        assert_eq!(
+            sheet.value(address("A1")),
+            CellValue::Error(CellError::CircularReference)
+        );
+        assert_eq!(
+            sheet.value(address("B1")),
+            CellValue::Error(CellError::CircularReference)
+        );
+        assert_eq!(
+            sheet.value(address("C1")),
+            CellValue::Error(CellError::CircularReference)
+        );
     }
 
     #[test]
@@ -604,7 +661,10 @@ mod tests {
         sheet.set(address("B2"), "=IF(A1 = 12, 42, 1 / 0)");
         sheet.set(address("B3"), "=A1 <> 12");
         sheet.set(address("B4"), "=\"alpha\" < \"beta\"");
-        assert_eq!(sheet.value(address("B1")), CellValue::Text("large".to_owned()));
+        assert_eq!(
+            sheet.value(address("B1")),
+            CellValue::Text("large".to_owned())
+        );
         assert_eq!(sheet.value(address("B2")), CellValue::Number(42.0));
         assert_eq!(sheet.value(address("B3")), CellValue::Number(0.0));
         assert_eq!(sheet.value(address("B4")), CellValue::Number(1.0));
@@ -623,7 +683,10 @@ mod tests {
         sheet.set(address("B4"), "=COUNT(A1:A4)");
         sheet.set(address("B5"), "=COUNTA(A1:A4)");
         sheet.set(address("B6"), "=AND(A2 > 3, NOT(A4 > 0))");
-        assert_eq!(sheet.value(address("B1")), CellValue::Text("north-3.14".to_owned()));
+        assert_eq!(
+            sheet.value(address("B1")),
+            CellValue::Text("north-3.14".to_owned())
+        );
         assert_eq!(sheet.value(address("B2")), CellValue::Number(10.0));
         assert_eq!(sheet.value(address("B3")), CellValue::Number(4.0));
         assert_eq!(sheet.value(address("B4")), CellValue::Number(2.0));
@@ -641,11 +704,20 @@ mod tests {
         sheet.set(address("B2"), "780");
         sheet.set(address("B3"), "230");
         sheet.set(address("C1"), "=XLOOKUP(\"META\", A1:A3, B1:B3)");
-        sheet.set(address("C2"), "=XLOOKUP(\"NVDA\", A1:A3, B1:B3, \"missing\")");
+        sheet.set(
+            address("C2"),
+            "=XLOOKUP(\"NVDA\", A1:A3, B1:B3, \"missing\")",
+        );
         sheet.set(address("C3"), "=XLOOKUP(\"NVDA\", A1:A3, B1:B3)");
         assert_eq!(sheet.value(address("C1")), CellValue::Number(780.0));
-        assert_eq!(sheet.value(address("C2")), CellValue::Text("missing".to_owned()));
-        assert_eq!(sheet.value(address("C3")), CellValue::Error(CellError::NotAvailable));
+        assert_eq!(
+            sheet.value(address("C2")),
+            CellValue::Text("missing".to_owned())
+        );
+        assert_eq!(
+            sheet.value(address("C3")),
+            CellValue::Error(CellError::NotAvailable)
+        );
     }
 
     #[test]
@@ -691,7 +763,10 @@ mod tests {
         let mut sheet = Worksheet::new("Model").unwrap();
         sheet.set(address("A1"), "=B1");
         sheet.set(address("B1"), "=A1");
-        assert_eq!(sheet.value(address("A1")), CellValue::Error(CellError::CircularReference));
+        assert_eq!(
+            sheet.value(address("A1")),
+            CellValue::Error(CellError::CircularReference)
+        );
 
         sheet.set(address("B1"), "5");
         assert_eq!(sheet.value(address("A1")), CellValue::Number(5.0));

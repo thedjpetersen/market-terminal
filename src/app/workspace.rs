@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{layout::Rect, Frame};
 
 pub(super) const MAX_COMMAND_BYTES: usize = 4_096;
@@ -11,8 +11,12 @@ const MAX_COMMAND_TOKEN_BYTES: usize = 512;
 pub struct WorkspaceId(&'static str);
 
 impl WorkspaceId {
-    pub const fn new(value: &'static str) -> Self { Self(value) }
-    pub const fn as_str(self) -> &'static str { self.0 }
+    pub const fn new(value: &'static str) -> Self {
+        Self(value)
+    }
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,13 +74,16 @@ impl CommandInvocation {
         }
         let function = tokens.remove(0).to_ascii_uppercase();
         if function.is_empty()
-            || !function
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+            || !function.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+            })
         {
             return Err(CommandParseError::InvalidFunction(function));
         }
-        Ok(Self { function, args: tokens })
+        Ok(Self {
+            function,
+            args: tokens,
+        })
     }
 
     /// Returns a typed view over positional values and GNU-style long options.
@@ -92,7 +99,9 @@ impl CommandInvocation {
                 };
                 let (name, value) = option
                     .split_once('=')
-                    .map_or((option, None), |(name, value)| (name, Some(value.to_owned())));
+                    .map_or((option, None), |(name, value)| {
+                        (name, Some(value.to_owned()))
+                    });
                 if name.is_empty()
                     || !name.chars().all(|character| {
                         character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
@@ -206,9 +215,16 @@ pub enum ShellChrome {
 /// importing or mutating `App` directly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppIntent {
-    ActivateWorkspace { target: String },
-    BringWorkspaceForward { target: String },
-    DispatchCommand { command: String, origin: WorkspaceId },
+    ActivateWorkspace {
+        target: String,
+    },
+    BringWorkspaceForward {
+        target: String,
+    },
+    DispatchCommand {
+        command: String,
+        origin: WorkspaceId,
+    },
     RestoreWorkspaceOrder,
 }
 
@@ -218,10 +234,34 @@ pub trait Workspace: Send {
 
     /// Gives the active feature first refusal on navigation-mode input.
     /// Returning `true` prevents application-level routing of the key.
-    fn handle_key(&mut self, _key: KeyEvent) -> bool { false }
+    fn handle_key(&mut self, _key: KeyEvent) -> bool {
+        false
+    }
+
+    /// Gives a feature mouse input relative to the same area used to render it.
+    /// Scroll wheels fall back to the feature's existing up/down navigation.
+    fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
+        if !crate::ui::contains(area, event.column, event.row) {
+            return false;
+        }
+        let key = match event.kind {
+            MouseEventKind::ScrollUp => KeyCode::Up,
+            MouseEventKind::ScrollDown => KeyCode::Down,
+            _ => return false,
+        };
+        self.handle_key(KeyEvent::new(key, KeyModifiers::NONE))
+    }
+
+    /// Releases feature-local input focus when the shell activates another target.
+    fn on_blur(&mut self) {}
+
+    /// Gives a feature focus after the shell opens it directly or in an overlay.
+    fn on_focus(&mut self) {}
 
     /// Receives a command after its function alias resolves to this workspace.
-    fn handle_command(&mut self, _invocation: &CommandInvocation) -> bool { false }
+    fn handle_command(&mut self, _invocation: &CommandInvocation) -> bool {
+        false
+    }
 
     fn shell_chrome(&self) -> ShellChrome { ShellChrome::Standard }
 
@@ -232,10 +272,14 @@ pub trait Workspace: Send {
     }
 
     /// Favorites appear in the top navigation even when they have no hotkey.
-    fn is_favorite(&self) -> bool { false }
+    fn is_favorite(&self) -> bool {
+        false
+    }
 
     /// Polls asynchronous feature work and returns validated shell requests.
-    fn poll_intents(&mut self) -> Vec<AppIntent> { Vec::new() }
+    fn poll_intents(&mut self) -> Vec<AppIntent> {
+        Vec::new()
+    }
 
     /// Supplies a read-only snapshot of shell focus and layout. Features may
     /// use this as model/view context but cannot mutate it directly.
@@ -253,7 +297,12 @@ impl WorkspaceRegistry {
     pub fn new(entries: Vec<Box<dyn Workspace>>) -> Self {
         let (aliases, hotkeys) = Self::build_indexes(&entries);
         let default_order = entries.iter().map(|entry| entry.descriptor().id).collect();
-        Self { entries, default_order, aliases, hotkeys }
+        Self {
+            entries,
+            default_order,
+            aliases,
+            hotkeys,
+        }
     }
 
     pub fn descriptors(&self) -> impl Iterator<Item = WorkspaceDescriptor> + '_ {
@@ -267,12 +316,19 @@ impl WorkspaceRegistry {
                 return None;
             }
             let descriptor = workspace.descriptor();
-            Some(WorkspaceNavigationItem { id: descriptor.id, label: descriptor.label, hotkey })
+            Some(WorkspaceNavigationItem {
+                id: descriptor.id,
+                label: descriptor.label,
+                hotkey,
+            })
         })
     }
 
     pub fn workspace_order(&self) -> Vec<WorkspaceId> {
-        self.entries.iter().map(|entry| entry.descriptor().id).collect()
+        self.entries
+            .iter()
+            .map(|entry| entry.descriptor().id)
+            .collect()
     }
 
     pub fn resolve_hotkey(&self, hotkey: char) -> Option<WorkspaceId> {
@@ -288,7 +344,9 @@ impl WorkspaceRegistry {
     }
 
     pub fn resolve_invocation(&self, invocation: &CommandInvocation) -> Option<WorkspaceId> {
-        self.aliases.get(&invocation.function.to_ascii_uppercase()).copied()
+        self.aliases
+            .get(&invocation.function.to_ascii_uppercase())
+            .copied()
     }
 
     /// Resolves and dispatches a command to its owning feature.
@@ -306,7 +364,11 @@ impl WorkspaceRegistry {
     }
 
     pub fn render(&self, id: WorkspaceId, frame: &mut Frame, area: Rect) {
-        if let Some(workspace) = self.entries.iter().find(|entry| entry.descriptor().id == id) {
+        if let Some(workspace) = self
+            .entries
+            .iter()
+            .find(|entry| entry.descriptor().id == id)
+        {
             workspace.render(frame, area);
         }
     }
@@ -325,6 +387,33 @@ impl WorkspaceRegistry {
             .is_some_and(|workspace| workspace.handle_key(key))
     }
 
+    pub fn handle_mouse(&mut self, id: WorkspaceId, event: MouseEvent, area: Rect) -> bool {
+        self.entries
+            .iter_mut()
+            .find(|entry| entry.descriptor().id == id)
+            .is_some_and(|workspace| workspace.handle_mouse(event, area))
+    }
+
+    pub fn on_blur(&mut self, id: WorkspaceId) {
+        if let Some(workspace) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.descriptor().id == id)
+        {
+            workspace.on_blur();
+        }
+    }
+
+    pub fn on_focus(&mut self, id: WorkspaceId) {
+        if let Some(workspace) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.descriptor().id == id)
+        {
+            workspace.on_focus();
+        }
+    }
+
     pub fn poll_intents(&mut self) -> Vec<AppIntent> {
         self.entries
             .iter_mut()
@@ -335,7 +424,11 @@ impl WorkspaceRegistry {
     pub fn update_shell_context(&mut self, active_workspace: WorkspaceId) {
         let context = ShellContext {
             active_workspace,
-            workspace_order: self.entries.iter().map(|entry| entry.descriptor().id).collect(),
+            workspace_order: self
+                .entries
+                .iter()
+                .map(|entry| entry.descriptor().id)
+                .collect(),
         };
         for workspace in &mut self.entries {
             workspace.update_shell_context(&context);
@@ -358,7 +451,11 @@ impl WorkspaceRegistry {
     }
 
     pub fn bring_forward(&mut self, id: WorkspaceId) {
-        if let Some(index) = self.entries.iter().position(|entry| entry.descriptor().id == id) {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.descriptor().id == id)
+        {
             let workspace = self.entries.remove(index);
             self.entries.insert(0, workspace);
         }
@@ -463,10 +560,16 @@ mod tests {
     }
 
     impl Workspace for Stub {
-        fn descriptor(&self) -> WorkspaceDescriptor { self.descriptor }
+        fn descriptor(&self) -> WorkspaceDescriptor {
+            self.descriptor
+        }
         fn render(&self, _frame: &mut Frame, _area: Rect) {}
-        fn hotkey(&self) -> Option<char> { self.hotkey }
-        fn is_favorite(&self) -> bool { self.favorite }
+        fn hotkey(&self) -> Option<char> {
+            self.hotkey
+        }
+        fn is_favorite(&self) -> bool {
+            self.favorite
+        }
         fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
             if let Some(captured) = &self.invocation {
                 *captured.lock().expect("capture lock") = Some(invocation.clone());
@@ -480,7 +583,12 @@ mod tests {
         hotkey: char,
         commands: &'static [&'static str],
     ) -> WorkspaceDescriptor {
-        WorkspaceDescriptor { id, label: "TEST", hotkey, commands }
+        WorkspaceDescriptor {
+            id,
+            label: "TEST",
+            hotkey,
+            commands,
+        }
     }
 
     #[test]
@@ -518,10 +626,9 @@ mod tests {
 
     #[test]
     fn command_parser_preserves_quoted_subjects_and_typed_options() {
-        let invocation = CommandInvocation::try_parse(
-            r#"chart "BRK B US" --period=1Y --normalize"#,
-        )
-        .expect("valid command");
+        let invocation =
+            CommandInvocation::try_parse(r#"chart "BRK B US" --period=1Y --normalize"#)
+                .expect("valid command");
 
         assert_eq!(invocation.function, "CHART");
         assert_eq!(invocation.args, ["BRK B US", "--period=1Y", "--normalize"]);
@@ -533,7 +640,10 @@ mod tests {
                     name: "period".to_owned(),
                     value: Some("1Y".to_owned()),
                 },
-                CommandArgument::Option { name: "normalize".to_owned(), value: None },
+                CommandArgument::Option {
+                    name: "normalize".to_owned(),
+                    value: None
+                },
             ]
         );
     }
@@ -582,7 +692,10 @@ mod tests {
         let entry = descriptor(WorkspaceId::new("duplicate"), 'd', &["DUP"]);
         let _ = WorkspaceRegistry::new(vec![
             Box::new(Stub::new(entry)),
-            Box::new(Stub::new(WorkspaceDescriptor { hotkey: 'x', ..entry })),
+            Box::new(Stub::new(WorkspaceDescriptor {
+                hotkey: 'x',
+                ..entry
+            })),
         ]);
     }
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -12,7 +12,10 @@ use ratatui::{
 
 use crate::{
     app::{ShellChrome, Workspace, WorkspaceDescriptor},
-    ui::theme::{self, AMBER, BG, CYAN, GREEN, INK, MUTED, NAV_BG, YELLOW},
+    ui::{
+        is_primary_click,
+        theme::{self, AMBER, BG, CYAN, GREEN, INK, MUTED, NAV_BG, YELLOW},
+    },
 };
 
 use super::{OverviewQuery, ID};
@@ -278,6 +281,30 @@ impl Workspace for OverviewWorkspace {
         } else {
             false
         }
+    }
+
+    fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
+        let snapshot = self.query.load_overview();
+        let periods_area = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Percentage(52),
+            Constraint::Length(7),
+            Constraint::Min(8),
+        ])
+        .split(area)[0];
+        if !is_primary_click(event, periods_area) {
+            return false;
+        }
+        let mut x = periods_area.x.saturating_add(1);
+        for (index, period) in snapshot.periods.iter().enumerate() {
+            let width = format!(" {} {} ", index + 1, period).chars().count() as u16;
+            if event.column >= x && event.column < x.saturating_add(width) {
+                self.selected_period = index;
+                return true;
+            }
+            x = x.saturating_add(width);
+        }
+        false
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {

@@ -19,7 +19,10 @@ pub struct Workbook {
 
 impl Workbook {
     pub fn new() -> Self {
-        Self { sheets: vec![Worksheet::new("Sheet1").expect("default sheet name is valid")], active_sheet: 0 }
+        Self {
+            sheets: vec![Worksheet::new("Sheet1").expect("default sheet name is valid")],
+            active_sheet: 0,
+        }
     }
 
     pub fn sheets(&self) -> &[Worksheet] {
@@ -44,7 +47,11 @@ impl Workbook {
 
     pub fn add_sheet(&mut self, name: impl Into<String>) -> Result<usize, WorkbookError> {
         let name = name.into();
-        if self.sheets.iter().any(|sheet| sheet.name().eq_ignore_ascii_case(name.trim())) {
+        if self
+            .sheets
+            .iter()
+            .any(|sheet| sheet.name().eq_ignore_ascii_case(name.trim()))
+        {
             return Err(WorkbookError::DuplicateSheetName(name));
         }
         let sheet = Worksheet::new(name).map_err(WorkbookError::InvalidSheet)?;
@@ -53,7 +60,10 @@ impl Workbook {
     }
 
     pub fn select_sheet(&mut self, name: &str) -> Result<(), WorkbookError> {
-        self.active_sheet = self.sheets.iter().position(|sheet| sheet.name().eq_ignore_ascii_case(name))
+        self.active_sheet = self
+            .sheets
+            .iter()
+            .position(|sheet| sheet.name().eq_ignore_ascii_case(name))
             .ok_or_else(|| WorkbookError::SheetNotFound(name.to_owned()))?;
         Ok(())
     }
@@ -77,12 +87,9 @@ impl Workbook {
     pub fn rename_active_sheet(&mut self, name: impl Into<String>) -> Result<(), WorkbookError> {
         let name = name.into();
         let normalized = name.trim();
-        if self
-            .sheets
-            .iter()
-            .enumerate()
-            .any(|(index, sheet)| index != self.active_sheet && sheet.name().eq_ignore_ascii_case(normalized))
-        {
+        if self.sheets.iter().enumerate().any(|(index, sheet)| {
+            index != self.active_sheet && sheet.name().eq_ignore_ascii_case(normalized)
+        }) {
             return Err(WorkbookError::DuplicateSheetName(name));
         }
         self.sheets[self.active_sheet]
@@ -100,11 +107,15 @@ impl Workbook {
     }
 
     pub fn sheet(&self, name: &str) -> Option<&Worksheet> {
-        self.sheets.iter().find(|sheet| sheet.name().eq_ignore_ascii_case(name))
+        self.sheets
+            .iter()
+            .find(|sheet| sheet.name().eq_ignore_ascii_case(name))
     }
 
     pub fn sheet_mut(&mut self, name: &str) -> Option<&mut Worksheet> {
-        self.sheets.iter_mut().find(|sheet| sheet.name().eq_ignore_ascii_case(name))
+        self.sheets
+            .iter_mut()
+            .find(|sheet| sheet.name().eq_ignore_ascii_case(name))
     }
 
     /// Evaluates the active sheet in workbook scope so qualified references,
@@ -112,7 +123,10 @@ impl Workbook {
     pub fn active_value(&self, address: CellAddress) -> CellValue {
         let mut cache = HashMap::new();
         self.evaluate_cell(
-            CellKey { sheet: self.active_sheet, address },
+            CellKey {
+                sheet: self.active_sheet,
+                address,
+            },
             &mut Vec::new(),
             &mut cache,
         )
@@ -121,16 +135,25 @@ impl Workbook {
     pub fn active_values(&self) -> HashMap<CellAddress, CellValue> {
         let mut cache = HashMap::new();
         let mut stack = Vec::new();
-        for address in self.active_sheet().populated_cells().map(|(address, _)| address) {
+        for address in self
+            .active_sheet()
+            .populated_cells()
+            .map(|(address, _)| address)
+        {
             self.evaluate_cell(
-                CellKey { sheet: self.active_sheet, address },
+                CellKey {
+                    sheet: self.active_sheet,
+                    address,
+                },
                 &mut stack,
                 &mut cache,
             );
         }
         cache
             .into_iter()
-            .filter_map(|(key, value)| (key.sheet == self.active_sheet).then_some((key.address, value)))
+            .filter_map(|(key, value)| {
+                (key.sheet == self.active_sheet).then_some((key.address, value))
+            })
             .collect()
     }
 
@@ -156,9 +179,15 @@ impl Workbook {
             stack.push(key);
             let evaluated = parse_formula(raw)
                 .map_err(|error| {
-                    if error.message == "unknown function" { CellError::UnknownFunction } else { CellError::Parse }
+                    if error.message == "unknown function" {
+                        CellError::UnknownFunction
+                    } else {
+                        CellError::Parse
+                    }
                 })
-                .and_then(|expression| self.evaluate_expression(&expression, key.sheet, stack, cache));
+                .and_then(|expression| {
+                    self.evaluate_expression(&expression, key.sheet, stack, cache)
+                });
             stack.pop();
             evaluated.unwrap_or_else(CellValue::Error)
         } else if let Ok(number) = raw.parse::<f64>() {
@@ -193,20 +222,33 @@ impl Workbook {
                     UnaryOperator::Minus => -number,
                 }))
             }
-            Expr::Binary { left, operator, right } => {
+            Expr::Binary {
+                left,
+                operator,
+                right,
+            } => {
                 let left = self.evaluate_expression(left, current_sheet, stack, cache)?;
                 let right = self.evaluate_expression(right, current_sheet, stack, cache)?;
-                if let CellValue::Error(error) = &left { return Err(error.clone()); }
-                if let CellValue::Error(error) = &right { return Err(error.clone()); }
+                if let CellValue::Error(error) = &left {
+                    return Err(error.clone());
+                }
+                if let CellValue::Error(error) = &right {
+                    return Err(error.clone());
+                }
                 match operator {
-                    BinaryOperator::Add | BinaryOperator::Subtract | BinaryOperator::Multiply | BinaryOperator::Divide => {
+                    BinaryOperator::Add
+                    | BinaryOperator::Subtract
+                    | BinaryOperator::Multiply
+                    | BinaryOperator::Divide => {
                         let left = number(left)?;
                         let right = number(right)?;
                         let result = match operator {
                             BinaryOperator::Add => left + right,
                             BinaryOperator::Subtract => left - right,
                             BinaryOperator::Multiply => left * right,
-                            BinaryOperator::Divide if right.abs() < f64::EPSILON => return Err(CellError::DivisionByZero),
+                            BinaryOperator::Divide if right.abs() < f64::EPSILON => {
+                                return Err(CellError::DivisionByZero)
+                            }
                             BinaryOperator::Divide => left / right,
                             _ => unreachable!("comparison operators were handled separately"),
                         };
@@ -214,9 +256,12 @@ impl Workbook {
                     }
                     BinaryOperator::Equal => Ok(boolean_value(values_equal(&left, &right))),
                     BinaryOperator::NotEqual => Ok(boolean_value(!values_equal(&left, &right))),
-                    BinaryOperator::LessThan | BinaryOperator::LessThanOrEqual
-                    | BinaryOperator::GreaterThan | BinaryOperator::GreaterThanOrEqual => {
-                        let ordering = compare_values(&left, &right).ok_or(CellError::InvalidValue)?;
+                    BinaryOperator::LessThan
+                    | BinaryOperator::LessThanOrEqual
+                    | BinaryOperator::GreaterThan
+                    | BinaryOperator::GreaterThanOrEqual => {
+                        let ordering =
+                            compare_values(&left, &right).ok_or(CellError::InvalidValue)?;
                         let matches = match operator {
                             BinaryOperator::LessThan => ordering == Ordering::Less,
                             BinaryOperator::LessThanOrEqual => ordering != Ordering::Greater,
@@ -228,9 +273,10 @@ impl Workbook {
                     }
                 }
             }
-            Expr::Function { function, arguments } => {
-                self.evaluate_function(*function, arguments, current_sheet, stack, cache)
-            }
+            Expr::Function {
+                function,
+                arguments,
+            } => self.evaluate_function(*function, arguments, current_sheet, stack, cache),
         }
     }
 
@@ -245,16 +291,25 @@ impl Workbook {
         match function {
             AggregateFunction::If => {
                 expect_arity(arguments, 3, 3)?;
-                let condition = self.evaluate_expression(&arguments[0], current_sheet, stack, cache)?;
-                let branch = if truthy(&condition)? { &arguments[1] } else { &arguments[2] };
+                let condition =
+                    self.evaluate_expression(&arguments[0], current_sheet, stack, cache)?;
+                let branch = if truthy(&condition)? {
+                    &arguments[1]
+                } else {
+                    &arguments[2]
+                };
                 self.evaluate_expression(branch, current_sheet, stack, cache)
             }
             AggregateFunction::And | AggregateFunction::Or => {
-                if arguments.is_empty() { return Err(CellError::InvalidValue); }
+                if arguments.is_empty() {
+                    return Err(CellError::InvalidValue);
+                }
                 let seeking = function == AggregateFunction::Or;
                 for argument in arguments {
                     let value = self.evaluate_expression(argument, current_sheet, stack, cache)?;
-                    if truthy(&value)? == seeking { return Ok(boolean_value(seeking)); }
+                    if truthy(&value)? == seeking {
+                        return Ok(boolean_value(seeking));
+                    }
                 }
                 Ok(boolean_value(!seeking))
             }
@@ -274,7 +329,9 @@ impl Workbook {
             AggregateFunction::Length => {
                 expect_arity(arguments, 1, 1)?;
                 let value = self.evaluate_expression(&arguments[0], current_sheet, stack, cache)?;
-                Ok(CellValue::Number(value_as_text(value)?.chars().count() as f64))
+                Ok(CellValue::Number(
+                    value_as_text(value)?.chars().count() as f64
+                ))
             }
             AggregateFunction::Absolute => {
                 expect_arity(arguments, 1, 1)?;
@@ -287,26 +344,49 @@ impl Workbook {
                 let digits = if let Some(argument) = arguments.get(1) {
                     let value = self.evaluate_expression(argument, current_sheet, stack, cache)?;
                     number(value)?
-                } else { 0.0 };
+                } else {
+                    0.0
+                };
                 if digits.fract().abs() > f64::EPSILON || !(-15.0..=15.0).contains(&digits) {
                     return Err(CellError::InvalidValue);
                 }
                 let factor = 10_f64.powi(digits as i32);
-                Ok(CellValue::Number((number(value)? * factor).round() / factor))
+                Ok(CellValue::Number(
+                    (number(value)? * factor).round() / factor,
+                ))
             }
-            AggregateFunction::XLookup => self.evaluate_xlookup(arguments, current_sheet, stack, cache),
-            AggregateFunction::Sum | AggregateFunction::Average | AggregateFunction::Minimum
-            | AggregateFunction::Maximum | AggregateFunction::Count | AggregateFunction::CountA => {
+            AggregateFunction::XLookup => {
+                self.evaluate_xlookup(arguments, current_sheet, stack, cache)
+            }
+            AggregateFunction::PriceLast | AggregateFunction::PriceChange => {
+                Err(CellError::NotAvailable)
+            }
+            AggregateFunction::Sum
+            | AggregateFunction::Average
+            | AggregateFunction::Minimum
+            | AggregateFunction::Maximum
+            | AggregateFunction::Count
+            | AggregateFunction::CountA => {
                 let values = self.evaluate_arguments(arguments, current_sheet, stack, cache)?;
                 if function == AggregateFunction::CountA {
-                    return Ok(CellValue::Number(values.iter().filter(|value| !matches!(value, CellValue::Blank)).count() as f64));
+                    return Ok(CellValue::Number(
+                        values
+                            .iter()
+                            .filter(|value| !matches!(value, CellValue::Blank))
+                            .count() as f64,
+                    ));
                 }
-                let numbers = values.into_iter().filter_map(|value| match value {
-                    CellValue::Number(number) => Some(Ok(number)),
-                    CellValue::Error(error) => Some(Err(error)),
-                    CellValue::Blank | CellValue::Text(_) => None,
-                }).collect::<Result<Vec<_>, _>>()?;
-                if function == AggregateFunction::Count { return Ok(CellValue::Number(numbers.len() as f64)); }
+                let numbers = values
+                    .into_iter()
+                    .filter_map(|value| match value {
+                        CellValue::Number(number) => Some(Ok(number)),
+                        CellValue::Error(error) => Some(Err(error)),
+                        CellValue::Blank | CellValue::Text(_) => None,
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if function == AggregateFunction::Count {
+                    return Ok(CellValue::Number(numbers.len() as f64));
+                }
                 aggregate(function, &numbers).map(CellValue::Number)
             }
         }
@@ -323,9 +403,11 @@ impl Workbook {
         for argument in arguments {
             if let Expr::Range(range) = argument {
                 let sheet = self.resolve_sheet(current_sheet, range.sheet())?;
-                values.extend(range.addresses().map(|address| {
-                    self.evaluate_cell(CellKey { sheet, address }, stack, cache)
-                }));
+                values.extend(
+                    range.addresses().map(|address| {
+                        self.evaluate_cell(CellKey { sheet, address }, stack, cache)
+                    }),
+                );
             } else {
                 values.push(self.evaluate_expression(argument, current_sheet, stack, cache)?);
             }
@@ -342,7 +424,9 @@ impl Workbook {
     ) -> Result<CellValue, CellError> {
         expect_arity(arguments, 3, 4)?;
         let needle = self.evaluate_expression(&arguments[0], current_sheet, stack, cache)?;
-        if let CellValue::Error(error) = &needle { return Err(error.clone()); }
+        if let CellValue::Error(error) = &needle {
+            return Err(error.clone());
+        }
         let (Expr::Range(lookup), Expr::Range(results)) = (&arguments[1], &arguments[2]) else {
             return Err(CellError::InvalidValue);
         };
@@ -350,17 +434,37 @@ impl Workbook {
         let results_sheet = self.resolve_sheet(current_sheet, results.sheet())?;
         let lookup_addresses = lookup.addresses().collect::<Vec<_>>();
         let result_addresses = results.addresses().collect::<Vec<_>>();
-        if lookup_addresses.len() != result_addresses.len() { return Err(CellError::InvalidValue); }
+        if lookup_addresses.len() != result_addresses.len() {
+            return Err(CellError::InvalidValue);
+        }
         for (lookup_address, result_address) in lookup_addresses.into_iter().zip(result_addresses) {
-            let candidate = self.evaluate_cell(CellKey { sheet: lookup_sheet, address: lookup_address }, stack, cache);
-            if let CellValue::Error(error) = &candidate { return Err(error.clone()); }
+            let candidate = self.evaluate_cell(
+                CellKey {
+                    sheet: lookup_sheet,
+                    address: lookup_address,
+                },
+                stack,
+                cache,
+            );
+            if let CellValue::Error(error) = &candidate {
+                return Err(error.clone());
+            }
             if values_equal(&needle, &candidate) {
-                return Ok(self.evaluate_cell(CellKey { sheet: results_sheet, address: result_address }, stack, cache));
+                return Ok(self.evaluate_cell(
+                    CellKey {
+                        sheet: results_sheet,
+                        address: result_address,
+                    },
+                    stack,
+                    cache,
+                ));
             }
         }
         if let Some(fallback) = arguments.get(3) {
             self.evaluate_expression(fallback, current_sheet, stack, cache)
-        } else { Err(CellError::NotAvailable) }
+        } else {
+            Err(CellError::NotAvailable)
+        }
     }
 
     fn resolve_reference(
@@ -377,14 +481,21 @@ impl Workbook {
     fn resolve_sheet(&self, current_sheet: usize, sheet: Option<&str>) -> Result<usize, CellError> {
         match sheet {
             None => Ok(current_sheet),
-            Some(name) => self.sheets.iter().position(|candidate| candidate.name().eq_ignore_ascii_case(name))
+            Some(name) => self
+                .sheets
+                .iter()
+                .position(|candidate| candidate.name().eq_ignore_ascii_case(name))
                 .ok_or(CellError::InvalidReference),
         }
     }
 }
 
 fn expect_arity(arguments: &[Expr], minimum: usize, maximum: usize) -> Result<(), CellError> {
-    if (minimum..=maximum).contains(&arguments.len()) { Ok(()) } else { Err(CellError::InvalidValue) }
+    if (minimum..=maximum).contains(&arguments.len()) {
+        Ok(())
+    } else {
+        Err(CellError::InvalidValue)
+    }
 }
 
 fn truthy(value: &CellValue) -> Result<bool, CellError> {
@@ -396,7 +507,9 @@ fn truthy(value: &CellValue) -> Result<bool, CellError> {
     }
 }
 
-fn boolean_value(value: bool) -> CellValue { CellValue::Number(if value { 1.0 } else { 0.0 }) }
+fn boolean_value(value: bool) -> CellValue {
+    CellValue::Number(if value { 1.0 } else { 0.0 })
+}
 
 fn values_equal(left: &CellValue, right: &CellValue) -> bool {
     match (left, right) {
@@ -440,8 +553,16 @@ fn aggregate(function: AggregateFunction, numbers: &[f64]) -> Result<f64, CellEr
         AggregateFunction::Sum => Ok(numbers.iter().sum()),
         AggregateFunction::Average if numbers.is_empty() => Err(CellError::DivisionByZero),
         AggregateFunction::Average => Ok(numbers.iter().sum::<f64>() / numbers.len() as f64),
-        AggregateFunction::Minimum => numbers.iter().copied().reduce(f64::min).ok_or(CellError::InvalidValue),
-        AggregateFunction::Maximum => numbers.iter().copied().reduce(f64::max).ok_or(CellError::InvalidValue),
+        AggregateFunction::Minimum => numbers
+            .iter()
+            .copied()
+            .reduce(f64::min)
+            .ok_or(CellError::InvalidValue),
+        AggregateFunction::Maximum => numbers
+            .iter()
+            .copied()
+            .reduce(f64::max)
+            .ok_or(CellError::InvalidValue),
         _ => Err(CellError::InvalidValue),
     }
 }
@@ -465,10 +586,16 @@ impl fmt::Display for WorkbookError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidSheet(error) => error.fmt(formatter),
-            Self::DuplicateSheetName(name) => write!(formatter, "worksheet '{name}' already exists"),
+            Self::DuplicateSheetName(name) => {
+                write!(formatter, "worksheet '{name}' already exists")
+            }
             Self::SheetNotFound(name) => write!(formatter, "worksheet '{name}' was not found"),
-            Self::SheetIndexOutOfBounds(index) => write!(formatter, "worksheet index {index} is out of bounds"),
-            Self::CannotRemoveLastSheet => write!(formatter, "a workbook must contain at least one worksheet"),
+            Self::SheetIndexOutOfBounds(index) => {
+                write!(formatter, "worksheet index {index} is out of bounds")
+            }
+            Self::CannotRemoveLastSheet => {
+                write!(formatter, "a workbook must contain at least one worksheet")
+            }
         }
     }
 }
@@ -485,7 +612,10 @@ mod tests {
         workbook.add_sheet("Valuation").unwrap();
         workbook.select_sheet("valuation").unwrap();
         assert_eq!(workbook.active_sheet().name(), "Valuation");
-        assert!(matches!(workbook.add_sheet("VALUATION"), Err(WorkbookError::DuplicateSheetName(_))));
+        assert!(matches!(
+            workbook.add_sheet("VALUATION"),
+            Err(WorkbookError::DuplicateSheetName(_))
+        ));
     }
 
     #[test]
@@ -510,7 +640,10 @@ mod tests {
     #[test]
     fn protects_sheet_names_and_the_last_remaining_sheet() {
         let mut workbook = Workbook::new();
-        assert_eq!(workbook.remove_active_sheet(), Err(WorkbookError::CannotRemoveLastSheet));
+        assert_eq!(
+            workbook.remove_active_sheet(),
+            Err(WorkbookError::CannotRemoveLastSheet)
+        );
         workbook.add_sheet("Model").unwrap();
         workbook.select_sheet("Model").unwrap();
         assert!(matches!(
@@ -528,21 +661,39 @@ mod tests {
         let mut workbook = Workbook::new();
         workbook.rename_active_sheet("Model").unwrap();
         workbook.add_sheet("Base Case").unwrap();
-        workbook.sheet_mut("Base Case").unwrap().set("A1".parse().unwrap(), "10");
-        workbook.sheet_mut("Base Case").unwrap().set("A2".parse().unwrap(), "20");
-        workbook.sheet_mut("Model").unwrap().set(
-            "A1".parse().unwrap(),
-            "=SUM('Base Case'!A1:A2)",
+        workbook
+            .sheet_mut("Base Case")
+            .unwrap()
+            .set("A1".parse().unwrap(), "10");
+        workbook
+            .sheet_mut("Base Case")
+            .unwrap()
+            .set("A2".parse().unwrap(), "20");
+        workbook
+            .sheet_mut("Model")
+            .unwrap()
+            .set("A1".parse().unwrap(), "=SUM('Base Case'!A1:A2)");
+        assert_eq!(
+            workbook.active_value("A1".parse().unwrap()),
+            CellValue::Number(30.0)
         );
-        assert_eq!(workbook.active_value("A1".parse().unwrap()), CellValue::Number(30.0));
 
-        workbook.sheet_mut("Model").unwrap().set("B1".parse().unwrap(), "='Base Case'!B1");
-        workbook.sheet_mut("Base Case").unwrap().set("B1".parse().unwrap(), "=Model!B1");
+        workbook
+            .sheet_mut("Model")
+            .unwrap()
+            .set("B1".parse().unwrap(), "='Base Case'!B1");
+        workbook
+            .sheet_mut("Base Case")
+            .unwrap()
+            .set("B1".parse().unwrap(), "=Model!B1");
         assert_eq!(
             workbook.active_value("B1".parse().unwrap()),
             CellValue::Error(CellError::CircularReference)
         );
-        workbook.sheet_mut("Model").unwrap().set("C1".parse().unwrap(), "=Missing!A1");
+        workbook
+            .sheet_mut("Model")
+            .unwrap()
+            .set("C1".parse().unwrap(), "=Missing!A1");
         assert_eq!(
             workbook.active_value("C1".parse().unwrap()),
             CellValue::Error(CellError::InvalidReference)

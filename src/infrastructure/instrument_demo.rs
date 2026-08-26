@@ -42,18 +42,102 @@ impl InstrumentSearch for DemoInstrumentSearch {
 
 fn instruments() -> Vec<Instrument> {
     vec![
-        instrument("us:xnas:aapl", "AAPL", "Apple Inc.", "US", "USD", InstrumentKind::Equity),
-        instrument("us:xnas:msft", "MSFT", "Microsoft Corporation", "US", "USD", InstrumentKind::Equity),
-        instrument("us:xnas:nvda", "NVDA", "NVIDIA Corporation", "US", "USD", InstrumentKind::Equity),
-        instrument("us:xnas:meta", "META", "Meta Platforms Inc.", "US", "USD", InstrumentKind::Equity),
-        instrument("us:arcx:spy", "SPY", "SPDR S&P 500 ETF Trust", "US", "USD", InstrumentKind::Etf),
-        instrument("us:arcx:vt", "VT", "Vanguard Total World Stock ETF", "US", "USD", InstrumentKind::Etf),
-        instrument("index:spx", "SPX", "S&P 500 Index", "INDEX", "USD", InstrumentKind::Index),
-        instrument("index:ndx", "NDX", "NASDAQ 100 Index", "INDEX", "USD", InstrumentKind::Index),
-        instrument("fx:eurusd", "EURUSD", "Euro / U.S. Dollar", "FX", "USD", InstrumentKind::Currency),
-        instrument("fx:usdjpy", "USDJPY", "U.S. Dollar / Japanese Yen", "FX", "JPY", InstrumentKind::Currency),
-        instrument("commodity:xau", "XAU", "Gold Spot", "SPOT", "USD", InstrumentKind::Commodity),
-        instrument("commodity:cl", "CL", "WTI Crude Oil", "NYMEX", "USD", InstrumentKind::Commodity),
+        instrument(
+            "us:xnas:aapl",
+            "AAPL",
+            "Apple Inc.",
+            "US",
+            "USD",
+            InstrumentKind::Equity,
+        ),
+        instrument(
+            "us:xnas:msft",
+            "MSFT",
+            "Microsoft Corporation",
+            "US",
+            "USD",
+            InstrumentKind::Equity,
+        ),
+        instrument(
+            "us:xnas:nvda",
+            "NVDA",
+            "NVIDIA Corporation",
+            "US",
+            "USD",
+            InstrumentKind::Equity,
+        ),
+        instrument(
+            "us:xnas:meta",
+            "META",
+            "Meta Platforms Inc.",
+            "US",
+            "USD",
+            InstrumentKind::Equity,
+        ),
+        instrument(
+            "us:arcx:spy",
+            "SPY",
+            "SPDR S&P 500 ETF Trust",
+            "US",
+            "USD",
+            InstrumentKind::Etf,
+        ),
+        instrument(
+            "us:arcx:vt",
+            "VT",
+            "Vanguard Total World Stock ETF",
+            "US",
+            "USD",
+            InstrumentKind::Etf,
+        ),
+        instrument(
+            "index:spx",
+            "SPX",
+            "S&P 500 Index",
+            "INDEX",
+            "USD",
+            InstrumentKind::Index,
+        ),
+        instrument(
+            "index:ndx",
+            "NDX",
+            "NASDAQ 100 Index",
+            "INDEX",
+            "USD",
+            InstrumentKind::Index,
+        ),
+        instrument(
+            "fx:eurusd",
+            "EURUSD",
+            "Euro / U.S. Dollar",
+            "FX",
+            "USD",
+            InstrumentKind::Currency,
+        ),
+        instrument(
+            "fx:usdjpy",
+            "USDJPY",
+            "U.S. Dollar / Japanese Yen",
+            "FX",
+            "JPY",
+            InstrumentKind::Currency,
+        ),
+        instrument(
+            "commodity:xau",
+            "XAU",
+            "Gold Spot",
+            "SPOT",
+            "USD",
+            InstrumentKind::Commodity,
+        ),
+        instrument(
+            "commodity:cl",
+            "CL",
+            "WTI Crude Oil",
+            "NYMEX",
+            "USD",
+            InstrumentKind::Commodity,
+        ),
     ]
 }
 
@@ -82,7 +166,10 @@ mod tests {
     #[test]
     fn exact_symbols_rank_before_name_matches() {
         let results = DemoInstrumentSearch.search("SPY", 10);
-        assert_eq!(results.first().map(|instrument| instrument.symbol.as_str()), Some("SPY"));
+        assert_eq!(
+            results.first().map(|instrument| instrument.symbol.as_str()),
+            Some("SPY")
+        );
     }
 
     #[test]

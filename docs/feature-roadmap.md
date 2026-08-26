@@ -54,8 +54,16 @@ move to its own crate later without changing its public vocabulary.
 - **Complete:** workbook-scoped spreadsheet evaluation with qualified and quoted
   cross-sheet references, cross-sheet cycle detection, mixed absolute axes, and
   atomic translated copy, paste, and directional fill controls.
-- **Next:** spreadsheet financial functions and async states, feature-document
-  workbook persistence, real licensed provider adapters, and
+- **Complete:** toggleable AI drawer with immediate input focus, a warm reusable
+  Codex app-server worker, and publisher-safe News article opening by keyboard
+  or mouse.
+- **In progress:** first financial-function slice with top-level
+  `PX_LAST(instrument)` and `PX_CHANGE(instrument, period)` cells, bounded
+  background resolution, formula-preserving recalculation, explicit loading,
+  stale, permission-denied, and unavailable states, and visible provider/as-of
+  provenance.
+- **Next:** nested/composable financial functions, `HISTORY` and `FUNDAMENTAL`,
+  feature-document workbook persistence, real licensed provider adapters, and
   performance/golden-snapshot gates.
 
 ## Product principles

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Style,
@@ -13,6 +13,7 @@ use crate::{
     app::{CommandInvocation, Workspace, WorkspaceDescriptor},
     ui::{
         components::terminal_block,
+        scroll_key, table_row_at,
         theme::{AMBER, BG, CYAN, GREEN, INK, MUTED, RED, YELLOW},
     },
 };
@@ -210,6 +211,43 @@ impl Workspace for AlertsWorkspace {
             }
             _ => false,
         }
+    }
+
+    fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
+        let areas = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(7),
+            Constraint::Length(2),
+        ])
+        .split(area);
+        if let Some(index) = table_row_at(event, areas[1], self.rules.len()) {
+            self.selected = index;
+            return true;
+        }
+        if crate::ui::is_primary_click(event, areas[3]) {
+            let controls = [
+                (" ↑↓/JK SELECT  ", None),
+                ("SPACE/E ENABLE/DISABLE  ", Some(KeyCode::Char(' '))),
+                ("A ACKNOWLEDGE  ", Some(KeyCode::Char('a'))),
+                ("R REPLAY EVALUATION  ", Some(KeyCode::Char('r'))),
+            ];
+            let mut x = areas[3].x;
+            for (label, key) in controls {
+                let width = label.chars().count() as u16;
+                if event.column >= x && event.column < x.saturating_add(width) {
+                    return key.is_none_or(|key| {
+                        self.handle_key(KeyEvent::new(key, crossterm::event::KeyModifiers::NONE))
+                    });
+                }
+                x = x.saturating_add(width);
+            }
+            return true;
+        }
+        if let Some(key) = scroll_key(event, areas[1]) {
+            return self.handle_key(key);
+        }
+        false
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {

@@ -4,22 +4,33 @@ mod workspace;
 
 use std::{collections::BTreeMap, sync::Arc};
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
 
-use crate::features::persistence::{SessionState, SessionStateRepository};
+use crate::{
+    features::persistence::{SessionState, SessionStateRepository},
+    ui::{self, ShellClickTarget},
+};
 
-pub use input::InputMode;
 pub use events::{EventBus, EventEnvelope, EventTopic, SubscriptionId, SubscriptionMetrics};
+pub use input::{CommandEditMode, InputMode};
 pub use workspace::{
-    AppIntent, CommandArgument, CommandInvocation, CommandParseError, Workspace,
-    ShellChrome, WorkspaceDescriptor, WorkspaceId,
-    ShellContext, WorkspaceNavigationItem, WorkspaceRegistry,
+    AppIntent, CommandArgument, CommandInvocation, CommandParseError, ShellChrome, ShellContext,
+    Workspace, WorkspaceDescriptor, WorkspaceId, WorkspaceNavigationItem, WorkspaceRegistry,
 };
 
 pub struct App {
     pub(crate) active_workspace: WorkspaceId,
     pub(crate) command: String,
     pub(crate) input_mode: InputMode,
+    command_edit_mode: CommandEditMode,
+    command_cursor: usize,
+    command_delete_pending: bool,
+    history_cursor: Option<usize>,
+    pub(crate) help_visible: bool,
+    pub(crate) tmux_prefix_pending: bool,
+    assistant_workspace: Option<WorkspaceId>,
+    assistant_drawer_visible: bool,
     pub(crate) ticks: u64,
     pub(crate) workspaces: WorkspaceRegistry,
     events: EventBus,
@@ -31,11 +42,20 @@ pub struct App {
 
 impl App {
     pub fn new(mut workspaces: WorkspaceRegistry, initial_workspace: WorkspaceId) -> Self {
+        let assistant_workspace = workspaces.resolve_target("assistant");
         workspaces.update_shell_context(initial_workspace);
         Self {
             active_workspace: initial_workspace,
             command: String::new(),
             input_mode: InputMode::Navigation,
+            command_edit_mode: CommandEditMode::Insert,
+            command_cursor: 0,
+            command_delete_pending: false,
+            history_cursor: None,
+            help_visible: false,
+            tmux_prefix_pending: false,
+            assistant_workspace,
+            assistant_drawer_visible: false,
             ticks: 0,
             workspaces,
             events: EventBus::default(),
@@ -51,18 +71,21 @@ impl App {
     /// Persistence failures never prevent the terminal from starting. The
     /// adapter retains a previous valid generation, while the shell exposes a
     /// diagnostic for status surfaces and continues with defaults.
-    pub fn with_session_repository(
-        mut self,
-        repository: Arc<dyn SessionStateRepository>,
-    ) -> Self {
+    pub fn with_session_repository(mut self, repository: Arc<dyn SessionStateRepository>) -> Self {
         match repository.load() {
             Ok(Some(state)) => {
-                self.workspaces.apply_workspace_order(state.workspace_order());
+                self.workspaces
+                    .apply_workspace_order(state.workspace_order());
                 if let Some(active) = state
                     .active_workspace()
                     .and_then(|target| self.workspaces.resolve_target(target))
                 {
-                    self.active_workspace = active;
+                    if Some(active) == self.assistant_workspace {
+                        self.assistant_drawer_visible = true;
+                        self.workspaces.on_focus(active);
+                    } else {
+                        self.active_workspace = active;
+                    }
                 }
                 self.recent_commands = state.recent_commands().to_vec();
             }
@@ -86,6 +109,30 @@ impl App {
         &self.command
     }
 
+    pub fn command_edit_mode(&self) -> CommandEditMode {
+        self.command_edit_mode
+    }
+
+    pub fn command_cursor(&self) -> usize {
+        self.command_cursor
+    }
+
+    pub fn help_visible(&self) -> bool {
+        self.help_visible
+    }
+
+    pub fn tmux_prefix_pending(&self) -> bool {
+        self.tmux_prefix_pending
+    }
+
+    pub fn assistant_drawer_visible(&self) -> bool {
+        self.assistant_drawer_visible
+    }
+
+    pub fn assistant_workspace(&self) -> Option<WorkspaceId> {
+        self.assistant_workspace
+    }
+
     pub fn ticks(&self) -> u64 {
         self.ticks
     }
@@ -102,9 +149,13 @@ impl App {
         &self.recent_commands
     }
 
-    pub fn events(&self) -> &EventBus { &self.events }
+    pub fn events(&self) -> &EventBus {
+        &self.events
+    }
 
-    pub fn events_mut(&mut self) -> &mut EventBus { &mut self.events }
+    pub fn events_mut(&mut self) -> &mut EventBus {
+        &mut self.events
+    }
 
     pub fn advance_tick(&mut self) {
         self.ticks = self.ticks.wrapping_add(1);
@@ -126,23 +177,50 @@ impl App {
             return;
         }
 
-        if self.input_mode == InputMode::Command {
-            match input::command_action(key) {
-                input::CommandAction::Cancel => {
-                    self.command.clear();
-                    self.input_mode = InputMode::Navigation;
+        if self.help_visible {
+            match key.code {
+                KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('q' | 'Q') => {
+                    self.help_visible = false;
                 }
-                input::CommandAction::Delete => {
-                    self.command.pop();
+                KeyCode::Char('/' | ':') => {
+                    self.help_visible = false;
+                    self.open_command();
                 }
-                input::CommandAction::Execute => self.execute_command(),
-                input::CommandAction::Append(character) => {
-                    if self.command.len() + character.len_utf8() <= workspace::MAX_COMMAND_BYTES {
-                        self.command.push(character.to_ascii_uppercase());
-                    }
-                }
-                input::CommandAction::None => {}
+                _ => {}
             }
+            return;
+        }
+
+        if self.input_mode == InputMode::Command {
+            self.handle_command_key(key);
+            return;
+        }
+
+        if self.assistant_drawer_visible {
+            if self
+                .assistant_workspace
+                .is_some_and(|id| self.workspaces.handle_key(id, key))
+            {
+                return;
+            }
+            if key.code == KeyCode::Esc {
+                self.close_assistant_drawer();
+                return;
+            }
+        }
+
+        if self.tmux_prefix_pending {
+            self.tmux_prefix_pending = false;
+            self.handle_tmux_key(key);
+            return;
+        }
+        if key.code == KeyCode::Char('b') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.tmux_prefix_pending = true;
+            return;
+        }
+
+        if key.code == KeyCode::F(1) {
+            self.help_visible = true;
             return;
         }
 
@@ -155,21 +233,105 @@ impl App {
 
         match input::navigation_action(key) {
             input::NavigationAction::Quit => self.should_quit = true,
-            input::NavigationAction::OpenCommand => self.input_mode = InputMode::Command,
+            input::NavigationAction::OpenCommand => self.open_command(),
             input::NavigationAction::Hotkey(character) => {
                 if let Some(id) = self.workspaces.resolve_hotkey(character) {
-                    self.active_workspace = id;
-                    self.persist_session();
+                    if Some(id) == self.assistant_workspace {
+                        self.toggle_assistant_drawer();
+                    } else if self.active_workspace != id {
+                        self.workspaces.on_blur(self.active_workspace);
+                        self.active_workspace = id;
+                        self.persist_session();
+                    }
                 }
             }
             input::NavigationAction::Delegate => {}
         }
     }
 
+    /// Applies a terminal mouse event using the geometry of the last rendered frame.
+    pub fn handle_mouse(&mut self, event: MouseEvent, frame_area: Rect) {
+        self.tmux_prefix_pending = false;
+        let target = ui::hit_test(self, frame_area, event.column, event.row);
+        if !matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
+            if let Some(ShellClickTarget::Workspace(area)) = target {
+                self.workspaces
+                    .handle_mouse(self.active_workspace, event, area);
+            }
+            return;
+        }
+
+        match target {
+            Some(ShellClickTarget::CommandInput) => {
+                self.help_visible = false;
+                self.close_assistant_drawer();
+                if self.input_mode != InputMode::Command {
+                    self.workspaces.on_blur(self.active_workspace);
+                }
+                self.open_command();
+            }
+            Some(ShellClickTarget::CommandGo) => {
+                self.help_visible = false;
+                self.close_assistant_drawer();
+                if self.input_mode == InputMode::Command {
+                    self.execute_command();
+                } else {
+                    self.workspaces.on_blur(self.active_workspace);
+                    self.open_command();
+                }
+            }
+            Some(ShellClickTarget::Navigation(id)) => {
+                self.help_visible = false;
+                self.cancel_command();
+                if Some(id) == self.assistant_workspace {
+                    self.toggle_assistant_drawer();
+                } else {
+                    self.close_assistant_drawer();
+                    if self.active_workspace != id {
+                        self.workspaces.on_blur(self.active_workspace);
+                        self.active_workspace = id;
+                        self.persist_session();
+                    }
+                }
+            }
+            Some(ShellClickTarget::Workspace(area)) => {
+                if self.input_mode == InputMode::Command {
+                    self.cancel_command();
+                }
+                self.workspaces
+                    .handle_mouse(self.active_workspace, event, area);
+            }
+            Some(ShellClickTarget::AssistantDrawer(area)) => {
+                if let Some(id) = self.assistant_workspace {
+                    self.workspaces.handle_mouse(id, event, area);
+                }
+            }
+            Some(ShellClickTarget::AssistantClose) | Some(ShellClickTarget::AssistantBackdrop) => {
+                self.close_assistant_drawer()
+            }
+            Some(ShellClickTarget::HelpClose) => self.help_visible = false,
+            Some(ShellClickTarget::HelpOverlay) => {}
+            Some(ShellClickTarget::Quit) => self.should_quit = true,
+            None => {}
+        }
+    }
+
     fn execute_command(&mut self) {
         let command = self.command.trim().to_owned();
-        if let Some(id) = self.workspaces.dispatch_command(&command) {
-            self.active_workspace = id;
+        let opens_help = CommandInvocation::parse(&command)
+            .is_some_and(|invocation| invocation.function == "HELP");
+        if opens_help {
+            self.help_visible = true;
+        } else if let Some(id) = self.workspaces.dispatch_command(&command) {
+            if Some(id) == self.assistant_workspace {
+                self.open_assistant_drawer();
+            } else {
+                self.close_assistant_drawer();
+            }
+            if Some(id) != self.assistant_workspace && self.active_workspace != id {
+                self.workspaces.on_blur(self.active_workspace);
+                self.active_workspace = id;
+            }
         }
         if !command.is_empty() && command.len() <= 512 {
             self.recent_commands.retain(|recent| recent != &command);
@@ -178,7 +340,274 @@ impl App {
         }
         self.command.clear();
         self.input_mode = InputMode::Navigation;
+        self.reset_command_editor();
         self.persist_session();
+    }
+
+    fn open_command(&mut self) {
+        self.input_mode = InputMode::Command;
+        self.command_edit_mode = CommandEditMode::Insert;
+        self.command_cursor = self.command.len();
+        self.command_delete_pending = false;
+        self.history_cursor = None;
+    }
+
+    fn cancel_command(&mut self) {
+        self.command.clear();
+        self.input_mode = InputMode::Navigation;
+        self.reset_command_editor();
+    }
+
+    fn reset_command_editor(&mut self) {
+        self.command_edit_mode = CommandEditMode::Insert;
+        self.command_cursor = 0;
+        self.command_delete_pending = false;
+        self.history_cursor = None;
+    }
+
+    fn handle_command_key(&mut self, key: KeyEvent) {
+        let action = input::command_action(key, self.command_edit_mode);
+        if action != input::CommandAction::DeleteOperator {
+            self.command_delete_pending = false;
+        }
+        match action {
+            input::CommandAction::Cancel => self.cancel_command(),
+            input::CommandAction::Execute => self.execute_command(),
+            input::CommandAction::EnterNormal => {
+                if self.command.is_empty() {
+                    self.cancel_command();
+                } else {
+                    self.command_edit_mode = CommandEditMode::Normal;
+                    self.command_cursor =
+                        previous_char_boundary(&self.command, self.command_cursor);
+                }
+            }
+            input::CommandAction::EnterInsert => {
+                self.command_edit_mode = CommandEditMode::Insert;
+            }
+            input::CommandAction::AppendAfter => {
+                self.command_cursor = next_char_boundary(&self.command, self.command_cursor);
+                self.command_edit_mode = CommandEditMode::Insert;
+            }
+            input::CommandAction::InsertAtStart => {
+                self.command_cursor = 0;
+                self.command_edit_mode = CommandEditMode::Insert;
+            }
+            input::CommandAction::InsertAtEnd => {
+                self.command_cursor = self.command.len();
+                self.command_edit_mode = CommandEditMode::Insert;
+            }
+            input::CommandAction::Insert(character) => self.insert_command_character(character),
+            input::CommandAction::Backspace => self.delete_command_backward(),
+            input::CommandAction::DeleteAt => self.delete_command_at_cursor(),
+            input::CommandAction::DeleteToEnd => {
+                self.command.truncate(self.command_cursor);
+                self.normalize_normal_cursor();
+            }
+            input::CommandAction::DeletePreviousWord => {
+                let start = previous_word_start(&self.command, self.command_cursor);
+                self.command.drain(start..self.command_cursor);
+                self.command_cursor = start;
+                self.history_cursor = None;
+                self.normalize_normal_cursor();
+            }
+            input::CommandAction::DeleteOperator => {
+                if self.command_delete_pending {
+                    self.command.clear();
+                    self.command_cursor = 0;
+                    self.command_delete_pending = false;
+                    self.history_cursor = None;
+                } else {
+                    self.command_delete_pending = true;
+                }
+            }
+            input::CommandAction::Clear => {
+                self.command.clear();
+                self.command_cursor = 0;
+                self.history_cursor = None;
+            }
+            input::CommandAction::MoveLeft => {
+                self.command_cursor = previous_char_boundary(&self.command, self.command_cursor);
+            }
+            input::CommandAction::MoveRight => {
+                let next = next_char_boundary(&self.command, self.command_cursor);
+                if self.command_edit_mode == CommandEditMode::Insert || next < self.command.len() {
+                    self.command_cursor = next;
+                }
+            }
+            input::CommandAction::MoveStart => self.command_cursor = 0,
+            input::CommandAction::MoveEnd => {
+                self.command_cursor = if self.command_edit_mode == CommandEditMode::Normal
+                    && !self.command.is_empty()
+                {
+                    previous_char_boundary(&self.command, self.command.len())
+                } else {
+                    self.command.len()
+                };
+            }
+            input::CommandAction::MoveWordForward => {
+                self.command_cursor = next_word_start(&self.command, self.command_cursor);
+                self.normalize_normal_cursor();
+            }
+            input::CommandAction::MoveWordBackward => {
+                self.command_cursor = previous_word_start(&self.command, self.command_cursor);
+            }
+            input::CommandAction::HistoryPrevious => self.select_command_history(true),
+            input::CommandAction::HistoryNext => self.select_command_history(false),
+            input::CommandAction::None => {}
+        }
+    }
+
+    fn insert_command_character(&mut self, character: char) {
+        if self.command.len() + character.len_utf8() > workspace::MAX_COMMAND_BYTES {
+            return;
+        }
+        self.command.insert(self.command_cursor, character);
+        self.command_cursor += character.len_utf8();
+        self.history_cursor = None;
+    }
+
+    fn delete_command_backward(&mut self) {
+        let previous = previous_char_boundary(&self.command, self.command_cursor);
+        if previous == self.command_cursor {
+            return;
+        }
+        self.command.drain(previous..self.command_cursor);
+        self.command_cursor = previous;
+        self.history_cursor = None;
+    }
+
+    fn delete_command_at_cursor(&mut self) {
+        let next = next_char_boundary(&self.command, self.command_cursor);
+        if next == self.command_cursor {
+            return;
+        }
+        self.command.drain(self.command_cursor..next);
+        self.history_cursor = None;
+        self.normalize_normal_cursor();
+    }
+
+    fn normalize_normal_cursor(&mut self) {
+        if self.command_edit_mode == CommandEditMode::Normal
+            && self.command_cursor == self.command.len()
+            && !self.command.is_empty()
+        {
+            self.command_cursor = previous_char_boundary(&self.command, self.command_cursor);
+        }
+    }
+
+    fn select_command_history(&mut self, previous: bool) {
+        if self.recent_commands.is_empty() {
+            return;
+        }
+        let index = if previous {
+            self.history_cursor
+                .map(|index| (index + 1).min(self.recent_commands.len() - 1))
+                .unwrap_or(0)
+        } else {
+            let Some(index) = self.history_cursor else {
+                return;
+            };
+            if index == 0 {
+                self.history_cursor = None;
+                self.command.clear();
+                self.command_cursor = 0;
+                return;
+            }
+            index - 1
+        };
+        self.history_cursor = Some(index);
+        self.command.clone_from(&self.recent_commands[index]);
+        self.command_cursor = self.command.len();
+        self.normalize_normal_cursor();
+    }
+
+    fn handle_tmux_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Left | KeyCode::Up | KeyCode::Char('p' | 'P') => {
+                self.switch_relative_workspace(false);
+            }
+            KeyCode::Right | KeyCode::Down | KeyCode::Char('n' | 'N') => {
+                self.switch_relative_workspace(true);
+            }
+            KeyCode::Char('?') => self.help_visible = true,
+            KeyCode::Char(character @ '1'..='9') => {
+                self.switch_to_navigation_index(character as usize - '1' as usize);
+            }
+            KeyCode::Char('0') => self.switch_to_navigation_index(9),
+            _ => {}
+        }
+    }
+
+    fn switch_relative_workspace(&mut self, forward: bool) {
+        let navigation = self
+            .workspaces
+            .navigation_items()
+            .map(|item| item.id)
+            .collect::<Vec<_>>();
+        let Some(current) = navigation
+            .iter()
+            .position(|id| *id == self.active_workspace)
+        else {
+            if let Some(first) = navigation.first().copied() {
+                self.activate_workspace(first);
+            }
+            return;
+        };
+        let target = if forward {
+            (current + 1) % navigation.len()
+        } else {
+            (current + navigation.len() - 1) % navigation.len()
+        };
+        self.activate_workspace(navigation[target]);
+    }
+
+    fn switch_to_navigation_index(&mut self, index: usize) {
+        let target = self
+            .workspaces
+            .navigation_items()
+            .nth(index)
+            .map(|item| item.id);
+        if let Some(target) = target {
+            self.activate_workspace(target);
+        }
+    }
+
+    fn activate_workspace(&mut self, target: WorkspaceId) {
+        if self.active_workspace == target {
+            return;
+        }
+        self.workspaces.on_blur(self.active_workspace);
+        self.active_workspace = target;
+        self.persist_session();
+    }
+
+    fn open_assistant_drawer(&mut self) {
+        let Some(id) = self.assistant_workspace else {
+            return;
+        };
+        if !self.assistant_drawer_visible {
+            self.assistant_drawer_visible = true;
+            self.workspaces.on_focus(id);
+        }
+    }
+
+    fn close_assistant_drawer(&mut self) {
+        let Some(id) = self.assistant_workspace else {
+            return;
+        };
+        if self.assistant_drawer_visible {
+            self.assistant_drawer_visible = false;
+            self.workspaces.on_blur(id);
+        }
+    }
+
+    fn toggle_assistant_drawer(&mut self) {
+        if self.assistant_drawer_visible {
+            self.close_assistant_drawer();
+        } else {
+            self.open_assistant_drawer();
+        }
     }
 
     fn apply_intent(&mut self, intent: AppIntent) {
@@ -187,13 +616,21 @@ impl App {
         match intent {
             AppIntent::ActivateWorkspace { target } => {
                 if let Some(id) = self.workspaces.resolve_target(&target) {
-                    self.active_workspace = id;
+                    if Some(id) == self.assistant_workspace {
+                        self.open_assistant_drawer();
+                    } else {
+                        self.active_workspace = id;
+                    }
                 }
             }
             AppIntent::BringWorkspaceForward { target } => {
                 if let Some(id) = self.workspaces.resolve_target(&target) {
                     self.workspaces.bring_forward(id);
-                    self.active_workspace = id;
+                    if Some(id) == self.assistant_workspace {
+                        self.open_assistant_drawer();
+                    } else {
+                        self.active_workspace = id;
+                    }
                 }
             }
             AppIntent::DispatchCommand { command, origin } => {
@@ -202,7 +639,11 @@ impl App {
                     return;
                 }
                 if let Some(id) = self.workspaces.dispatch_command(&command) {
-                    self.active_workspace = id;
+                    if Some(id) == self.assistant_workspace {
+                        self.open_assistant_drawer();
+                    } else {
+                        self.active_workspace = id;
+                    }
                 }
             }
             AppIntent::RestoreWorkspaceOrder => self.workspaces.restore_order(),
@@ -210,6 +651,9 @@ impl App {
         if previous_active != self.active_workspace
             || previous_order != self.workspaces.workspace_order()
         {
+            if previous_active != self.active_workspace {
+                self.workspaces.on_blur(previous_active);
+            }
             self.persist_session();
         }
     }
@@ -235,28 +679,237 @@ impl App {
     }
 }
 
+fn previous_char_boundary(value: &str, cursor: usize) -> usize {
+    value[..cursor.min(value.len())]
+        .char_indices()
+        .next_back()
+        .map(|(index, _)| index)
+        .unwrap_or(0)
+}
+
+fn next_char_boundary(value: &str, cursor: usize) -> usize {
+    let cursor = cursor.min(value.len());
+    value[cursor..]
+        .chars()
+        .next()
+        .map(|character| cursor + character.len_utf8())
+        .unwrap_or(cursor)
+}
+
+fn previous_word_start(value: &str, cursor: usize) -> usize {
+    let mut position = cursor.min(value.len());
+    while position > 0 {
+        let previous = previous_char_boundary(value, position);
+        let character = value[previous..position].chars().next().unwrap_or(' ');
+        if !character.is_whitespace() {
+            break;
+        }
+        position = previous;
+    }
+    while position > 0 {
+        let previous = previous_char_boundary(value, position);
+        let character = value[previous..position].chars().next().unwrap_or(' ');
+        if character.is_whitespace() {
+            break;
+        }
+        position = previous;
+    }
+    position
+}
+
+fn next_word_start(value: &str, cursor: usize) -> usize {
+    let mut position = cursor.min(value.len());
+    while position < value.len() {
+        let next = next_char_boundary(value, position);
+        let character = value[position..next].chars().next().unwrap_or(' ');
+        if character.is_whitespace() {
+            break;
+        }
+        position = next;
+    }
+    while position < value.len() {
+        let next = next_char_boundary(value, position);
+        let character = value[position..next].chars().next().unwrap_or(' ');
+        if !character.is_whitespace() {
+            break;
+        }
+        position = next;
+    }
+    position
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::{layout::Rect, Frame};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+    use ratatui::{backend::TestBackend, layout::Rect, Frame, Terminal};
 
     use super::*;
     use crate::{
         bootstrap,
         features::{
-            assistant::ID as ASSISTANT, news::ID as NEWS, overview::ID as OVERVIEW,
+            assistant::ID as ASSISTANT,
+            charting::ID as CHARTING,
+            news::ID as NEWS,
+            overview::ID as OVERVIEW,
             persistence::{PersistenceError, SessionState},
-            portfolio::ID as PORTFOLIO, security::ID as SECURITY,
+            portfolio::ID as PORTFOLIO,
+            security::ID as SECURITY,
         },
     };
+
+    fn left_click(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn clicking_the_ai_navigation_item_opens_the_drawer() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+        let underlying = app.active_workspace();
+
+        app.handle_mouse(left_click(18, 3), Rect::new(0, 0, 160, 48));
+
+        assert_eq!(app.active_workspace, underlying);
+        assert!(app.assistant_drawer_visible());
+    }
+
+    #[test]
+    fn assistant_drawer_renders_over_the_current_workspace_and_closes_by_click() {
+        let frame_area = Rect::new(0, 0, 160, 48);
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        for character in "summarize risk".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+
+        terminal
+            .draw(|frame| crate::ui::render(frame, &app))
+            .unwrap();
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("ASSISTANT DRAWER"));
+        assert!(rendered.contains("summarize risk"));
+        assert_eq!(app.active_workspace(), OVERVIEW);
+
+        let close = crate::ui::assistant_close_area(frame_area);
+        app.handle_mouse(left_click(close.x + 1, close.y), frame_area);
+        assert!(!app.assistant_drawer_visible());
+        assert_eq!(app.active_workspace(), OVERVIEW);
+    }
+
+    #[test]
+    fn clicking_the_command_box_and_go_dispatches_the_command() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+
+        app.handle_mouse(left_click(40, 1), Rect::new(0, 0, 160, 48));
+        assert_eq!(app.input_mode, InputMode::Command);
+        for character in "PORT".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_mouse(left_click(131, 1), Rect::new(0, 0, 160, 48));
+
+        assert_eq!(app.active_workspace, PORTFOLIO);
+        assert_eq!(app.input_mode, InputMode::Navigation);
+    }
+
+    #[test]
+    fn clicking_a_portfolio_position_opens_its_security() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+
+        app.handle_mouse(left_click(2, 12), Rect::new(0, 0, 160, 48));
+        app.advance_tick();
+
+        assert_eq!(app.active_workspace, SECURITY);
+    }
+
+    #[test]
+    fn clicking_away_blurs_assistant_composition() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        assert!(app.assistant_drawer_visible());
+
+        app.handle_mouse(left_click(2, 10), Rect::new(0, 0, 160, 48));
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+
+        assert!(!app.assistant_drawer_visible());
+        assert_eq!(app.active_workspace, PORTFOLIO);
+    }
+
+    #[test]
+    fn clicking_a_market_index_opens_its_chart() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+
+        app.handle_mouse(left_click(2, 8), Rect::new(0, 0, 160, 48));
+        app.advance_tick();
+
+        assert_eq!(app.active_workspace, CHARTING);
+    }
 
     #[test]
     fn hotkeys_switch_workspaces() {
         let mut app = bootstrap::demo_app();
         app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
         assert_eq!(app.active_workspace, PORTFOLIO);
+    }
+
+    #[test]
+    fn hotkeys_switch_away_from_the_assistant_when_not_composing() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        assert_eq!(app.active_workspace, OVERVIEW);
+        assert!(app.assistant_drawer_visible());
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+
+        assert!(!app.assistant_drawer_visible());
+        assert_eq!(app.active_workspace, PORTFOLIO);
+    }
+
+    #[test]
+    fn assistant_composition_can_be_exited_before_using_a_hotkey() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        assert_eq!(app.active_workspace, OVERVIEW);
+        assert!(app.assistant_drawer_visible());
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+
+        assert!(!app.assistant_drawer_visible());
+        assert_eq!(app.active_workspace, PORTFOLIO);
+    }
+
+    #[test]
+    fn command_palette_opens_after_closing_the_assistant_drawer() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+
+        assert_eq!(app.input_mode, InputMode::Command);
     }
 
     #[test]
@@ -270,6 +923,155 @@ mod tests {
         assert_eq!(app.active_workspace, SECURITY);
         assert!(app.command.is_empty());
         assert_eq!(app.input_mode, InputMode::Navigation);
+    }
+
+    #[test]
+    fn command_insert_mode_preserves_case_and_supports_history() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "PORT IMPORT ~/Downloads/positions.csv".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+
+        assert_eq!(app.command(), "PORT IMPORT ~/Downloads/positions.csv");
+        assert_eq!(app.command_cursor(), app.command().len());
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        for character in "PORT".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+
+        assert_eq!(app.command(), "PORT");
+    }
+
+    #[test]
+    fn command_normal_mode_supports_vim_motions_and_edits() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "HEPL".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.command_edit_mode(), CommandEditMode::Normal);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT));
+
+        assert_eq!(app.command(), "HELP");
+        assert_eq!(app.command_edit_mode(), CommandEditMode::Insert);
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.help_visible());
+    }
+
+    #[test]
+    fn command_normal_mode_dd_clears_the_line() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "PORT".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+
+        assert!(app.command().is_empty());
+        assert_eq!(app.command_edit_mode(), CommandEditMode::Normal);
+    }
+
+    #[test]
+    fn help_command_opens_help_without_replacing_the_active_workspace() {
+        let mut app = bootstrap::demo_app();
+        let active = app.active_workspace();
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "HELP".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(app.help_visible());
+        assert_eq!(app.active_workspace(), active);
+        assert_eq!(app.input_mode(), InputMode::Navigation);
+    }
+
+    #[test]
+    fn escape_closes_help_without_quitting_the_application() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        assert!(app.help_visible());
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert!(!app.help_visible());
+        assert!(!app.should_quit());
+    }
+
+    #[test]
+    fn help_screen_renders_commands_and_has_a_clickable_close_control() {
+        let frame_area = Rect::new(0, 0, 160, 48);
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        let mut terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+
+        terminal
+            .draw(|frame| crate::ui::render(frame, &app))
+            .unwrap();
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("MARKET TERMINAL GUIDE"));
+        assert!(rendered.contains("PORT IMPORT <CSV>"));
+
+        let close = crate::ui::help_close_area(crate::ui::ShellLayout::new(frame_area).workspace);
+        app.handle_mouse(left_click(close.x + 1, close.y), frame_area);
+
+        assert!(!app.help_visible());
+    }
+
+    #[test]
+    fn tmux_prefix_switches_to_the_next_and_previous_panels() {
+        let mut app = bootstrap::demo_app();
+        let first = app.active_workspace();
+        let second = app.workspaces.navigation_items().nth(1).unwrap().id;
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        assert!(app.tmux_prefix_pending());
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+
+        assert_eq!(app.active_workspace(), second);
+        assert!(!app.tmux_prefix_pending());
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+
+        assert_eq!(app.active_workspace(), first);
+    }
+
+    #[test]
+    fn tmux_prefix_selects_numbered_panels_and_opens_help() {
+        let mut app = bootstrap::demo_app();
+        let third = app.workspaces.navigation_items().nth(2).unwrap().id;
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        app.handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+        assert_eq!(app.active_workspace(), third);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT));
+
+        assert!(app.help_visible());
     }
 
     #[test]
@@ -335,7 +1137,9 @@ mod tests {
     fn app_intents_reorder_focus_and_restore_workspaces() {
         let mut app = bootstrap::demo_app();
 
-        app.apply_intent(AppIntent::BringWorkspaceForward { target: "news".to_owned() });
+        app.apply_intent(AppIntent::BringWorkspaceForward {
+            target: "news".to_owned(),
+        });
         assert_eq!(app.active_workspace(), NEWS);
         assert_eq!(
             app.workspaces.navigation_items().next().map(|item| item.id),
@@ -380,11 +1184,13 @@ mod tests {
         });
         let registry = WorkspaceRegistry::new(vec![
             Box::new(CapturingWorkspace),
-            Box::new(TestWorkspace { id: PORTFOLIO, hotkey: 'p' }),
+            Box::new(TestWorkspace {
+                id: PORTFOLIO,
+                hotkey: 'p',
+            }),
         ]);
 
-        let mut app = App::new(registry, CAPTURING)
-            .with_session_repository(repository.clone());
+        let mut app = App::new(registry, CAPTURING).with_session_repository(repository.clone());
 
         assert_eq!(app.active_workspace(), PORTFOLIO);
         assert_eq!(app.workspaces.workspace_order(), vec![PORTFOLIO, CAPTURING]);
@@ -406,7 +1212,9 @@ mod tests {
         let mut app = bootstrap::demo_app();
         let initial = app.active_workspace();
 
-        app.apply_intent(AppIntent::ActivateWorkspace { target: "shell".to_owned() });
+        app.apply_intent(AppIntent::ActivateWorkspace {
+            target: "shell".to_owned(),
+        });
 
         assert_eq!(app.active_workspace(), initial);
     }

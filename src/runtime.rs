@@ -1,6 +1,11 @@
 use std::{io, time::Duration};
 
-use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use crossterm::{
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind,
+    },
+    execute,
+};
 use ratatui::DefaultTerminal;
 
 use crate::{app::App, ui};
@@ -12,10 +17,15 @@ const POLL_INTERVAL: Duration = Duration::from_millis(180);
 /// Terminal I/O and rendering live here so the application layer remains a
 /// deterministic state machine with no dependency on the presentation layer.
 pub fn run(mut app: App, terminal: &mut DefaultTerminal) -> io::Result<()> {
+    let _mouse_capture = MouseCaptureGuard::enable()?;
     while !app.should_quit() {
-        terminal.draw(|frame| render(frame, &app))?;
-        if let Some(key) = read_pressed_key()? {
-            app.handle_key(key);
+        let frame_area = terminal.draw(|frame| render(frame, &app))?.area;
+        if let Some(input) = read_input_event()? {
+            match input {
+                Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
+                Event::Mouse(mouse) => app.handle_mouse(mouse, frame_area),
+                _ => {}
+            }
         }
         app.advance_tick();
     }
@@ -30,12 +40,24 @@ pub fn render(frame: &mut ratatui::Frame, app: &App) {
     ui::render(frame, app);
 }
 
-fn read_pressed_key() -> io::Result<Option<KeyEvent>> {
+fn read_input_event() -> io::Result<Option<Event>> {
     if !event::poll(POLL_INTERVAL)? {
         return Ok(None);
     }
-    let Event::Key(key) = event::read()? else {
-        return Ok(None);
-    };
-    Ok((key.kind == KeyEventKind::Press).then_some(key))
+    Ok(Some(event::read()?))
+}
+
+struct MouseCaptureGuard;
+
+impl MouseCaptureGuard {
+    fn enable() -> io::Result<Self> {
+        execute!(io::stdout(), EnableMouseCapture)?;
+        Ok(Self)
+    }
+}
+
+impl Drop for MouseCaptureGuard {
+    fn drop(&mut self) {
+        let _ = execute!(io::stdout(), DisableMouseCapture);
+    }
 }

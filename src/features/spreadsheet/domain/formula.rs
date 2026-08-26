@@ -9,11 +9,17 @@ pub struct FormulaReference {
 }
 
 impl FormulaReference {
-    pub fn new(sheet: Option<String>, cell: CellReference) -> Self { Self { sheet, cell } }
+    pub fn new(sheet: Option<String>, cell: CellReference) -> Self {
+        Self { sheet, cell }
+    }
 
-    pub fn sheet(&self) -> Option<&str> { self.sheet.as_deref() }
+    pub fn sheet(&self) -> Option<&str> {
+        self.sheet.as_deref()
+    }
 
-    pub const fn cell(&self) -> CellReference { self.cell }
+    pub const fn cell(&self) -> CellReference {
+        self.cell
+    }
 
     fn translated(&self, column_delta: i16, row_delta: i32) -> Result<Self, AddressError> {
         Ok(Self {
@@ -45,11 +51,17 @@ impl FormulaRange {
         Self { sheet, start, end }
     }
 
-    pub fn sheet(&self) -> Option<&str> { self.sheet.as_deref() }
+    pub fn sheet(&self) -> Option<&str> {
+        self.sheet.as_deref()
+    }
 
-    pub const fn start(&self) -> CellReference { self.start }
+    pub const fn start(&self) -> CellReference {
+        self.start
+    }
 
-    pub const fn end(&self) -> CellReference { self.end }
+    pub const fn end(&self) -> CellReference {
+        self.end
+    }
 
     pub fn addresses(&self) -> impl Iterator<Item = CellAddress> {
         CellRange::new(self.start.address(), self.end.address()).addresses()
@@ -80,9 +92,19 @@ pub enum Expr {
     Text(String),
     Reference(FormulaReference),
     Range(FormulaRange),
-    Unary { operator: UnaryOperator, operand: Box<Expr> },
-    Binary { left: Box<Expr>, operator: BinaryOperator, right: Box<Expr> },
-    Function { function: AggregateFunction, arguments: Vec<Expr> },
+    Unary {
+        operator: UnaryOperator,
+        operand: Box<Expr>,
+    },
+    Binary {
+        left: Box<Expr>,
+        operator: BinaryOperator,
+        right: Box<Expr>,
+    },
+    Function {
+        function: AggregateFunction,
+        arguments: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +144,8 @@ pub enum AggregateFunction {
     Absolute,
     Round,
     XLookup,
+    PriceLast,
+    PriceChange,
 }
 
 impl fmt::Display for Expr {
@@ -144,26 +168,50 @@ impl Expr {
             Self::Unary { operator, operand } => {
                 let precedence = 4;
                 let parenthesize = precedence < parent_precedence;
-                if parenthesize { write!(formatter, "(")?; }
-                write!(formatter, "{}", match operator { UnaryOperator::Plus => "+", UnaryOperator::Minus => "-" })?;
+                if parenthesize {
+                    write!(formatter, "(")?;
+                }
+                write!(
+                    formatter,
+                    "{}",
+                    match operator {
+                        UnaryOperator::Plus => "+",
+                        UnaryOperator::Minus => "-",
+                    }
+                )?;
                 operand.fmt_with_precedence(formatter, precedence)?;
-                if parenthesize { write!(formatter, ")")?; }
+                if parenthesize {
+                    write!(formatter, ")")?;
+                }
                 Ok(())
             }
-            Self::Binary { left, operator, right } => {
+            Self::Binary {
+                left,
+                operator,
+                right,
+            } => {
                 let precedence = operator.precedence();
                 let parenthesize = precedence < parent_precedence;
-                if parenthesize { write!(formatter, "(")?; }
+                if parenthesize {
+                    write!(formatter, "(")?;
+                }
                 left.fmt_with_precedence(formatter, precedence)?;
                 write!(formatter, " {} ", operator.symbol())?;
                 right.fmt_with_precedence(formatter, precedence + 1)?;
-                if parenthesize { write!(formatter, ")")?; }
+                if parenthesize {
+                    write!(formatter, ")")?;
+                }
                 Ok(())
             }
-            Self::Function { function, arguments } => {
+            Self::Function {
+                function,
+                arguments,
+            } => {
                 write!(formatter, "{}(", function.name())?;
                 for (index, argument) in arguments.iter().enumerate() {
-                    if index > 0 { write!(formatter, ", ")?; }
+                    if index > 0 {
+                        write!(formatter, ", ")?;
+                    }
                     argument.fmt_with_precedence(formatter, 0)?;
                 }
                 write!(formatter, ")")
@@ -175,8 +223,12 @@ impl Expr {
 impl BinaryOperator {
     const fn precedence(self) -> u8 {
         match self {
-            Self::Equal | Self::NotEqual | Self::LessThan | Self::LessThanOrEqual
-            | Self::GreaterThan | Self::GreaterThanOrEqual => 1,
+            Self::Equal
+            | Self::NotEqual
+            | Self::LessThan
+            | Self::LessThanOrEqual
+            | Self::GreaterThan
+            | Self::GreaterThanOrEqual => 1,
             Self::Add | Self::Subtract => 2,
             Self::Multiply | Self::Divide => 3,
         }
@@ -184,9 +236,16 @@ impl BinaryOperator {
 
     const fn symbol(self) -> &'static str {
         match self {
-            Self::Add => "+", Self::Subtract => "-", Self::Multiply => "*", Self::Divide => "/",
-            Self::Equal => "=", Self::NotEqual => "<>", Self::LessThan => "<",
-            Self::LessThanOrEqual => "<=", Self::GreaterThan => ">", Self::GreaterThanOrEqual => ">=",
+            Self::Add => "+",
+            Self::Subtract => "-",
+            Self::Multiply => "*",
+            Self::Divide => "/",
+            Self::Equal => "=",
+            Self::NotEqual => "<>",
+            Self::LessThan => "<",
+            Self::LessThanOrEqual => "<=",
+            Self::GreaterThan => ">",
+            Self::GreaterThanOrEqual => ">=",
         }
     }
 }
@@ -194,18 +253,35 @@ impl BinaryOperator {
 impl AggregateFunction {
     const fn name(self) -> &'static str {
         match self {
-            Self::Sum => "SUM", Self::Average => "AVERAGE", Self::Minimum => "MIN",
-            Self::Maximum => "MAX", Self::Count => "COUNT", Self::CountA => "COUNTA",
-            Self::If => "IF", Self::And => "AND", Self::Or => "OR", Self::Not => "NOT",
-            Self::Concat => "CONCAT", Self::Length => "LEN", Self::Absolute => "ABS",
-            Self::Round => "ROUND", Self::XLookup => "XLOOKUP",
+            Self::Sum => "SUM",
+            Self::Average => "AVERAGE",
+            Self::Minimum => "MIN",
+            Self::Maximum => "MAX",
+            Self::Count => "COUNT",
+            Self::CountA => "COUNTA",
+            Self::If => "IF",
+            Self::And => "AND",
+            Self::Or => "OR",
+            Self::Not => "NOT",
+            Self::Concat => "CONCAT",
+            Self::Length => "LEN",
+            Self::Absolute => "ABS",
+            Self::Round => "ROUND",
+            Self::XLookup => "XLOOKUP",
+            Self::PriceLast => "PX_LAST",
+            Self::PriceChange => "PX_CHANGE",
         }
     }
 }
 
 fn write_sheet_name(formatter: &mut fmt::Formatter<'_>, sheet: &str) -> fmt::Result {
-    if sheet.chars().next().is_some_and(|character| character.is_ascii_alphabetic())
-        && sheet.chars().all(|character| character.is_ascii_alphanumeric() || character == '_')
+    if sheet
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_alphabetic())
+        && sheet
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
     {
         write!(formatter, "{sheet}")
     } else {
@@ -234,8 +310,13 @@ pub fn translate_formula(
     row_delta: i32,
 ) -> Result<String, FormulaError> {
     let expression = parse_formula(input)?;
-    let translated = translate_expression(&expression, column_delta, row_delta)
-        .map_err(|error| FormulaError { position: 0, message: error.to_string() })?;
+    let translated =
+        translate_expression(&expression, column_delta, row_delta).map_err(|error| {
+            FormulaError {
+                position: 0,
+                message: error.to_string(),
+            }
+        })?;
     Ok(format!("={translated}"))
 }
 
@@ -255,12 +336,19 @@ fn translate_expression(
             operator: *operator,
             operand: Box::new(translate_expression(operand, column_delta, row_delta)?),
         },
-        Expr::Binary { left, operator, right } => Expr::Binary {
+        Expr::Binary {
+            left,
+            operator,
+            right,
+        } => Expr::Binary {
             left: Box::new(translate_expression(left, column_delta, row_delta)?),
             operator: *operator,
             right: Box::new(translate_expression(right, column_delta, row_delta)?),
         },
-        Expr::Function { function, arguments } => Expr::Function {
+        Expr::Function {
+            function,
+            arguments,
+        } => Expr::Function {
             function: *function,
             arguments: arguments
                 .iter()
@@ -277,7 +365,10 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn new(source: &'a str) -> Self {
-        Self { source, position: 0 }
+        Self {
+            source,
+            position: 0,
+        }
     }
 
     fn parse_expression(&mut self) -> Result<Expr, FormulaError> {
@@ -301,7 +392,11 @@ impl<'a> Parser<'a> {
             };
             let Some(operator) = operator else { break };
             let right = self.parse_additive()?;
-            expression = Expr::Binary { left: Box::new(expression), operator, right: Box::new(right) };
+            expression = Expr::Binary {
+                left: Box::new(expression),
+                operator,
+                right: Box::new(right),
+            };
         }
         Ok(expression)
     }
@@ -317,7 +412,11 @@ impl<'a> Parser<'a> {
             };
             self.advance();
             let right = self.parse_term()?;
-            expression = Expr::Binary { left: Box::new(expression), operator, right: Box::new(right) };
+            expression = Expr::Binary {
+                left: Box::new(expression),
+                operator,
+                right: Box::new(right),
+            };
         }
         Ok(expression)
     }
@@ -333,7 +432,11 @@ impl<'a> Parser<'a> {
             };
             self.advance();
             let right = self.parse_unary()?;
-            expression = Expr::Binary { left: Box::new(expression), operator, right: Box::new(right) };
+            expression = Expr::Binary {
+                left: Box::new(expression),
+                operator,
+                right: Box::new(right),
+            };
         }
         Ok(expression)
     }
@@ -347,7 +450,10 @@ impl<'a> Parser<'a> {
         };
         if let Some(operator) = operator {
             self.advance();
-            return Ok(Expr::Unary { operator, operand: Box::new(self.parse_unary()?) });
+            return Ok(Expr::Unary {
+                operator,
+                operand: Box::new(self.parse_unary()?),
+            });
         }
         self.parse_primary()
     }
@@ -362,10 +468,15 @@ impl<'a> Parser<'a> {
                 Ok(expression)
             }
             Some('"') => self.parse_text(),
-            Some(character) if character.is_ascii_digit() || character == '.' => self.parse_number(),
+            Some(character) if character.is_ascii_digit() || character == '.' => {
+                self.parse_number()
+            }
             Some('\'') => self.parse_quoted_sheet_reference(),
-            Some(character) if character.is_ascii_alphabetic() || character == '$' => self.parse_name_or_reference(),
-            Some(_) => Err(self.error("expected a number, cell reference, function, or parenthesized expression")),
+            Some(character) if character.is_ascii_alphabetic() || character == '$' => {
+                self.parse_name_or_reference()
+            }
+            Some(_) => Err(self
+                .error("expected a number, cell reference, function, or parenthesized expression")),
             None => Err(self.error("expected an expression")),
         }
     }
@@ -469,13 +580,19 @@ impl<'a> Parser<'a> {
         if self.peek() == Some('$') {
             self.advance();
         }
-        while self.peek().is_some_and(|character| character.is_ascii_alphabetic()) {
+        while self
+            .peek()
+            .is_some_and(|character| character.is_ascii_alphabetic())
+        {
             self.advance();
         }
         if self.peek() == Some('$') {
             self.advance();
         }
-        while self.peek().is_some_and(|character| character.is_ascii_digit()) {
+        while self
+            .peek()
+            .is_some_and(|character| character.is_ascii_digit())
+        {
             self.advance();
         }
         let address = self.source[start..self.position]
@@ -491,13 +608,19 @@ impl<'a> Parser<'a> {
         if self.peek() == Some('$') {
             self.advance();
         }
-        while self.peek().is_some_and(|character| character.is_ascii_alphabetic()) {
+        while self
+            .peek()
+            .is_some_and(|character| character.is_ascii_alphabetic())
+        {
             self.advance();
         }
         if self.peek() == Some('$') {
             self.advance();
         }
-        while self.peek().is_some_and(|character| character.is_ascii_digit()) {
+        while self
+            .peek()
+            .is_some_and(|character| character.is_ascii_digit())
+        {
             self.advance();
         }
         let end = self.source[range_start..self.position]
@@ -523,6 +646,8 @@ impl<'a> Parser<'a> {
             "ABS" => AggregateFunction::Absolute,
             "ROUND" => AggregateFunction::Round,
             "XLOOKUP" => AggregateFunction::XLookup,
+            "PX_LAST" => AggregateFunction::PriceLast,
+            "PX_CHANGE" => AggregateFunction::PriceChange,
             _ => return Err(self.error("unknown function")),
         };
         self.expect('(')?;
@@ -539,7 +664,10 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(')')?;
-        Ok(Expr::Function { function, arguments })
+        Ok(Expr::Function {
+            function,
+            arguments,
+        })
     }
 
     fn expect(&mut self, expected: char) -> Result<(), FormulaError> {
@@ -582,7 +710,10 @@ impl<'a> Parser<'a> {
     }
 
     fn error(&self, message: &str) -> FormulaError {
-        FormulaError { position: self.position, message: message.to_owned() }
+        FormulaError {
+            position: self.position,
+            message: message.to_owned(),
+        }
     }
 }
 
@@ -607,15 +738,35 @@ mod tests {
     #[test]
     fn parser_obeys_arithmetic_precedence() {
         let expression = parse_formula("=1 + 2 * 3").unwrap();
-        assert!(matches!(expression, Expr::Binary { operator: BinaryOperator::Add, .. }));
-        let Expr::Binary { right, .. } = expression else { unreachable!() };
-        assert!(matches!(*right, Expr::Binary { operator: BinaryOperator::Multiply, .. }));
+        assert!(matches!(
+            expression,
+            Expr::Binary {
+                operator: BinaryOperator::Add,
+                ..
+            }
+        ));
+        let Expr::Binary { right, .. } = expression else {
+            unreachable!()
+        };
+        assert!(matches!(
+            *right,
+            Expr::Binary {
+                operator: BinaryOperator::Multiply,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn parser_accepts_ranges_and_case_insensitive_functions() {
         let expression = parse_formula("average(a1:B3, 10)").unwrap();
-        let Expr::Function { function, arguments } = expression else { panic!("expected function") };
+        let Expr::Function {
+            function,
+            arguments,
+        } = expression
+        else {
+            panic!("expected function")
+        };
         assert_eq!(function, AggregateFunction::Average);
         assert!(matches!(arguments[0], Expr::Range(_)));
         assert_eq!(arguments[1], Expr::Number(10.0));
@@ -629,17 +780,55 @@ mod tests {
 
     #[test]
     fn parser_accepts_comparisons_text_and_richer_functions() {
-        let expression = parse_formula("=IF(A1 >= 10, CONCAT(\"large \"\"position\"\"\", A1), \"small\")").unwrap();
-        let Expr::Function { function, arguments } = expression else { panic!("expected function") };
+        let expression =
+            parse_formula("=IF(A1 >= 10, CONCAT(\"large \"\"position\"\"\", A1), \"small\")")
+                .unwrap();
+        let Expr::Function {
+            function,
+            arguments,
+        } = expression
+        else {
+            panic!("expected function")
+        };
         assert_eq!(function, AggregateFunction::If);
         assert!(matches!(
             arguments[0],
-            Expr::Binary { operator: BinaryOperator::GreaterThanOrEqual, .. }
+            Expr::Binary {
+                operator: BinaryOperator::GreaterThanOrEqual,
+                ..
+            }
         ));
         assert!(matches!(
             arguments[1],
-            Expr::Function { function: AggregateFunction::Concat, .. }
+            Expr::Function {
+                function: AggregateFunction::Concat,
+                ..
+            }
         ));
+    }
+
+    #[test]
+    fn parser_and_translation_support_financial_functions() {
+        let price = parse_formula("=PX_LAST(A1)").unwrap();
+        assert!(matches!(
+            price,
+            Expr::Function {
+                function: AggregateFunction::PriceLast,
+                ..
+            }
+        ));
+        let change = parse_formula("=PX_CHANGE(\"SPY US Equity\", \"1D\")").unwrap();
+        assert!(matches!(
+            change,
+            Expr::Function {
+                function: AggregateFunction::PriceChange,
+                ..
+            }
+        ));
+        assert_eq!(
+            translate_formula("=PX_LAST(A1)", 1, 2).unwrap(),
+            "=PX_LAST(B3)"
+        );
     }
 
     #[test]
@@ -650,9 +839,15 @@ mod tests {
     #[test]
     fn parser_accepts_qualified_and_quoted_sheet_references() {
         let expression = parse_formula("=Inputs!$B2 + 'Base Case'!C$4").unwrap();
-        let Expr::Binary { left, right, .. } = expression else { panic!("expected binary") };
-        let Expr::Reference(left) = *left else { panic!("expected reference") };
-        let Expr::Reference(right) = *right else { panic!("expected reference") };
+        let Expr::Binary { left, right, .. } = expression else {
+            panic!("expected binary")
+        };
+        let Expr::Reference(left) = *left else {
+            panic!("expected reference")
+        };
+        let Expr::Reference(right) = *right else {
+            panic!("expected reference")
+        };
         assert_eq!(left.sheet(), Some("Inputs"));
         assert_eq!(left.cell().to_string(), "$B2");
         assert_eq!(right.sheet(), Some("Base Case"));
@@ -661,15 +856,8 @@ mod tests {
 
     #[test]
     fn translation_respects_mixed_absolute_axes_and_sheet_names() {
-        let translated = translate_formula(
-            "=A1 + $A1 + A$1 + $A$1 + 'Base Case'!B2",
-            2,
-            3,
-        )
-        .unwrap();
-        assert_eq!(
-            translated,
-            "=C4 + $A4 + C$1 + $A$1 + 'Base Case'!D5"
-        );
+        let translated =
+            translate_formula("=A1 + $A1 + A$1 + $A$1 + 'Base Case'!B2", 2, 3).unwrap();
+        assert_eq!(translated, "=C4 + $A4 + C$1 + $A$1 + 'Base Case'!D5");
     }
 }

@@ -1,33 +1,34 @@
 use crate::foundation::InstrumentId;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Headline {
-    pub time: &'static str,
-    pub topic: &'static str,
-    pub title: &'static str,
-    pub region: &'static str,
+    pub time: String,
+    pub topic: String,
+    pub title: String,
+    pub region: String,
 }
 
 impl Headline {
-    pub fn story_id(self) -> String {
+    pub fn story_id(&self) -> String {
         format!("{}:{}:{}", self.time, self.topic, self.title)
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NewsSnapshot {
-    pub headlines: &'static [Headline],
+    pub headlines: Vec<Headline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewsStory {
     pub id: String,
     pub headline: Headline,
-    pub byline: &'static str,
-    pub summary: &'static str,
-    pub body: &'static [&'static str],
-    pub related_symbols: &'static [&'static str],
+    pub byline: String,
+    pub summary: String,
+    pub body: Vec<String>,
+    pub related_symbols: Vec<String>,
     pub instruments: Vec<InstrumentId>,
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,15 +48,15 @@ impl EventImportance {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewsEvent {
-    pub time: &'static str,
-    pub region: &'static str,
+    pub time: String,
+    pub region: String,
     pub importance: EventImportance,
-    pub event: &'static str,
-    pub period: &'static str,
-    pub survey: &'static str,
-    pub prior: &'static str,
+    pub event: String,
+    pub period: String,
+    pub survey: String,
+    pub prior: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -75,18 +76,25 @@ impl NewsFilter {
         if self.bookmarked_only && !is_bookmarked {
             return false;
         }
-        if self.region.as_ref().is_some_and(|region| {
-            !story.headline.region.eq_ignore_ascii_case(region)
-        }) {
+        if self
+            .region
+            .as_ref()
+            .is_some_and(|region| !story.headline.region.eq_ignore_ascii_case(region))
+        {
             return false;
         }
-        if self.topic.as_ref().is_some_and(|topic| {
-            !story.headline.topic.eq_ignore_ascii_case(topic)
-        }) {
+        if self
+            .topic
+            .as_ref()
+            .is_some_and(|topic| !story.headline.topic.eq_ignore_ascii_case(topic))
+        {
             return false;
         }
         if self.symbol.as_ref().is_some_and(|symbol| {
-            !story.related_symbols.iter().any(|candidate| candidate.eq_ignore_ascii_case(symbol))
+            !story
+                .related_symbols
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(symbol))
         }) {
             return false;
         }
@@ -94,15 +102,18 @@ impl NewsFilter {
     }
 
     pub fn is_active(&self) -> bool {
-        self.region.is_some() || self.topic.is_some() || self.symbol.is_some()
-            || self.unread_only || self.bookmarked_only
+        self.region.is_some()
+            || self.topic.is_some()
+            || self.symbol.is_some()
+            || self.unread_only
+            || self.bookmarked_only
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct NewsWorkbench {
     pub stories: Vec<NewsStory>,
-    pub events: &'static [NewsEvent],
+    pub events: Vec<NewsEvent>,
 }
 
 const MARKET_BODY: &[&str] = &[
@@ -121,20 +132,11 @@ const COMMODITY_BODY: &[&str] = &[
     "Positioning remains light ahead of the next supply update.",
 ];
 
-const EVENTS: [NewsEvent; 6] = [
-    NewsEvent { time: "08:30", region: "US", importance: EventImportance::High, event: "CORE PCE PRICE INDEX", period: "JUL", survey: "+0.2%", prior: "+0.3%" },
-    NewsEvent { time: "08:30", region: "US", importance: EventImportance::Medium, event: "INITIAL JOBLESS CLAIMS", period: "AUG 22", survey: "232K", prior: "228K" },
-    NewsEvent { time: "10:00", region: "US", importance: EventImportance::High, event: "CONSUMER CONFIDENCE", period: "AUG", survey: "98.2", prior: "97.4" },
-    NewsEvent { time: "11:00", region: "EU", importance: EventImportance::Medium, event: "ECB 1Y INFLATION EXPECTATION", period: "JUL", survey: "2.6%", prior: "2.7%" },
-    NewsEvent { time: "14:00", region: "US", importance: EventImportance::Low, event: "FED BEIGE BOOK", period: "AUG", survey: "—", prior: "—" },
-    NewsEvent { time: "22:00", region: "AS", importance: EventImportance::High, event: "CHINA MANUFACTURING PMI", period: "AUG", survey: "49.8", prior: "49.5" },
-];
-
 impl NewsWorkbench {
     pub fn from_snapshot(snapshot: NewsSnapshot) -> Self {
-        let stories = snapshot.headlines.iter().copied().map(|headline| {
-            let (byline, summary, body, related_symbols): (_, _, _, &'static [&'static str]) =
-                match headline.topic {
+        let stories = snapshot.headlines.into_iter().map(|headline| {
+            let (byline, summary, body, related_symbols): (_, _, _, &[&str]) =
+                match headline.topic.as_str() {
                     "FED" | "ECO" | "POL" => (
                         "ECONOMICS DESK",
                         "Policy expectations shift as investors digest the latest official guidance.",
@@ -160,33 +162,131 @@ impl NewsWorkbench {
                         &["SPY", "AAPL", "MSFT"],
                     ),
                 };
+            let related_symbols = related_symbols.iter().map(|symbol| (*symbol).to_owned()).collect::<Vec<_>>();
             let instruments = related_symbols.iter().map(|symbol| {
                 InstrumentId::new(format!("us:listed:{}", symbol.to_ascii_lowercase()))
             }).collect();
             NewsStory {
-                id: headline.story_id(), headline, byline, summary, body, related_symbols,
+                id: headline.story_id(),
+                headline,
+                byline: byline.to_owned(),
+                summary: summary.to_owned(),
+                body: body.iter().map(|paragraph| (*paragraph).to_owned()).collect(),
+                related_symbols,
                 instruments,
+                url: None,
             }
         }).collect();
-        Self { stories, events: &EVENTS }
+        Self {
+            stories,
+            events: demo_events(),
+        }
     }
+}
+
+fn demo_events() -> Vec<NewsEvent> {
+    [
+        (
+            "08:30",
+            "US",
+            EventImportance::High,
+            "CORE PCE PRICE INDEX",
+            "JUL",
+            "+0.2%",
+            "+0.3%",
+        ),
+        (
+            "08:30",
+            "US",
+            EventImportance::Medium,
+            "INITIAL JOBLESS CLAIMS",
+            "AUG 22",
+            "232K",
+            "228K",
+        ),
+        (
+            "10:00",
+            "US",
+            EventImportance::High,
+            "CONSUMER CONFIDENCE",
+            "AUG",
+            "98.2",
+            "97.4",
+        ),
+        (
+            "11:00",
+            "EU",
+            EventImportance::Medium,
+            "ECB 1Y INFLATION EXPECTATION",
+            "JUL",
+            "2.6%",
+            "2.7%",
+        ),
+        (
+            "14:00",
+            "US",
+            EventImportance::Low,
+            "FED BEIGE BOOK",
+            "AUG",
+            "—",
+            "—",
+        ),
+        (
+            "22:00",
+            "AS",
+            EventImportance::High,
+            "CHINA MANUFACTURING PMI",
+            "AUG",
+            "49.8",
+            "49.5",
+        ),
+    ]
+    .into_iter()
+    .map(
+        |(time, region, importance, event, period, survey, prior)| NewsEvent {
+            time: time.to_owned(),
+            region: region.to_owned(),
+            importance,
+            event: event.to_owned(),
+            period: period.to_owned(),
+            survey: survey.to_owned(),
+            prior: prior.to_owned(),
+        },
+    )
+    .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const HEADLINES: [Headline; 2] = [
-        Headline { time: "16:00", topic: "TOP", title: "Stocks gain", region: "US" },
-        Headline { time: "14:00", topic: "TEC", title: "Chip rally", region: "AS" },
-    ];
+    fn headlines() -> Vec<Headline> {
+        vec![
+            Headline {
+                time: "16:00".into(),
+                topic: "TOP".into(),
+                title: "Stocks gain".into(),
+                region: "US".into(),
+            },
+            Headline {
+                time: "14:00".into(),
+                topic: "TEC".into(),
+                title: "Chip rally".into(),
+                region: "AS".into(),
+            },
+        ]
+    }
 
     #[test]
     fn filters_compose_across_region_topic_and_symbol() {
-        let workbench = NewsWorkbench::from_snapshot(NewsSnapshot { headlines: &HEADLINES });
+        let workbench = NewsWorkbench::from_snapshot(NewsSnapshot {
+            headlines: headlines(),
+        });
         let filter = NewsFilter {
-            region: Some("AS".into()), topic: Some("TEC".into()),
-            symbol: Some("NVDA".into()), ..NewsFilter::default()
+            region: Some("AS".into()),
+            topic: Some("TEC".into()),
+            symbol: Some("NVDA".into()),
+            ..NewsFilter::default()
         };
         assert!(!filter.matches(&workbench.stories[0], false, false));
         assert!(filter.matches(&workbench.stories[1], false, false));
@@ -194,7 +294,12 @@ mod tests {
 
     #[test]
     fn stories_carry_provider_neutral_instrument_links() {
-        let workbench = NewsWorkbench::from_snapshot(NewsSnapshot { headlines: &HEADLINES });
-        assert_eq!(workbench.stories[1].instruments[0].as_str(), "us:listed:nvda");
+        let workbench = NewsWorkbench::from_snapshot(NewsSnapshot {
+            headlines: headlines(),
+        });
+        assert_eq!(
+            workbench.stories[1].instruments[0].as_str(),
+            "us:listed:nvda"
+        );
     }
 }

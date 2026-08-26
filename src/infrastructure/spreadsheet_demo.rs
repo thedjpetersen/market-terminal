@@ -1,5 +1,6 @@
 use crate::features::spreadsheet::{
-    MarketDataPoint, MarketDataRequest, SpreadsheetMarketData,
+    MarketDataPoint, MarketDataProvenance, MarketDataQuality, MarketDataRequest,
+    SpreadsheetMarketData,
 };
 
 #[derive(Debug, Default)]
@@ -21,7 +22,16 @@ impl SpreadsheetMarketData for DemoSpreadsheetMarketData {
                     ("NVDA US Equity", "CHG_PCT_1D") => 2.14,
                     _ => return None,
                 };
-                Some(MarketDataPoint { request: request.clone(), value })
+                Some(MarketDataPoint::ready(
+                    request.clone(),
+                    value,
+                    MarketDataProvenance {
+                        provider: "BUILT-IN DEMO SNAPSHOT".to_owned(),
+                        observed_at: "2026-08-26T13:00:00-07:00".to_owned(),
+                        received_at: "2026-08-26T13:00:00-07:00".to_owned(),
+                        quality: MarketDataQuality::Demo,
+                    },
+                ))
             })
             .collect()
     }
@@ -30,6 +40,7 @@ impl SpreadsheetMarketData for DemoSpreadsheetMarketData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::spreadsheet::MarketDataState;
 
     #[test]
     fn batch_adapter_preserves_known_request_order_and_skips_unknown_fields() {
@@ -41,8 +52,14 @@ mod tests {
         let values = DemoSpreadsheetMarketData.load_batch(&requests);
         assert_eq!(values.len(), 2);
         assert_eq!(values[0].request, requests[0]);
-        assert_eq!(values[0].value, 1.0);
+        assert!(matches!(
+            values[0].state,
+            MarketDataState::Ready { value: 1.0, .. }
+        ));
         assert_eq!(values[1].request, requests[2]);
-        assert_eq!(values[1].value, 530.47);
+        assert!(matches!(
+            values[1].state,
+            MarketDataState::Ready { value: 530.47, .. }
+        ));
     }
 }

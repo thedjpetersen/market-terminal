@@ -3,16 +3,16 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU64, Ordering},
         Mutex,
+        atomic::{AtomicU64, Ordering},
     },
 };
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::features::persistence::{
-    DocumentId, FeatureDocument, FeatureDocumentRepository, FeatureKey, PersistenceError,
-    SessionState, SessionStateRepository, MAX_DOCUMENT_BYTES,
+    DocumentId, FeatureDocument, FeatureDocumentRepository, FeatureKey, MAX_DOCUMENT_BYTES,
+    PersistenceError, SessionState, SessionStateRepository,
 };
 
 const SESSION_SCHEMA: &str = "market-terminal.session";
@@ -37,7 +37,10 @@ pub struct LocalPersistence {
 
 impl LocalPersistence {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into(), operation: Mutex::new(()) }
+        Self {
+            root: root.into(),
+            operation: Mutex::new(()),
+        }
     }
 
     fn session_path(&self) -> PathBuf {
@@ -108,13 +111,19 @@ impl LocalPersistence {
 
 impl SessionStateRepository for LocalPersistence {
     fn load(&self) -> Result<Option<SessionState>, PersistenceError> {
-        let _guard = self.operation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = self
+            .operation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         load_with_fallback(&self.session_path(), Self::load_session_at)
     }
 
     fn save(&self, state: &SessionState) -> Result<(), PersistenceError> {
         state.validate()?;
-        let _guard = self.operation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = self
+            .operation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let bytes = encode_envelope(SESSION_SCHEMA, SESSION_VERSION, state)?;
         write_with_backup(&self.session_path(), &bytes, Self::load_session_at)
     }
@@ -126,7 +135,10 @@ impl FeatureDocumentRepository for LocalPersistence {
         feature: &FeatureKey,
         id: &DocumentId,
     ) -> Result<Option<FeatureDocument>, PersistenceError> {
-        let _guard = self.operation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = self
+            .operation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         load_with_fallback(&self.document_path(feature, id), |path| {
             let document = Self::load_document_at(path)?;
             if document
@@ -143,7 +155,10 @@ impl FeatureDocumentRepository for LocalPersistence {
 
     fn save(&self, document: &FeatureDocument) -> Result<(), PersistenceError> {
         document.validate()?;
-        let _guard = self.operation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = self
+            .operation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let bytes = encode_envelope(DOCUMENT_SCHEMA, DOCUMENT_VERSION, document)?;
         write_with_backup(
             &self.document_path(document.feature(), document.id()),
@@ -153,7 +168,10 @@ impl FeatureDocumentRepository for LocalPersistence {
     }
 
     fn list(&self, feature: &FeatureKey) -> Result<Vec<DocumentId>, PersistenceError> {
-        let _guard = self.operation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = self
+            .operation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let directory = self.document_directory(feature);
         let entries = match fs::read_dir(directory) {
             Ok(entries) => entries,
@@ -184,7 +202,10 @@ impl FeatureDocumentRepository for LocalPersistence {
     }
 
     fn delete(&self, feature: &FeatureKey, id: &DocumentId) -> Result<bool, PersistenceError> {
-        let _guard = self.operation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = self
+            .operation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let path = self.document_path(feature, id);
         let backup = backup_path(&path);
         let mut removed = remove_if_present(&path)?;
@@ -234,8 +255,12 @@ fn encode_envelope<T: Serialize>(
     version: u64,
     payload: &T,
 ) -> Result<Vec<u8>, PersistenceError> {
-    let bytes = serde_json::to_vec_pretty(&Envelope { schema, version, payload })
-        .map_err(|error| PersistenceError::Corrupt(error.to_string()))?;
+    let bytes = serde_json::to_vec_pretty(&Envelope {
+        schema,
+        version,
+        payload,
+    })
+    .map_err(|error| PersistenceError::Corrupt(error.to_string()))?;
     if bytes.len() > MAX_ENVELOPE_BYTES {
         return Err(PersistenceError::PayloadTooLarge);
     }
@@ -270,16 +295,13 @@ fn load_with_fallback<T>(
         Ok(Some(value)) => Ok(Some(value)),
         Ok(None) => read(&backup_path(path)),
         Err(
-            primary
-            @ (PersistenceError::Corrupt(_)
+            primary @ (PersistenceError::Corrupt(_)
             | PersistenceError::Validation(_)
             | PersistenceError::PayloadTooLarge),
-        ) => {
-            match read(&backup_path(path)) {
-                Ok(Some(value)) => Ok(Some(value)),
-                Ok(None) | Err(_) => Err(primary),
-            }
-        }
+        ) => match read(&backup_path(path)) {
+            Ok(Some(value)) => Ok(Some(value)),
+            Ok(None) | Err(_) => Err(primary),
+        },
         Err(error) => Err(error),
     }
 }
@@ -290,7 +312,10 @@ fn write_with_backup<T>(
     validate: impl Fn(&Path) -> Result<Option<T>, PersistenceError>,
 ) -> Result<(), PersistenceError> {
     let parent = path.parent().ok_or_else(|| {
-        PersistenceError::Io(io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))
+        PersistenceError::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "path has no parent",
+        ))
     })?;
     create_private_directory(parent)?;
 
@@ -310,14 +335,26 @@ fn write_with_backup<T>(
 }
 
 fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
-    let parent = path.parent().expect("validated persistence path has a parent");
-    let file_name = path.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
-        PersistenceError::Io(io::Error::new(io::ErrorKind::InvalidInput, "invalid file name"))
-    })?;
+    let parent = path
+        .parent()
+        .expect("validated persistence path has a parent");
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            PersistenceError::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid file name",
+            ))
+        })?;
 
     for _ in 0..ATOMIC_CREATE_ATTEMPTS {
         let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let temporary = parent.join(format!(".{file_name}.{}.{}.tmp", std::process::id(), sequence));
+        let temporary = parent.join(format!(
+            ".{file_name}.{}.{}.tmp",
+            std::process::id(),
+            sequence
+        ));
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         configure_private_file(&mut options);
@@ -392,7 +429,10 @@ fn sync_directory(_path: &Path) -> Result<(), PersistenceError> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        collections::BTreeMap,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::*;
 
@@ -435,12 +475,19 @@ mod tests {
 
         SessionStateRepository::save(&repository, &expected).unwrap();
 
-        assert_eq!(SessionStateRepository::load(&repository).unwrap(), Some(expected));
+        assert_eq!(
+            SessionStateRepository::load(&repository).unwrap(),
+            Some(expected)
+        );
         let names: Vec<_> = fs::read_dir(&directory.0)
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
-        assert!(names.iter().all(|name| !name.to_string_lossy().ends_with(".tmp")));
+        assert!(
+            names
+                .iter()
+                .all(|name| !name.to_string_lossy().ends_with(".tmp"))
+        );
     }
 
     #[test]
@@ -452,7 +499,10 @@ mod tests {
         SessionStateRepository::save(&repository, &state("news")).unwrap();
         fs::write(repository.session_path(), b"not json").unwrap();
 
-        assert_eq!(SessionStateRepository::load(&repository).unwrap(), Some(previous));
+        assert_eq!(
+            SessionStateRepository::load(&repository).unwrap(),
+            Some(previous)
+        );
     }
 
     #[test]

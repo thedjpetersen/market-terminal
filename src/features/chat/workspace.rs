@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, sync::Arc};
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Style,
@@ -13,6 +13,7 @@ use crate::{
     app::{CommandInvocation, Workspace, WorkspaceDescriptor},
     ui::{
         components::terminal_block,
+        is_primary_click,
         theme::{AMBER, BG, CYAN, GREEN, INK, MUTED, RED, YELLOW},
     },
 };
@@ -158,6 +159,22 @@ impl Workspace for ChatWorkspace {
             _ => false,
         }
     }
+
+    fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
+        let sections = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(3),
+        ])
+        .split(area);
+        if is_primary_click(event, sections[2]) {
+            self.composing = true;
+            return true;
+        }
+        false
+    }
+
+    fn on_blur(&mut self) { self.composing = false; }
 
     fn poll_intents(&mut self) -> Vec<crate::app::AppIntent> {
         self.poll_gateway();

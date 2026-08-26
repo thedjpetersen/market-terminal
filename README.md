@@ -17,12 +17,14 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 - Markets — global indices, cross-asset monitor, sectors, breadth, and rates
 - Security — quote/chart, financials, estimates, ownership, filings, peers,
   and linked news
-- Portfolio — positions, allocation, attribution, scenarios, and activity
-- News — filters, unread/bookmarks, story detail, linked securities, and an
-  economic-event calendar
+- Portfolio — imported positions, reconciled value/weights, and source status
+- News — asynchronously refreshed RSS/Atom stories, filters, unread/bookmarks,
+  clickable publisher links, and linked securities
 - Spreadsheet — workbook-scoped recalculation, cross-sheet and mixed absolute
-  references, translated copy/fill, lookups, undo/redo, CSV, and market refresh
-- AI — OpenRouter-backed analysis and natural-language workspace control
+  references, translated copy/fill, lookups, undo/redo, CSV, and asynchronously
+  resolved `PX_LAST`/`PX_CHANGE` cells with explicit data-quality state
+- AI — ChatGPT-authenticated Codex analysis and natural-language workspace control,
+  with an optional OpenRouter fallback
 - Find — canonical instrument identity and ranked symbol/company discovery
 - Monitor — configurable watchlists, bounded quote streams, sorting,
   data-quality states, last-known-good fallback, and replay
@@ -32,14 +34,80 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
   participant presence, notices, actions, and an inline composer
 - Alerts — idempotent, debounced local rules with acknowledgement and audit state
 
-Use the labeled navigation keys, or type a function such as `MON`, `CHART`,
-`SHEET`, `CHAT`, `FIND`, or `ASK` into the command bar. All displayed market values are
-deterministic demo data.
+Use the labeled navigation keys, click a visible workspace tab, or type a
+function such as `MON`, `CHART`, `SHEET`, `CHAT`, `FIND`, or `ASK` into the
+command bar. Mouse input is enabled in the interactive terminal: click the
+command box and `GO`, select table rows and spreadsheet cells, activate chart
+controls and research tabs, focus AI/chat composers, and scroll navigable
+lists. News uses live source feeds and Portfolio uses your imported snapshot;
+quote, analytics, and research panels that still use deterministic demo data
+remain labeled as such.
+
+Run `HELP` from the command bar—or press `F1`—to open the command and controls
+guide without leaving the current workspace. Close it with `Esc`, `Q`, `F1`,
+the on-screen close button, or by selecting a workspace tab.
+
+Tmux-style panel switching is also available. Press `Ctrl+B`, release it, then
+use `Left`/`Right` or `N`/`P` for the next or previous workspace. Use `1`–`9`
+and `0` to select the corresponding numbered workspace, or `?` for help.
+
+The command bar starts in `INSERT` mode, so ordinary typing, arrows,
+Home/End, Backspace/Delete, Enter, `Ctrl+W`, `Ctrl+U`, and Up/Down command
+history work directly. Press `Esc` with a non-empty command to enter optional
+Vi `NORMAL` mode: use `h`/`l`, `0`/`$`, `w`/`b`, `x`, `D`, `dd`, and
+`i`/`a`/`I`/`A`. Press `Esc` again to cancel the command.
 
 The interactive binary restores the active workspace, workspace order, and
 recent commands from crash-safe, versioned local state. Set
 `MARKET_TERMINAL_STATE_DIR` to override the platform default. Corrupt current
 state falls back to the previous valid generation and never blocks startup.
+
+## Live news
+
+The interactive app fetches real RSS/Atom feeds on a background thread; network
+latency never blocks terminal input or rendering. The defaults are CNBC Markets,
+SEC press releases, and Federal Reserve press releases. Press `F9` in News to
+refresh immediately. Failed sources are shown as unavailable or degraded—the
+interactive app does not replace them with fabricated headlines or calendar
+events. Select a story and press `O` or Enter—or click `OPEN ARTICLE`—to open
+its original `http(s)` publisher page in your system browser. The terminal does
+not scrape or store the article body.
+
+Override the defaults with comma-separated feeds:
+
+```dotenv
+MARKET_TERMINAL_NEWS_FEEDS="https://example.com/markets.xml,https://example.com/company-news.xml"
+MARKET_TERMINAL_NEWS_REFRESH_SECS=300
+```
+
+## Importing a real portfolio
+
+Export current positions as CSV from your brokerage, open the command bar with
+`/`, and run:
+
+```text
+PORT IMPORT "~/Downloads/positions.csv"
+```
+
+Use `PORT RELOAD` after replacing the export. To load it automatically on every
+launch, set an absolute path (or a `~/` path) in the ignored `.env` file:
+
+```dotenv
+MARKET_TERMINAL_PORTFOLIO_CSV="~/Downloads/positions.csv"
+```
+
+The importer recognizes common Fidelity-, Schwab-, and Vanguard-style header
+aliases, including `Symbol`/`Ticker`, `Quantity`/`Qty`/`Shares`,
+`Current Value`/`Market Value`/`Mkt Val`, price, total or per-share cost basis,
+gain/loss percentage, description, and currency. It finds headers after broker
+preambles, combines the same symbol across accounts, identifies cash and money
+market rows, and rejects non-USD totals instead of silently adding unlike
+currencies. Account identifiers and other unused columns are not retained.
+
+Market value and gain/loss come from the export. YTD return and Sharpe remain
+`N/A` because a positions snapshot does not contain enough transaction history
+to calculate them honestly. No broker password or API credential is required,
+and the CSV stays local.
 
 ## Experience gallery
 
@@ -52,7 +120,7 @@ mockups.
 | ![Research overview with performance, holdings, news, and market context](docs/screenshots/overview.png) | ![Cross-asset market monitor with configurable quote columns and data-quality states](docs/screenshots/monitor.png) |
 | **Comparative charting** | **Spreadsheet workspace** |
 | ![Normalized multi-instrument chart with moving average and volume](docs/screenshots/charting.png) | ![Keyboard-first spreadsheet with formulas and market-linked cells](docs/screenshots/spreadsheet.png) |
-| **IRC market chat** | **OpenRouter AI command plane** |
+| **IRC market chat** | **Codex AI command plane** |
 | ![Native IRC market chat with channel conversation and participant presence](docs/screenshots/chat.png) | ![OpenRouter assistant for analysis and validated workspace control](docs/screenshots/assistant.png) |
 | **Alerts register** | **Security research** |
 | ![Debounced local alert rules with lifecycle and audit state](docs/screenshots/alerts.png) | ![Single-security quote, chart, fundamentals, estimates, and news](docs/screenshots/security.png) |
@@ -79,24 +147,45 @@ Create a release binary:
 cargo build --release
 ```
 
-## OpenRouter AI
+## AI command plane
 
-The `AI`/`ASK` workspace runs inference on a background thread so slow provider
-requests never block terminal input or rendering. Configure it with environment
-variables before launching:
+The `AI`/`ASK` drawer runs inference on a background thread so slow provider
+requests never block terminal input or rendering. Press `A` from any workspace,
+type immediately, press Enter to send, and press Esc or click outside the drawer
+to return to the panel underneath. The interactive binary loads an ignored
+`.env` file automatically; exported variables take precedence:
 
 ```bash
-export OPENROUTER_API_KEY="your-key"
-export OPENROUTER_MODEL="openrouter/auto" # optional; this is the default
+codex login # choose Sign in with ChatGPT
+cp .env.example .env
 cargo run --release
 ```
 
-Press `A`, type a question, and press Enter. You can also issue a direct command
-such as `AI bring portfolio forward and open it`. The model can request only
-four validated UI operations: focus a registered workspace, bring a registered
-workspace to the front, dispatch an existing terminal command, or restore the
-default workspace order. It cannot execute shell commands, read credentials,
-submit trades, or mutate arbitrary application state.
+The default provider keeps one Codex app-server process warm and uses its cached
+ChatGPT login. It does not copy an OAuth token or require API credits. Each
+request gets a fresh ephemeral, read-only Codex thread inside that process, with
+structured output restricted to the terminal's validated UI actions.
+`CODEX_MODEL` is optional; when omitted, Codex uses the model selected by its
+local configuration.
+
+OpenRouter remains available as an API-key fallback:
+
+```dotenv
+MARKET_TERMINAL_AI_PROVIDER="openrouter"
+OPENROUTER_API_KEY="your-openrouter-key"
+OPENROUTER_MODEL="openrouter/auto"
+```
+
+Because the adapter uses Chat Completions, a separately billed OpenAI Platform
+key can also be used with the OpenAI endpoint and model name.
+
+You can also issue a direct command such as
+`AI bring portfolio forward and open it`. The
+model can request only four validated UI operations: focus a registered
+workspace, bring a registered workspace to the front, dispatch an existing
+terminal command, or restore the default workspace order. It cannot execute
+shell commands, read credentials, submit trades, or mutate arbitrary
+application state.
 
 ## IRC chat
 

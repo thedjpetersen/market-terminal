@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Style,
@@ -17,6 +17,7 @@ use crate::{
     },
     ui::{
         components::terminal_block,
+        scroll_key, table_row_at,
         theme::{AMBER, BG, CYAN, GREEN, INK, MUTED, RED, YELLOW},
     },
 };
@@ -300,6 +301,53 @@ impl Workspace for WatchlistWorkspace {
         }
     }
 
+    fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
+        let areas = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(2),
+        ])
+        .split(area);
+        if let Some(index) = table_row_at(event, areas[1], self.rows.len()) {
+            self.selected = index;
+            return true;
+        }
+        if crate::ui::is_primary_click(event, areas[2]) {
+            let controls = [
+                (" ↑↓/JK SELECT  ".to_owned(), None),
+                ("ENTER OPEN SEC  ".to_owned(), Some(KeyCode::Enter)),
+                (
+                    format!(
+                        "S/SHIFT-S SORT {} {}  ",
+                        self.definition.sort.field.label(),
+                        self.definition.sort.direction.marker()
+                    ),
+                    Some(KeyCode::Char('s')),
+                ),
+                (
+                    format!("C COLUMNS {}  ", self.column_preset.label()),
+                    Some(KeyCode::Char('c')),
+                ),
+                ("R REPLAY".to_owned(), Some(KeyCode::Char('r'))),
+            ];
+            let mut x = areas[2].x;
+            for (label, key) in controls {
+                let width = label.chars().count() as u16;
+                if event.column >= x && event.column < x.saturating_add(width) {
+                    return key.is_none_or(|key| {
+                        self.handle_key(KeyEvent::new(key, KeyModifiers::NONE))
+                    });
+                }
+                x = x.saturating_add(width);
+            }
+            return true;
+        }
+        if let Some(key) = scroll_key(event, areas[1]) {
+            return self.handle_key(key);
+        }
+        false
+    }
+
     fn poll_intents(&mut self) -> Vec<AppIntent> {
         self.poll_subscription();
         std::mem::take(&mut self.pending_intents)
@@ -518,12 +566,22 @@ fn quality_counts(rows: &[MonitorRow]) -> (usize, usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     use crate::features::market_data::{
         CacheStatus, CanonicalInstrumentId, DataProvenance, HistoryRequest, Percent, PriceBar,
         PriceChange, ProviderId, UtcTimestamp,
     };
 
     struct StubMarketData;
+
+    fn click(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
 
     impl MarketDataQuery for StubMarketData {
         fn quote_snapshots(
@@ -616,6 +674,15 @@ mod tests {
                 origin: ID,
             }]
         );
+    }
+
+    #[test]
+    fn clicking_a_monitor_row_selects_it() {
+        let mut workspace = WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(StubCatalog));
+
+        assert!(workspace.handle_mouse(click(2, 7), Rect::new(0, 0, 120, 30)));
+
+        assert_eq!(workspace.selected, 1);
     }
 
     #[test]

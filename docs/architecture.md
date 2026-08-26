@@ -15,9 +15,10 @@ bootstrap ──▶ app kernel
     └────▶ infrastructure adapters
 ```
 
-- `app` owns lifecycle, input modes, and the stable `Workspace` plug-in
-  contract. It has no market or portfolio business rules. It snapshots its
-  shell state through the persistence context's narrow repository port.
+- `app` owns lifecycle, input modes, keyboard/mouse routing, and the stable
+  `Workspace` plug-in contract. It has no market or portfolio business rules.
+  It snapshots its shell state through the persistence context's narrow
+  repository port.
 - `features/<name>` is a bounded context. It owns its domain types, outbound
   query port, local UI state, and terminal workspace adapter.
 - `foundation` contains only stable, narrowly shared value objects. Canonical
@@ -28,8 +29,9 @@ bootstrap ──▶ app kernel
 - `persistence` owns versioned session and opaque feature-document contracts;
   the local adapter provides bounded reads, atomic writes, and previous-valid
   generation recovery without knowing feature internals.
-- `ui` contains the design system only: theme tokens, chrome, tables, panels,
-  and value styling. It does not know business entities.
+- `ui` contains shell geometry and hit testing plus the design system: theme
+  tokens, chrome, tables, panels, and value styling. It does not know business
+  entities.
 - `bootstrap.rs` is the composition root. It is the only place that selects
   concrete adapters and registers the complete product surface.
 
@@ -39,11 +41,27 @@ Tokio, TLS, environment configuration, reconnection, and wire protocol details.
 The native workspace never depends on the IRC crate and never performs network
 work during input or rendering.
 
+The interactive composition root uses `LiveNewsFeed`, which owns a bounded
+background RSS/Atom worker and exposes cloned provider-neutral workbench
+snapshots, and `CsvPortfolioRepository`, which owns the last successfully
+validated USD positions import. Demo news and portfolio data are wired only by
+`demo_app` for deterministic tests and gallery captures. Network and filesystem
+formats remain outside the feature packages.
+
+Spreadsheet financial formulas use the Spreadsheet-owned
+`SpreadsheetMarketData` batch port. The workspace parses top-level
+`PX_LAST`/`PX_CHANGE` requests, sends them through a capacity-bounded worker,
+and overlays returned values into a cloned evaluation snapshot so formulas and
+undo history remain provider-neutral and deterministic. External-cell state is
+kept alongside the workbook and carries provider, observation/receive times,
+quality, entitlement failure, and availability. This first slice deliberately
+does not make arbitrary provider calls from the formula evaluator.
+
 ## Why there is no global data service
 
 A single `MarketDataProvider` spanning quotes, portfolios, news, analytics,
 and execution becomes a dependency magnet. Instead, each bounded context owns
-the smallest port it needs (`MarketsQuery`, `PortfolioQuery`, `NewsQuery`, and
+the smallest port it needs (`MarketsQuery`, `PortfolioRepository`, `NewsFeed`, and
 so on). Infrastructure may implement several ports, but features never depend
 on that concrete adapter.
 
@@ -74,23 +92,30 @@ keeps transport mechanics in the kernel while preserving domain ownership.
 ## AI command plane
 
 The Assistant bounded context owns conversation state and an
-`AssistantGateway` port. The OpenRouter adapter lives in `infrastructure` and
-uses the standardized chat-completions/tool-calling API. Requests run on a
-background worker; the render/input loop only polls a channel.
+`AssistantGateway` port. Infrastructure provides two adapters: the default
+Codex app-server adapter uses the user's cached ChatGPT login and constrained
+structured output, while the OpenRouter adapter uses the standardized
+chat-completions/tool-calling API. The Codex worker keeps one app-server process
+warm and creates a fresh ephemeral, read-only thread for each request. Requests
+run behind a bounded background channel; the render/input loop only polls for
+results. The shell presents the conversation as a toggleable drawer so the
+underlying research workspace remains mounted and visible.
 
 Model output never receives an `App` reference. It is translated into the
 closed `AppIntent` vocabulary and revalidated by `WorkspaceRegistry`:
 
 ```text
-user prompt -> AssistantGateway -> OpenRouter tool call
+user prompt -> AssistantGateway -> constrained provider response
             -> UiAction -> AppIntent -> exact registry resolution -> shell update
 ```
 
 The allowed mutations are workspace focus, navigation promotion, existing
 command dispatch, and default-order restoration. Unknown tools, malformed
-arguments, unknown targets, and unknown commands are rejected. Credentials are
-read from the process environment by the infrastructure adapter and are not
-stored in feature state, conversation history, logs, or model context.
+arguments, unknown targets, and unknown commands are rejected. The Codex
+adapter reuses the CLI's authentication cache without reading or copying its
+tokens; API-provider credentials are read from the process environment. No
+credential is stored in feature state, conversation history, logs, or model
+context.
 
 ## Growth path
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Style,
@@ -13,6 +13,7 @@ use crate::{
     app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
     ui::{
         components::terminal_block,
+        scroll_key, table_row_at,
         theme::{AMBER, BG, CYAN, INK, MUTED},
     },
 };
@@ -95,6 +96,31 @@ impl Workspace for InstrumentSearchWorkspace {
             }
             _ => false,
         }
+    }
+
+    fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
+        let rows = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Min(10),
+            Constraint::Length(3),
+        ])
+        .split(area);
+        if let Some(index) = table_row_at(event, rows[1], self.results.len()) {
+            self.selected = index;
+            return true;
+        }
+        if crate::ui::is_primary_click(event, rows[2]) {
+            let open_start = rows[2].x.saturating_add(" ↑↓/JK SELECT   ".chars().count() as u16);
+            let open_width = " ENTER OPEN SECURITY   ".chars().count() as u16;
+            if event.column >= open_start && event.column < open_start.saturating_add(open_width) {
+                return self.handle_key(KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE));
+            }
+            return true;
+        }
+        if let Some(key) = scroll_key(event, rows[1]) {
+            return self.handle_key(key);
+        }
+        false
     }
 
     fn poll_intents(&mut self) -> Vec<AppIntent> { std::mem::take(&mut self.pending_intents) }

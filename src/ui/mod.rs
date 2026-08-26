@@ -1,39 +1,421 @@
-pub(crate) mod components;
 mod chrome;
+pub(crate) mod components;
 pub(crate) mod theme;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Rect},
     style::Style,
-    widgets::Block,
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 
-use crate::app::App;
-use crate::app::{InputMode, ShellChrome};
+use crate::app::{App, InputMode, ShellChrome, WorkspaceId};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ShellLayout {
+    pub header: Rect,
+    pub navigation: Rect,
+    pub workspace: Rect,
+    pub footer: Rect,
+    pub command: Rect,
+    pub command_go: Rect,
+}
+
+impl ShellLayout {
+    pub fn new(area: Rect) -> Self {
+        let rows = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Length(2),
+            Constraint::Min(12),
+            Constraint::Length(1),
+        ])
+        .split(area);
+        let header_columns = Layout::horizontal([
+            Constraint::Length(31),
+            Constraint::Min(35),
+            Constraint::Length(25),
+        ])
+        .split(rows[0]);
+        let command = header_columns[1];
+        let command_go = Rect::new(
+            command.x.saturating_add(command.width.saturating_sub(6)),
+            command.y.saturating_add(1),
+            command.width.saturating_sub(2).min(5),
+            command.height.saturating_sub(2),
+        );
+        Self {
+            header: rows[0],
+            navigation: rows[1],
+            workspace: rows[2],
+            footer: rows[3],
+            command,
+            command_go,
+        }
+    }
+
+    fn for_app(app: &App, area: Rect) -> Self {
+        if uses_immersive_shell(app) {
+            Self {
+                header: Rect::default(),
+                navigation: Rect::default(),
+                workspace: area,
+                footer: Rect::default(),
+                command: Rect::default(),
+                command_go: Rect::default(),
+            }
+        } else {
+            Self::new(area)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShellClickTarget {
+    CommandInput,
+    CommandGo,
+    Navigation(WorkspaceId),
+    Workspace(Rect),
+    AssistantDrawer(Rect),
+    AssistantClose,
+    AssistantBackdrop,
+    HelpClose,
+    HelpOverlay,
+    Quit,
+}
+
+pub(crate) fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<ShellClickTarget> {
+    let layout = ShellLayout::for_app(app, area);
+    if app.help_visible() && contains(help_close_area(layout.workspace), column, row) {
+        return Some(ShellClickTarget::HelpClose);
+    }
+    if app.help_visible() && contains(layout.workspace, column, row) {
+        return Some(ShellClickTarget::HelpOverlay);
+    }
+    if contains(layout.command_go, column, row) {
+        return Some(ShellClickTarget::CommandGo);
+    }
+    if contains(layout.command, column, row) {
+        return Some(ShellClickTarget::CommandInput);
+    }
+    if contains(layout.navigation, column, row) {
+        let mut item_x = layout.navigation.x;
+        for (index, item) in app.workspaces.navigation_items().enumerate() {
+            let width = chrome::navigation_item_text(index, item).chars().count() as u16;
+            let item_area = Rect::new(item_x, layout.navigation.y, width, layout.navigation.height);
+            if contains(item_area, column, row) {
+                return Some(ShellClickTarget::Navigation(item.id));
+            }
+            item_x = item_x.saturating_add(width);
+        }
+    }
+    if contains(layout.header, column, row) && column < layout.command.x {
+        if let Some(home) = app.workspaces.navigation_items().next() {
+            return Some(ShellClickTarget::Navigation(home.id));
+        }
+    }
+    if app.assistant_drawer_visible()
+        && contains(assistant_close_area(layout.workspace), column, row)
+    {
+        return Some(ShellClickTarget::AssistantClose);
+    }
+    if app.assistant_drawer_visible() {
+        let drawer = assistant_drawer_area(layout.workspace);
+        let inner = assistant_drawer_inner(drawer);
+        if contains(inner, column, row) {
+            return Some(ShellClickTarget::AssistantDrawer(inner));
+        }
+        if contains(layout.workspace, column, row) {
+            return Some(ShellClickTarget::AssistantBackdrop);
+        }
+    }
+    if contains(layout.workspace, column, row) {
+        return Some(ShellClickTarget::Workspace(layout.workspace));
+    }
+    if contains(
+        Rect::new(
+            layout.footer.x,
+            layout.footer.y,
+            7.min(layout.footer.width),
+            layout.footer.height,
+        ),
+        column,
+        row,
+    ) {
+        return Some(if app.help_visible() {
+            ShellClickTarget::HelpClose
+        } else {
+            ShellClickTarget::Quit
+        });
+    }
+    None
+}
+
+pub(crate) fn assistant_drawer_area(workspace: Rect) -> Rect {
+    let preferred = workspace.width.saturating_mul(42) / 100;
+    let width = preferred.max(52.min(workspace.width)).min(workspace.width);
+    Rect::new(
+        workspace
+            .x
+            .saturating_add(workspace.width.saturating_sub(width)),
+        workspace.y,
+        width,
+        workspace.height,
+    )
+}
+
+fn assistant_drawer_inner(drawer: Rect) -> Rect {
+    Rect::new(
+        drawer.x.saturating_add(1),
+        drawer.y.saturating_add(1),
+        drawer.width.saturating_sub(2),
+        drawer.height.saturating_sub(2),
+    )
+}
+
+pub(crate) fn assistant_close_area(workspace: Rect) -> Rect {
+    let drawer = assistant_drawer_area(workspace);
+    let width = drawer.width.min(13);
+    Rect::new(
+        drawer
+            .x
+            .saturating_add(drawer.width.saturating_sub(width + 1)),
+        drawer.y,
+        width,
+        1.min(drawer.height),
+    )
+}
+
+fn help_panel_area(area: Rect) -> Rect {
+    let horizontal_margin = if area.width >= 80 { 2 } else { 0 };
+    let vertical_margin = if area.height >= 20 { 1 } else { 0 };
+    Rect::new(
+        area.x.saturating_add(horizontal_margin),
+        area.y.saturating_add(vertical_margin),
+        area.width.saturating_sub(horizontal_margin * 2),
+        area.height.saturating_sub(vertical_margin * 2),
+    )
+}
+
+pub(crate) fn help_close_area(workspace: Rect) -> Rect {
+    let panel = help_panel_area(workspace);
+    let width = panel.width.min(13);
+    Rect::new(
+        panel
+            .x
+            .saturating_add(panel.width.saturating_sub(width + 1)),
+        panel.y.saturating_add(1),
+        width,
+        1.min(panel.height),
+    )
+}
+
+pub(crate) const fn contains(area: Rect, column: u16, row: u16) -> bool {
+    column >= area.x
+        && column < area.x.saturating_add(area.width)
+        && row >= area.y
+        && row < area.y.saturating_add(area.height)
+}
+
+pub(crate) fn is_primary_click(event: MouseEvent, area: Rect) -> bool {
+    matches!(event.kind, MouseEventKind::Down(MouseButton::Left))
+        && contains(area, event.column, event.row)
+}
+
+pub(crate) fn scroll_key(event: MouseEvent, area: Rect) -> Option<KeyEvent> {
+    if !contains(area, event.column, event.row) {
+        return None;
+    }
+    let code = match event.kind {
+        MouseEventKind::ScrollUp => KeyCode::Up,
+        MouseEventKind::ScrollDown => KeyCode::Down,
+        _ => return None,
+    };
+    Some(KeyEvent::new(code, KeyModifiers::NONE))
+}
+
+/// Finds a one-line table row below a bordered header with one line of margin.
+pub(crate) fn table_row_at(event: MouseEvent, area: Rect, row_count: usize) -> Option<usize> {
+    if !is_primary_click(event, area) {
+        return None;
+    }
+    let first_row = area.y.saturating_add(3);
+    let index = usize::from(event.row.saturating_sub(first_row));
+    (event.row >= first_row && index < row_count).then_some(index)
+}
+
+/// Finds a one-line list item immediately inside a bordered block.
+pub(crate) fn list_row_at(event: MouseEvent, area: Rect, row_count: usize) -> Option<usize> {
+    if !is_primary_click(event, area) {
+        return None;
+    }
+    let first_row = area.y.saturating_add(1);
+    let index = usize::from(event.row.saturating_sub(first_row));
+    (event.row >= first_row && index < row_count).then_some(index)
+}
+
+fn uses_immersive_shell(app: &App) -> bool {
+    app.input_mode() == InputMode::Navigation
+        && app.workspaces.shell_chrome(app.active_workspace()) == ShellChrome::Immersive
+        && !app.help_visible()
+}
 
 pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(
         Block::new().style(Style::new().bg(theme::BG).fg(theme::INK)),
         frame.area(),
     );
-    if app.input_mode() == InputMode::Navigation
-        && app.workspaces.shell_chrome(app.active_workspace()) == ShellChrome::Immersive
-    {
+    if uses_immersive_shell(app) {
         app.workspaces.render(app.active_workspace(), frame, frame.area());
+        if app.assistant_drawer_visible() {
+            render_assistant_drawer(frame, frame.area(), app);
+        }
         return;
     }
+    let layout = ShellLayout::new(frame.area());
+
+    chrome::render_header(frame, layout.header, app);
+    chrome::render_navigation(frame, layout.navigation, app);
+    app.workspaces
+        .render(app.active_workspace, frame, layout.workspace);
+    chrome::render_footer(frame, layout.footer, app);
+    if app.assistant_drawer_visible() {
+        render_assistant_drawer(frame, layout.workspace, app);
+    }
+    if app.help_visible() {
+        render_help(frame, layout.workspace, app);
+    }
+}
+
+fn render_assistant_drawer(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(assistant) = app.assistant_workspace() else {
+        return;
+    };
+    let drawer = assistant_drawer_area(area);
+    frame.render_widget(Clear, drawer);
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .border_style(theme::CYAN)
+        .title(Line::from(vec![
+            Span::styled(" AI ", Style::new().bg(theme::CYAN).fg(theme::BG).bold()),
+            Span::styled(" ASSISTANT DRAWER ", theme::CYAN),
+        ]));
+    let inner = block.inner(drawer);
+    frame.render_widget(block, drawer);
+    app.workspaces.render(assistant, frame, inner);
+    frame.render_widget(
+        Paragraph::new(" [ CLOSE ] ").style(Style::new().bg(theme::CYAN).fg(theme::BG).bold()),
+        assistant_close_area(area),
+    );
+}
+
+fn render_help(frame: &mut Frame, area: Rect, app: &App) {
+    let panel = help_panel_area(area);
+    frame.render_widget(Clear, panel);
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .border_style(theme::CYAN)
+        .title(Line::from(vec![
+            Span::styled(" HELP ", Style::new().bg(theme::CYAN).fg(theme::BG).bold()),
+            Span::styled(" MARKET TERMINAL GUIDE ", theme::CYAN),
+        ]));
+    let inner = block.inner(panel);
+    frame.render_widget(block, panel);
 
     let rows = Layout::vertical([
         Constraint::Length(3),
+        Constraint::Min(6),
         Constraint::Length(2),
-        Constraint::Min(12),
-        Constraint::Length(1),
     ])
-    .split(frame.area());
+    .split(inner);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                "COMMANDS, KEYS, AND MOUSE CONTROLS",
+                Style::new().fg(theme::INK).bold(),
+            ),
+            Line::styled(
+                "Your current workspace stays open behind this guide.",
+                theme::MUTED,
+            ),
+        ]),
+        rows[0],
+    );
 
-    chrome::render_header(frame, rows[0], app);
-    chrome::render_navigation(frame, rows[1], app);
-    app.workspaces.render(app.active_workspace, frame, rows[2]);
-    chrome::render_footer(frame, rows[3]);
+    let columns =
+        Layout::horizontal([Constraint::Percentage(58), Constraint::Percentage(42)]).split(rows[1]);
+    let commands = app
+        .workspaces
+        .descriptors()
+        .map(|descriptor| {
+            Line::from(vec![
+                Span::styled(format!("{:<13}", descriptor.label), theme::AMBER),
+                Span::styled(descriptor.commands.join(" · "), theme::INK),
+            ])
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(commands)
+            .wrap(Wrap { trim: true })
+            .block(components::terminal_block("CMD", "COMMAND DIRECTORY")),
+        columns[0],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled("OPEN AND NAVIGATE", theme::AMBER),
+            Line::raw("/ or :     Open command bar"),
+            Line::raw("Enter      Run command / open input"),
+            Line::raw("[KEY]      Open labeled workspace"),
+            Line::raw("A          Toggle AI drawer; Esc closes"),
+            Line::raw("Ctrl+B     tmux-style panel prefix"),
+            Line::raw("  ←/→ N/P  Previous / next panel"),
+            Line::raw("  1–9/0    Select numbered panel"),
+            Line::raw("  ?        Open this guide"),
+            Line::raw("Arrows/JK  Move in lists and tables"),
+            Line::raw("Mouse      Click controls, rows, and tabs"),
+            Line::raw("Wheel      Scroll navigable areas"),
+            Line::raw(""),
+            Line::styled("VI COMMAND EDITING", theme::AMBER),
+            Line::raw("Type normally in INSERT mode"),
+            Line::raw("Esc        Enter NORMAL; Esc again cancels"),
+            Line::raw("h/l 0/$    Character / line motions"),
+            Line::raw("w/b        Word motions"),
+            Line::raw("i/a I/A    Re-enter INSERT mode"),
+            Line::raw("x D dd     Delete char / tail / line"),
+            Line::raw("↑/↓        Recall command history"),
+            Line::raw("Ctrl+W/U   Delete word / clear line"),
+            Line::raw(""),
+            Line::styled("USEFUL COMMANDS", theme::AMBER),
+            Line::raw("HELP                 This guide"),
+            Line::raw("PORT IMPORT <CSV>    Import positions"),
+            Line::raw("PORT RELOAD          Reload positions"),
+            Line::raw("NEWS                 Live headlines"),
+            Line::raw("  O/Enter/Click       Open publisher article"),
+            Line::raw("  R                   Mark story read/unread"),
+            Line::raw("AI <REQUEST>         Ask the assistant"),
+            Line::raw(""),
+            Line::styled("Ctrl+C always quits the terminal.", theme::MUTED),
+        ])
+        .wrap(Wrap { trim: true })
+        .block(components::terminal_block("KEY", "QUICK START")),
+        columns[1],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                " ESC / Q / F1 ",
+                Style::new().bg(theme::AMBER).fg(theme::BG).bold(),
+            ),
+            Span::styled(
+                " CLOSE HELP   ·   CLICK A WORKSPACE TAB TO LEAVE",
+                theme::MUTED,
+            ),
+        ])),
+        rows[2],
+    );
+    frame.render_widget(
+        Paragraph::new(" [ CLOSE ] ").style(Style::new().bg(theme::CYAN).fg(theme::BG).bold()),
+        help_close_area(area),
+    );
 }

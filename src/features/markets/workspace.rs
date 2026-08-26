@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crossterm::event::MouseEvent;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     symbols,
@@ -8,9 +9,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{Workspace, WorkspaceDescriptor},
+    app::{AppIntent, Workspace, WorkspaceDescriptor},
     ui::{
         components::{render_pairs, render_table, styled_row, terminal_block},
+        table_row_at,
         theme::{AMBER, MUTED, YELLOW},
     },
 };
@@ -19,16 +21,44 @@ use super::{MarketsQuery, ID};
 
 pub struct MarketsWorkspace {
     query: Arc<dyn MarketsQuery>,
+    pending_intents: Vec<AppIntent>,
 }
 
 impl MarketsWorkspace {
-    pub fn new(query: Arc<dyn MarketsQuery>) -> Self { Self { query } }
+    pub fn new(query: Arc<dyn MarketsQuery>) -> Self {
+        Self { query, pending_intents: Vec::new() }
+    }
 }
 
 impl Workspace for MarketsWorkspace {
     fn descriptor(&self) -> WorkspaceDescriptor {
         WorkspaceDescriptor { id: ID, label: "MARKETS", hotkey: 'm', commands: &["MARKET", "WEI", "CURVE"] }
     }
+
+    fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
+        let snapshot = self.query.load_markets();
+        let columns = Layout::horizontal([
+            Constraint::Percentage(66),
+            Constraint::Percentage(34),
+        ])
+        .split(area);
+        let left = Layout::vertical([
+            Constraint::Percentage(48),
+            Constraint::Percentage(22),
+            Constraint::Percentage(30),
+        ])
+        .split(columns[0]);
+        let Some(index) = table_row_at(event, left[0], snapshot.indices.len()) else {
+            return false;
+        };
+        self.pending_intents.push(AppIntent::DispatchCommand {
+            command: format!("CHART {}", snapshot.indices[index].symbol),
+            origin: ID,
+        });
+        true
+    }
+
+    fn poll_intents(&mut self) -> Vec<AppIntent> { std::mem::take(&mut self.pending_intents) }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
         let snapshot = self.query.load_markets();

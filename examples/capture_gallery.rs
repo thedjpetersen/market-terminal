@@ -50,6 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     })?;
     capture(&output, &font, "assistant", |app| {
         command(app, "AI");
+        app.handle_key(key(KeyCode::Enter));
         type_text(app, "Bring the monitor forward and compare AAPL with SPY");
     })?;
     capture(&output, &font, "find", |app| command(app, "FIND US"))?;

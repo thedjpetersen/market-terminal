@@ -3,7 +3,7 @@ use std::{
     thread,
 };
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Style,
@@ -16,6 +16,7 @@ use crate::{
     app::{AppIntent, CommandInvocation, ShellContext, Workspace, WorkspaceDescriptor},
     ui::{
         components::terminal_block,
+        is_primary_click,
         theme::{AMBER, BG, CYAN, GREEN, INK, MUTED, RED},
     },
 };
@@ -38,20 +39,18 @@ pub struct AssistantWorkspace {
     active_workspace: String,
     messages: Vec<AssistantMessage>,
     input: String,
+    composing: bool,
     status: AssistantStatus,
     pending: Option<PendingResponse>,
 }
 
 impl AssistantWorkspace {
-    pub fn new(
-        gateway: Arc<dyn AssistantGateway>,
-        available_workspaces: Vec<String>,
-    ) -> Self {
+    pub fn new(gateway: Arc<dyn AssistantGateway>, available_workspaces: Vec<String>) -> Self {
         let model_label = gateway.model_label().to_owned();
         let status = if gateway.is_configured() {
             AssistantStatus::Ready
         } else {
-            AssistantStatus::Error("SET OPENROUTER_API_KEY TO ENABLE AI".to_owned())
+            AssistantStatus::Error(gateway.configuration_hint().to_owned())
         };
         Self {
             gateway,
@@ -62,6 +61,7 @@ impl AssistantWorkspace {
                 "ASK FOR ANALYSIS OR TELL ME WHICH WORKSPACE TO OPEN OR BRING FORWARD.",
             )],
             input: String::new(),
+            composing: false,
             status,
             pending: None,
         }
@@ -106,12 +106,11 @@ impl AssistantWorkspace {
             .into_iter()
             .map(|action| match action {
                 UiAction::OpenWorkspace { target } => AppIntent::ActivateWorkspace { target },
-                UiAction::BringForward { target } => {
-                    AppIntent::BringWorkspaceForward { target }
-                }
-                UiAction::RunCommand { command } => {
-                    AppIntent::DispatchCommand { command, origin: ID }
-                }
+                UiAction::BringForward { target } => AppIntent::BringWorkspaceForward { target },
+                UiAction::RunCommand { command } => AppIntent::DispatchCommand {
+                    command,
+                    origin: ID,
+                },
                 UiAction::RestoreLayout => AppIntent::RestoreWorkspaceOrder,
             })
             .collect()
@@ -141,7 +140,9 @@ impl Workspace for AssistantWorkspace {
         }
     }
 
-    fn is_favorite(&self) -> bool { true }
+    fn is_favorite(&self) -> bool {
+        true
+    }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
         if !invocation.args.is_empty() {
@@ -152,32 +153,70 @@ impl Workspace for AssistantWorkspace {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            KeyCode::Enter => self.submit(),
-            KeyCode::Backspace => {
-                self.input.pop();
+        if self.composing {
+            match key.code {
+                KeyCode::Enter => self.submit(),
+                KeyCode::Backspace => {
+                    self.input.pop();
+                }
+                KeyCode::Esc => {
+                    self.composing = false;
+                    return false;
+                }
+                KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.messages.truncate(1);
+                }
+                KeyCode::Char(character)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                        && self.input.len() + character.len_utf8() <= MAX_INPUT_BYTES =>
+                {
+                    self.input.push(character);
+                }
+                _ => {}
             }
-            KeyCode::Esc => self.input.clear(),
-            KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.messages.truncate(1);
-            }
-            KeyCode::Char(character)
-                if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-                    && self.input.len() < MAX_INPUT_BYTES =>
-            {
-                self.input.push(character);
-            }
-            _ => {}
+            return true;
         }
-        true
+
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('i') => {
+                self.composing = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
+        let rows = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Min(8),
+            Constraint::Length(4),
+            Constraint::Length(3),
+        ])
+        .split(area);
+        if is_primary_click(event, rows[2]) {
+            self.composing = true;
+            return true;
+        }
+        false
+    }
+
+    fn on_blur(&mut self) {
+        self.composing = false;
+    }
+
+    fn on_focus(&mut self) {
+        self.composing = true;
     }
 
     fn poll_intents(&mut self) -> Vec<AppIntent> {
         let result = match self.pending.as_ref().map(PendingResponse::try_recv) {
             Some(Ok(result)) => Some(result),
-            Some(Err(mpsc::TryRecvError::Disconnected)) => Some(Err(
-                AssistantError::Transport("assistant worker disconnected".to_owned()),
-            )),
+            Some(Err(mpsc::TryRecvError::Disconnected)) => Some(Err(AssistantError::Transport(
+                "assistant worker disconnected".to_owned(),
+            ))),
             Some(Err(mpsc::TryRecvError::Empty)) | None => None,
         };
 
@@ -188,12 +227,14 @@ impl Workspace for AssistantWorkspace {
         match result {
             Ok(response) => {
                 self.status = AssistantStatus::Ready;
-                self.messages.push(AssistantMessage::assistant(Self::response_text(&response)));
+                self.messages
+                    .push(AssistantMessage::assistant(Self::response_text(&response)));
                 Self::intents(response.actions)
             }
             Err(error) => {
                 self.status = AssistantStatus::Error(error.to_string());
-                self.messages.push(AssistantMessage::assistant(format!("ERROR: {error}")));
+                self.messages
+                    .push(AssistantMessage::assistant(format!("ERROR: {error}")));
                 Vec::new()
             }
         }
@@ -242,11 +283,22 @@ impl Workspace for AssistantWorkspace {
             rows[1],
         );
 
-        let cursor = if self.pending.is_some() { "…" } else { "█" };
+        let cursor = if self.pending.is_some() {
+            "…"
+        } else if self.composing {
+            "█"
+        } else {
+            ""
+        };
+        let input = if self.composing || !self.input.is_empty() {
+            self.input.as_str()
+        } else {
+            "PRESS I OR ENTER TO COMPOSE"
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(" > ", Style::new().fg(CYAN).bold()),
-                Span::styled(self.input.as_str(), INK),
+                Span::styled(input, if self.composing { INK } else { MUTED }),
                 Span::styled(cursor, AMBER),
             ]))
             .style(Style::new().bg(BG))
@@ -255,10 +307,9 @@ impl Workspace for AssistantWorkspace {
         );
 
         let help = match &self.status {
-            AssistantStatus::Error(message) => format!(
-                "{message}  ·  EXPORT OPENROUTER_API_KEY=...  ·  OPTIONAL OPENROUTER_MODEL=openrouter/auto"
-            ),
-            _ => "ENTER SENDS  ·  ESC CLEARS  ·  CTRL-L CLEARS HISTORY  ·  TRY: BRING PORTFOLIO FORWARD AND OPEN RISK".to_owned(),
+            AssistantStatus::Error(message) => message.clone(),
+            _ if self.composing => "ENTER SENDS  ·  ESC CLOSES DRAWER  ·  CTRL-L CLEARS HISTORY  ·  TRY: BRING PORTFOLIO FORWARD AND OPEN RISK".to_owned(),
+            _ => "TYPE TO COMPOSE  ·  ESC CLOSES DRAWER  ·  CLICK OUTSIDE TO RETURN".to_owned(),
         };
         frame.render_widget(
             Paragraph::new(help)
@@ -277,11 +328,15 @@ mod tests {
     fn ui_actions_map_only_to_whitelisted_app_intents() {
         assert_eq!(
             AssistantWorkspace::intents(vec![
-                UiAction::OpenWorkspace { target: "portfolio".to_owned() },
+                UiAction::OpenWorkspace {
+                    target: "portfolio".to_owned()
+                },
                 UiAction::RestoreLayout,
             ]),
             vec![
-                AppIntent::ActivateWorkspace { target: "portfolio".to_owned() },
+                AppIntent::ActivateWorkspace {
+                    target: "portfolio".to_owned()
+                },
                 AppIntent::RestoreWorkspaceOrder,
             ]
         );

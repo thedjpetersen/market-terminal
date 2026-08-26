@@ -11,8 +11,8 @@ pub enum AssistantError {
 impl std::fmt::Display for AssistantError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotConfigured => write!(formatter, "OPENROUTER_API_KEY is not configured"),
-            Self::Transport(message) => write!(formatter, "network error: {message}"),
+            Self::NotConfigured => write!(formatter, "AI provider is not configured"),
+            Self::Transport(message) => write!(formatter, "transport error: {message}"),
             Self::Provider(message) => write!(formatter, "provider error: {message}"),
             Self::InvalidResponse(message) => write!(formatter, "invalid response: {message}"),
         }
@@ -25,4 +25,5 @@ pub trait AssistantGateway: Send + Sync {
     fn complete(&self, request: AssistantRequest) -> Result<AssistantResponse, AssistantError>;
     fn model_label(&self) -> &str;
     fn is_configured(&self) -> bool;
+    fn configuration_hint(&self) -> &str;
 }

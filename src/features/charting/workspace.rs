@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style},
@@ -14,6 +14,7 @@ use crate::{
     app::{CommandInvocation, Workspace, WorkspaceDescriptor},
     ui::{
         components::terminal_block,
+        contains, is_primary_click,
         theme::{AMBER, BG, CYAN, GREEN, INK, MUTED, RED, YELLOW},
     },
 };
@@ -437,6 +438,85 @@ impl Workspace for ChartingWorkspace {
             }
             _ => false,
         }
+    }
+
+    fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
+        let sections = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(3),
+        ])
+        .split(area);
+        if contains(sections[1], event.column, event.row) {
+            match event.kind {
+                MouseEventKind::ScrollUp => {
+                    return self.handle_key(KeyEvent::new(
+                        KeyCode::Char(','),
+                        KeyModifiers::NONE,
+                    ));
+                }
+                MouseEventKind::ScrollDown => {
+                    return self.handle_key(KeyEvent::new(
+                        KeyCode::Char('.'),
+                        KeyModifiers::NONE,
+                    ));
+                }
+                _ => {}
+            }
+        }
+        if is_primary_click(event, sections[2]) {
+            let controls = [
+                (" [/] PERIOD  ", KeyCode::Right),
+                (" N NORMALIZE  ", KeyCode::Char('n')),
+                (" V VOLUME  ", KeyCode::Char('v')),
+                (" S SMA  ", KeyCode::Char('s')),
+                (" C COMPARE SPY  ", KeyCode::Char('c')),
+                (" ,/. INSPECT  ", KeyCode::Char(',')),
+                (" E LATEST  ", KeyCode::Char('e')),
+                (" L LINE MODE", KeyCode::Char('l')),
+            ];
+            let mut x = sections[2].x;
+            for (label, key) in controls {
+                let width = label.chars().count() as u16;
+                if event.column >= x && event.column < x.saturating_add(width) {
+                    return self.handle_key(KeyEvent::new(key, KeyModifiers::NONE));
+                }
+                x = x.saturating_add(width);
+            }
+            return true;
+        }
+        if !is_primary_click(event, sections[1]) {
+            return false;
+        }
+        let Ok(chart) = self.load_chart() else {
+            return true;
+        };
+        if chart.primary_values.is_empty() {
+            return true;
+        }
+        let price_area = if self.specification.has_study(Study::Volume) {
+            Layout::vertical([Constraint::Percentage(72), Constraint::Percentage(28)])
+                .split(sections[1])[0]
+        } else {
+            sections[1]
+        };
+        let chart_area = if price_area.width >= 110 {
+            Layout::horizontal([Constraint::Percentage(78), Constraint::Percentage(22)])
+                .split(price_area)[0]
+        } else {
+            price_area
+        };
+        if !contains(chart_area, event.column, event.row) {
+            return true;
+        }
+        let plot_x = chart_area.x.saturating_add(1);
+        let plot_width = chart_area.width.saturating_sub(2).max(1);
+        let relative = event.column.saturating_sub(plot_x).min(plot_width.saturating_sub(1));
+        let last = chart.primary_values.len() - 1;
+        let selected = usize::from(relative) * last / usize::from(plot_width);
+        self.cursor_offset = last.saturating_sub(selected);
+        self.status = format!("INSPECT · {} OBSERVATION(S) BACK", self.cursor_offset);
+        true
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
