@@ -51,9 +51,12 @@ move to its own crate later without changing its public vocabulary.
   canonical instrument links, financial/estimate/ownership/filing/peer views,
   filters, read/bookmark state, story detail, economic calendar, and validated
   cross-workspace intents.
-- **Next:** cross-sheet references and copy/fill translation, spreadsheet
-  financial functions and async states, feature-document workbook persistence,
-  real licensed provider adapters, and performance/golden-snapshot gates.
+- **Complete:** workbook-scoped spreadsheet evaluation with qualified and quoted
+  cross-sheet references, cross-sheet cycle detection, mixed absolute axes, and
+  atomic translated copy, paste, and directional fill controls.
+- **Next:** spreadsheet financial functions and async states, feature-document
+  workbook persistence, real licensed provider adapters, and
+  performance/golden-snapshot gates.
 
 ## Product principles
 

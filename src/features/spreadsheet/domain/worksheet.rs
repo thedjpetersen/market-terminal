@@ -199,7 +199,12 @@ impl Worksheet {
         match expression {
             Expr::Number(number) => Ok(CellValue::Number(*number)),
             Expr::Text(text) => Ok(CellValue::Text(text.clone())),
-            Expr::Reference(address) => Ok(self.evaluate_cell(*address, stack, cache)),
+            Expr::Reference(reference) => {
+                if !self.reference_is_local(reference.sheet()) {
+                    return Err(CellError::InvalidReference);
+                }
+                Ok(self.evaluate_cell(reference.cell().address(), stack, cache))
+            }
             Expr::Range(_) => Err(CellError::InvalidValue),
             Expr::Unary { operator, operand } => {
                 let number = self.number(self.evaluate_expression(operand, stack, cache)?)?;
@@ -363,6 +368,9 @@ impl Worksheet {
         let mut values = Vec::new();
         for argument in arguments {
             if let Expr::Range(range) = argument {
+                if !self.reference_is_local(range.sheet()) {
+                    return Err(CellError::InvalidReference);
+                }
                 values.extend(range.addresses().map(|address| self.evaluate_cell(address, stack, cache)));
             } else {
                 values.push(self.evaluate_expression(argument, stack, cache)?);
@@ -385,6 +393,9 @@ impl Worksheet {
         let (Expr::Range(lookup), Expr::Range(results)) = (&arguments[1], &arguments[2]) else {
             return Err(CellError::InvalidValue);
         };
+        if !self.reference_is_local(lookup.sheet()) || !self.reference_is_local(results.sheet()) {
+            return Err(CellError::InvalidReference);
+        }
         let lookup_addresses = lookup.addresses().collect::<Vec<_>>();
         let result_addresses = results.addresses().collect::<Vec<_>>();
         if lookup_addresses.len() != result_addresses.len() {
@@ -425,12 +436,16 @@ impl Worksheet {
             _ => Err(CellError::InvalidValue),
         }
     }
+
+    fn reference_is_local(&self, sheet: Option<&str>) -> bool {
+        sheet.is_none_or(|sheet| sheet.eq_ignore_ascii_case(&self.name))
+    }
 }
 
 fn collect_dependencies(expression: &Expr, dependencies: &mut HashSet<CellAddress>) {
     match expression {
-        Expr::Reference(address) => {
-            dependencies.insert(*address);
+        Expr::Reference(reference) => {
+            dependencies.insert(reference.cell().address());
         }
         Expr::Range(range) => dependencies.extend(range.addresses()),
         Expr::Unary { operand, .. } => collect_dependencies(operand, dependencies),

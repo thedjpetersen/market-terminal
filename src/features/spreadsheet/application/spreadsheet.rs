@@ -1,7 +1,8 @@
 use std::fmt;
 
 use crate::features::spreadsheet::domain::{
-    AddressError, CellAddress, CellValue, Workbook, WorkbookError, MAX_COLUMNS, MAX_ROWS,
+    translate_formula, AddressError, CellAddress, CellValue, FormulaError, Workbook, WorkbookError,
+    MAX_COLUMNS, MAX_ROWS,
 };
 
 const HISTORY_LIMIT: usize = 100;
@@ -67,7 +68,53 @@ impl Spreadsheet {
         let raw = raw.into();
         self.record_change(|workbook| {
             workbook.active_sheet_mut().set(address, raw);
-            Ok(workbook.active_sheet().value(address))
+            Ok(workbook.active_value(address))
+        })
+    }
+
+    /// Copies one cell to another, translating relative formula references.
+    pub fn copy_cell(&mut self, source: &str, target: &str) -> Result<CellValue, SpreadsheetError> {
+        let source = parse_address(source)?;
+        let target = parse_address(target)?;
+        let raw = self
+            .workbook
+            .active_sheet()
+            .cell(source)
+            .map(|cell| cell.raw().to_owned())
+            .unwrap_or_default();
+        let translated = translate_raw(&raw, source, target)?;
+        self.record_change(|workbook| {
+            workbook.active_sheet_mut().set(target, translated);
+            Ok(workbook.active_value(target))
+        })
+    }
+
+    /// Fills a set of destinations from one origin as one atomic undo step.
+    pub fn fill_cells<I, A>(&mut self, source: &str, targets: I) -> Result<usize, SpreadsheetError>
+    where
+        I: IntoIterator<Item = A>,
+        A: AsRef<str>,
+    {
+        let source = parse_address(source)?;
+        let raw = self
+            .workbook
+            .active_sheet()
+            .cell(source)
+            .map(|cell| cell.raw().to_owned())
+            .unwrap_or_default();
+        let translated = targets
+            .into_iter()
+            .map(|target| {
+                let target = parse_address(target.as_ref())?;
+                Ok((target, translate_raw(&raw, source, target)?))
+            })
+            .collect::<Result<Vec<_>, SpreadsheetError>>()?;
+        let count = translated.len();
+        self.record_change(|workbook| {
+            for (target, raw) in translated {
+                workbook.active_sheet_mut().set(target, raw);
+            }
+            Ok(count)
         })
     }
 
@@ -207,7 +254,7 @@ impl Spreadsheet {
         Ok(CellView {
             address,
             raw: sheet.cell(address).map(|cell| cell.raw().to_owned()).unwrap_or_default(),
-            value: sheet.value(address),
+            value: self.workbook.active_value(address),
         })
     }
 
@@ -226,7 +273,7 @@ impl Spreadsheet {
         let end_row = start_row.checked_add(rows.saturating_sub(1))
             .ok_or(SpreadsheetError::RegionOutOfBounds)?;
         let sheet = self.workbook.active_sheet();
-        let values = sheet.values();
+        let values = self.workbook.active_values();
         let mut cells = Vec::with_capacity(columns as usize * rows as usize);
         for row in start_row..=end_row {
             for column in start_column..=end_column {
@@ -279,6 +326,19 @@ fn parse_address(input: &str) -> Result<CellAddress, SpreadsheetError> {
     input.parse().map_err(SpreadsheetError::Address)
 }
 
+fn translate_raw(
+    raw: &str,
+    source: CellAddress,
+    target: CellAddress,
+) -> Result<String, SpreadsheetError> {
+    if !raw.trim_start().starts_with('=') {
+        return Ok(raw.to_owned());
+    }
+    let column_delta = i16::from(target.column()) - i16::from(source.column());
+    let row_delta = i32::from(target.row()) - i32::from(source.row());
+    translate_formula(raw, column_delta, row_delta).map_err(SpreadsheetError::Formula)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellView {
     pub address: CellAddress,
@@ -290,6 +350,7 @@ pub struct CellView {
 pub enum SpreadsheetError {
     Address(AddressError),
     Workbook(WorkbookError),
+    Formula(FormulaError),
     Csv(CsvError),
     RegionOutOfBounds,
 }
@@ -299,6 +360,7 @@ impl fmt::Display for SpreadsheetError {
         match self {
             Self::Address(error) => error.fmt(formatter),
             Self::Workbook(error) => error.fmt(formatter),
+            Self::Formula(error) => error.fmt(formatter),
             Self::Csv(error) => error.fmt(formatter),
             Self::RegionOutOfBounds => write!(formatter, "visible region is outside A1:Z100"),
         }
@@ -543,5 +605,54 @@ mod tests {
         assert!(spreadsheet.undo());
         assert_eq!(spreadsheet.workbook().sheet_count(), 2);
         assert_eq!(spreadsheet.workbook().active_sheet().name(), "Model");
+    }
+
+    #[test]
+    fn facade_recalculates_qualified_references_after_other_sheet_edits() {
+        let mut spreadsheet = Spreadsheet::new();
+        spreadsheet.rename_active_sheet("Model").unwrap();
+        spreadsheet.add_sheet("Base Case").unwrap();
+        spreadsheet.select_sheet("Base Case").unwrap();
+        spreadsheet.set_cell("A1", "100").unwrap();
+        spreadsheet.select_sheet("Model").unwrap();
+        spreadsheet.set_cell("A1", "='Base Case'!A1 * 1.2").unwrap();
+        assert_eq!(spreadsheet.cell("A1").unwrap().value, CellValue::Number(120.0));
+        spreadsheet.select_sheet("Base Case").unwrap();
+        spreadsheet.set_cell("A1", "200").unwrap();
+        spreadsheet.select_sheet("Model").unwrap();
+        assert_eq!(spreadsheet.cell("A1").unwrap().value, CellValue::Number(240.0));
+    }
+
+    #[test]
+    fn copy_and_fill_translate_formulas_atomically() {
+        let mut spreadsheet = Spreadsheet::new();
+        spreadsheet.set_cell("B2", "=A1 + $A1 + A$1 + $A$1").unwrap();
+        spreadsheet.copy_cell("B2", "D5").unwrap();
+        assert_eq!(
+            spreadsheet.cell("D5").unwrap().raw,
+            "=C4 + $A4 + C$1 + $A$1"
+        );
+
+        spreadsheet.clear_history();
+        spreadsheet.fill_cells("B2", ["B3", "B4"]).unwrap();
+        assert_eq!(spreadsheet.cell("B3").unwrap().raw, "=A2 + $A2 + A$1 + $A$1");
+        assert_eq!(spreadsheet.cell("B4").unwrap().raw, "=A3 + $A3 + A$1 + $A$1");
+        assert!(spreadsheet.undo());
+        assert_eq!(spreadsheet.cell("B3").unwrap().value, CellValue::Blank);
+        assert_eq!(spreadsheet.cell("B4").unwrap().value, CellValue::Blank);
+    }
+
+    #[test]
+    fn failed_copy_does_not_mutate_the_destination() {
+        let mut spreadsheet = Spreadsheet::new();
+        spreadsheet.set_cell("B1", "=A1").unwrap();
+        spreadsheet.set_cell("A1", "saved").unwrap();
+        spreadsheet.clear_history();
+        assert!(matches!(
+            spreadsheet.copy_cell("B1", "A1"),
+            Err(SpreadsheetError::Formula(_))
+        ));
+        assert_eq!(spreadsheet.cell("A1").unwrap().raw, "saved");
+        assert!(!spreadsheet.can_undo());
     }
 }

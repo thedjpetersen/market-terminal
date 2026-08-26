@@ -50,6 +50,7 @@ pub enum CellError {
     InvalidValue,
     UnknownFunction,
     CircularReference,
+    InvalidReference,
     NotAvailable,
 }
 
@@ -61,6 +62,7 @@ impl fmt::Display for CellError {
             Self::InvalidValue => "#VALUE!",
             Self::UnknownFunction => "#NAME?",
             Self::CircularReference => "#CYCLE!",
+            Self::InvalidReference => "#REF!",
             Self::NotAvailable => "#N/A",
         };
         formatter.write_str(code)
