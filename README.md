@@ -102,6 +102,20 @@ generated prices or replayed bars. Press `F9` or click the Chart header to
 refresh. See [the data-source register](docs/data-sources.md) for freshness,
 attribution, caching, and retention details.
 
+## Live security research
+
+The interactive Security workspace combines Alpha Vantage's delayed quote and
+recent daily history with the SEC's official company-ticker master, submissions,
+and company-facts APIs. Reported annual revenue, operating income, net income,
+and diluted EPS are derived only from comparable US-GAAP 10-K facts; recent
+10-K, 10-Q, and 8-K metadata retain their accession numbers and official
+document URLs. All provider calls run on a coalescing background worker.
+
+SEC EDGAR does not supply analyst estimates or a canonical peer set, and this
+adapter does not yet normalize institutional ownership filings. Those panels
+say so explicitly instead of showing generated values. Press `F9` or click the
+Security header to invalidate the page cache and fetch again.
+
 ## Live instrument master
 
 The interactive Find workspace loads the SEC EDGAR company-ticker master on a

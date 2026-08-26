@@ -3,7 +3,10 @@ use crate::features::{
     news::{Headline, NewsFeed, NewsSnapshot},
     overview::{OverviewQuery, OverviewSnapshot},
     portfolio::{PortfolioRepository, PortfolioSnapshot, Position},
-    security::{SecurityQuery, SecuritySnapshot},
+    security::{
+        Estimate, Filing, FinancialPeriod, OwnerPosition, PeerComparison, SecurityError,
+        SecurityIdentity, SecurityPage, SecurityQuery, SecurityResearch, SecuritySnapshot,
+    },
 };
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -234,7 +237,7 @@ impl MarketsQuery for DemoData {
 }
 
 impl SecurityQuery for DemoData {
-    fn load_security(&self, symbol: &str) -> SecuritySnapshot {
+    fn load_security(&self, symbol: &str) -> Result<SecurityPage, SecurityError> {
         let (symbol, name, last, absolute_change, percent_change) = match symbol
             .split_whitespace()
             .next()
@@ -266,15 +269,68 @@ impl SecurityQuery for DemoData {
             ),
             _ => ("AAPL US EQUITY", "APPLE INC", "205.30", "+1.72", "+0.84%"),
         };
-        SecuritySnapshot {
-            symbol,
-            name,
-            last,
-            absolute_change,
-            percent_change,
-            session_summary: "OPEN 203.41  HIGH 205.64  LOW 202.72  VOLUME 41.82M",
-            price_series: &SECURITY_PRICE,
-        }
+        Ok(SecurityPage {
+            snapshot: SecuritySnapshot {
+                symbol: symbol.to_owned(),
+                name: name.to_owned(),
+                last: last.to_owned(),
+                absolute_change: absolute_change.to_owned(),
+                percent_change: percent_change.to_owned(),
+                session_summary: "OPEN 203.41  HIGH 205.64  LOW 202.72  VOLUME 41.82M".to_owned(),
+                price_series: SECURITY_PRICE.to_vec(),
+                statistics: vec![
+                    ("MARKET CAP".to_owned(), "$3.15T".to_owned()),
+                    ("P/E (TTM)".to_owned(), "31.92X".to_owned()),
+                    ("52W RANGE".to_owned(), "164—237".to_owned()),
+                    ("DATA MODE".to_owned(), "REPLAY".to_owned()),
+                ],
+                source: "DETERMINISTIC DEMO".to_owned(),
+            },
+            research: demo_security_research(symbol),
+        })
+    }
+}
+
+fn demo_security_research(symbol: &str) -> SecurityResearch {
+    SecurityResearch {
+        identity: SecurityIdentity::from_terminal_symbol(symbol),
+        financials: vec![FinancialPeriod {
+            period: "FY24A".to_owned(),
+            revenue_billions: "391.0".to_owned(),
+            operating_income_billions: "123.2".to_owned(),
+            net_income_billions: "93.7".to_owned(),
+            diluted_eps: "6.57".to_owned(),
+        }],
+        estimates: vec![Estimate {
+            period: "FY25E".to_owned(),
+            revenue: "414.8B".to_owned(),
+            eps: "7.24".to_owned(),
+            eps_high: "7.48".to_owned(),
+            eps_low: "6.98".to_owned(),
+        }],
+        owners: vec![OwnerPosition {
+            manager: "DEMO MANAGER".to_owned(),
+            shares: "1.0M".to_owned(),
+            value: "$205.3M".to_owned(),
+            quarterly_change: "+0.1%".to_owned(),
+        }],
+        filings: vec![Filing {
+            filed: "2025-11-01".to_owned(),
+            form: "10-K".to_owned(),
+            period: "2025-09-27".to_owned(),
+            description: "DETERMINISTIC ANNUAL REPORT".to_owned(),
+            accession: "DEMO-ACCESSION".to_owned(),
+            document_url: None,
+        }],
+        peers: vec![PeerComparison {
+            symbol: "DEMO".to_owned(),
+            name: "DETERMINISTIC PEER".to_owned(),
+            price_to_earnings: "29.4x".to_owned(),
+            ev_to_ebitda: "22.8x".to_owned(),
+            revenue_growth: "+6.1%".to_owned(),
+            gross_margin: "46.3%".to_owned(),
+        }],
+        source: "DETERMINISTIC DEMO".to_owned(),
     }
 }
 

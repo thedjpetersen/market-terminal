@@ -1,18 +1,18 @@
 use crate::foundation::InstrumentId;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SecuritySnapshot {
-    pub symbol: &'static str,
-    pub name: &'static str,
-    pub last: &'static str,
-    pub absolute_change: &'static str,
-    pub percent_change: &'static str,
-    pub session_summary: &'static str,
-    pub price_series: &'static [(f64, f64)],
+    pub symbol: String,
+    pub name: String,
+    pub last: String,
+    pub absolute_change: String,
+    pub percent_change: String,
+    pub session_summary: String,
+    pub price_series: Vec<(f64, f64)>,
+    pub statistics: Vec<(String, String)>,
+    pub source: String,
 }
 
-/// Stable research-page identity. Presentation symbols may change without
-/// invalidating saved links to filings, estimates, or news.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityIdentity {
     pub instrument_id: InstrumentId,
@@ -24,8 +24,19 @@ impl SecurityIdentity {
         let mut tokens = symbol.split_whitespace();
         let ticker = tokens.next().unwrap_or("AAPL").to_ascii_uppercase();
         let venue = tokens.next().unwrap_or("US").to_ascii_lowercase();
-        let instrument_id = InstrumentId::new(format!("{venue}:listed:{}", ticker.to_ascii_lowercase()));
-        Self { instrument_id, terminal_symbol: format!("{ticker} {}", venue.to_ascii_uppercase()) }
+        let instrument_id =
+            InstrumentId::new(format!("{venue}:listed:{}", ticker.to_ascii_lowercase()));
+        Self {
+            instrument_id,
+            terminal_symbol: format!("{ticker} {}", venue.to_ascii_uppercase()),
+        }
+    }
+
+    pub fn from_sec_cik(cik: u64, ticker: &str) -> Self {
+        Self {
+            instrument_id: InstrumentId::new(format!("sec:cik:{cik:010}")),
+            terminal_symbol: format!("{} US", ticker.to_ascii_uppercase()),
+        }
     }
 }
 
@@ -58,97 +69,75 @@ impl ResearchView {
     }
 
     pub fn next(self) -> Self {
-        let index = Self::ALL.iter().position(|candidate| *candidate == self).unwrap_or(0);
+        let index = Self::ALL
+            .iter()
+            .position(|candidate| *candidate == self)
+            .unwrap_or(0);
         Self::ALL[(index + 1) % Self::ALL.len()]
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct FinancialPeriod {
+    pub period: String,
+    pub revenue_billions: String,
+    pub operating_income_billions: String,
+    pub net_income_billions: String,
+    pub diluted_eps: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Estimate {
-    pub period: &'static str,
-    pub revenue: &'static str,
-    pub eps: &'static str,
-    pub eps_high: &'static str,
-    pub eps_low: &'static str,
+    pub period: String,
+    pub revenue: String,
+    pub eps: String,
+    pub eps_high: String,
+    pub eps_low: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerPosition {
-    pub manager: &'static str,
-    pub shares: &'static str,
-    pub value: &'static str,
-    pub quarterly_change: &'static str,
+    pub manager: String,
+    pub shares: String,
+    pub value: String,
+    pub quarterly_change: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Filing {
-    pub filed: &'static str,
-    pub form: &'static str,
-    pub period: &'static str,
-    pub description: &'static str,
-    pub accession: &'static str,
+    pub filed: String,
+    pub form: String,
+    pub period: String,
+    pub description: String,
+    pub accession: String,
+    pub document_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PeerComparison {
-    pub symbol: &'static str,
-    pub name: &'static str,
-    pub price_to_earnings: &'static str,
-    pub ev_to_ebitda: &'static str,
-    pub revenue_growth: &'static str,
-    pub gross_margin: &'static str,
+    pub symbol: String,
+    pub name: String,
+    pub price_to_earnings: String,
+    pub ev_to_ebitda: String,
+    pub revenue_growth: String,
+    pub gross_margin: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SecurityResearch {
     pub identity: SecurityIdentity,
-    pub estimates: &'static [Estimate],
-    pub owners: &'static [OwnerPosition],
-    pub filings: &'static [Filing],
-    pub peers: &'static [PeerComparison],
+    pub financials: Vec<FinancialPeriod>,
+    pub estimates: Vec<Estimate>,
+    pub owners: Vec<OwnerPosition>,
+    pub filings: Vec<Filing>,
+    pub peers: Vec<PeerComparison>,
+    pub source: String,
 }
 
-const ESTIMATES: [Estimate; 4] = [
-    Estimate { period: "FY24A", revenue: "391.0B", eps: "6.57", eps_high: "—", eps_low: "—" },
-    Estimate { period: "FY25E", revenue: "414.8B", eps: "7.24", eps_high: "7.48", eps_low: "6.98" },
-    Estimate { period: "FY26E", revenue: "438.1B", eps: "7.93", eps_high: "8.34", eps_low: "7.51" },
-    Estimate { period: "FY27E", revenue: "464.5B", eps: "8.71", eps_high: "9.20", eps_low: "8.09" },
-];
-
-const OWNERS: [OwnerPosition; 5] = [
-    OwnerPosition { manager: "VANGUARD GROUP", shares: "1.32B", value: "$270.8B", quarterly_change: "+0.8%" },
-    OwnerPosition { manager: "BLACKROCK", shares: "1.04B", value: "$213.5B", quarterly_change: "+0.3%" },
-    OwnerPosition { manager: "BERKSHIRE HATHAWAY", shares: "300.0M", value: "$61.6B", quarterly_change: "−6.2%" },
-    OwnerPosition { manager: "STATE STREET", shares: "585.1M", value: "$120.1B", quarterly_change: "+1.1%" },
-    OwnerPosition { manager: "GEODE CAPITAL", shares: "325.9M", value: "$66.9B", quarterly_change: "+2.4%" },
-];
-
-const FILINGS: [Filing; 5] = [
-    Filing { filed: "2026-08-01", form: "10-Q", period: "2026-06-27", description: "QUARTERLY REPORT", accession: "0000320193-26-000081" },
-    Filing { filed: "2026-05-02", form: "10-Q", period: "2026-03-28", description: "QUARTERLY REPORT", accession: "0000320193-26-000052" },
-    Filing { filed: "2026-03-14", form: "8-K", period: "2026-03-14", description: "MATERIAL EVENT", accession: "0000320193-26-000038" },
-    Filing { filed: "2026-01-30", form: "8-K", period: "2026-01-30", description: "RESULTS / GUIDANCE", accession: "0000320193-26-000021" },
-    Filing { filed: "2025-11-01", form: "10-K", period: "2025-09-27", description: "ANNUAL REPORT", accession: "0000320193-25-000119" },
-];
-
-const PEERS: [PeerComparison; 5] = [
-    PeerComparison { symbol: "AAPL", name: "APPLE", price_to_earnings: "29.4x", ev_to_ebitda: "22.8x", revenue_growth: "+6.1%", gross_margin: "46.3%" },
-    PeerComparison { symbol: "MSFT", name: "MICROSOFT", price_to_earnings: "31.8x", ev_to_ebitda: "23.6x", revenue_growth: "+14.2%", gross_margin: "69.8%" },
-    PeerComparison { symbol: "GOOGL", name: "ALPHABET", price_to_earnings: "23.1x", ev_to_ebitda: "16.2x", revenue_growth: "+12.7%", gross_margin: "58.4%" },
-    PeerComparison { symbol: "META", name: "META", price_to_earnings: "24.8x", ev_to_ebitda: "15.9x", revenue_growth: "+15.1%", gross_margin: "81.2%" },
-    PeerComparison { symbol: "AMZN", name: "AMAZON", price_to_earnings: "28.7x", ev_to_ebitda: "17.5x", revenue_growth: "+10.8%", gross_margin: "49.6%" },
-];
-
-impl SecurityResearch {
-    pub fn deterministic(symbol: &str) -> Self {
-        Self {
-            identity: SecurityIdentity::from_terminal_symbol(symbol),
-            estimates: &ESTIMATES,
-            owners: &OWNERS,
-            filings: &FILINGS,
-            peers: &PEERS,
-        }
-    }
+#[derive(Debug, Clone, PartialEq)]
+pub struct SecurityPage {
+    pub snapshot: SecuritySnapshot,
+    pub research: SecurityResearch,
 }
 
 #[cfg(test)]
@@ -159,6 +148,13 @@ mod tests {
     fn terminal_symbol_maps_to_canonical_identity() {
         let identity = SecurityIdentity::from_terminal_symbol("aapl US EQUITY");
         assert_eq!(identity.instrument_id.as_str(), "us:listed:aapl");
+        assert_eq!(identity.terminal_symbol, "AAPL US");
+    }
+
+    #[test]
+    fn sec_cik_is_a_stable_canonical_identity() {
+        let identity = SecurityIdentity::from_sec_cik(320_193, "aapl");
+        assert_eq!(identity.instrument_id.as_str(), "sec:cik:0000320193");
         assert_eq!(identity.terminal_symbol, "AAPL US");
     }
 

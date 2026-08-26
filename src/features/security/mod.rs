@@ -3,10 +3,10 @@ mod port;
 mod workspace;
 
 pub use domain::{
-    Estimate, Filing, OwnerPosition, PeerComparison, ResearchView, SecurityIdentity,
-    SecurityResearch, SecuritySnapshot,
+    Estimate, Filing, FinancialPeriod, OwnerPosition, PeerComparison, ResearchView,
+    SecurityIdentity, SecurityPage, SecurityResearch, SecuritySnapshot,
 };
-pub use port::SecurityQuery;
+pub use port::{SecurityError, SecurityQuery};
 pub use workspace::SecurityWorkspace;
 
 use crate::app::WorkspaceId;

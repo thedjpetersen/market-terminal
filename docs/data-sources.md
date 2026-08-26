@@ -50,25 +50,33 @@ retention constraints.
 - **Quality:** snapshot market values are shown as imported values with source
   status, never presented as a streaming quote feed.
 
-## SEC EDGAR company tickers
+## SEC EDGAR structured data
 
-- **Surface:** interactive Find instrument master.
+- **Surfaces:** interactive Find instrument master and Security identity,
+  reported financials, issuer reference fields, and recent filing metadata.
 - **Official source:** <https://www.sec.gov/files/company_tickers.json> and the
-  SEC's [developer resources](https://www.sec.gov/about/developer-resources).
+  SEC's [submissions and company-facts APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces),
+  documented through its [developer resources](https://www.sec.gov/about/developer-resources).
 - **Identity:** each equity receives a zero-padded canonical CIK identity such
   as `sec:cik:0000320193`; ticker and legal company name remain searchable
   attributes rather than identity keys.
 - **Fair access:** requests use an application/contact user agent. Forks should
   set `MARKET_TERMINAL_SEC_USER_AGENT` to their own contact as described by the
   SEC's [EDGAR access guidance](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data).
-- **Caching and revision:** the master is fetched once on a bounded background
-  worker and held in memory. `F9` requests a coalesced full refresh; each
-  success or failure increments a revision observed by the workspace.
+- **Caching and revision:** the company master and successful Security pages are
+  retained in process for 15 minutes. Find and Security use bounded background
+  workers. Security `F9` invalidates its page cache before fetching; Find `F9`
+  requests a coalesced master refresh.
 - **Failure behavior:** loading and transport/HTTP/shape failures are visible
   in the Find header. No demo identity is inserted into the interactive app.
-- **Content boundary:** this catalog is issuer reference data, not a market
-  price source. Responses are limited to 2 MiB and are not persisted.
+- **Fundamental methodology:** annual values use latest-filed comparable
+  US-GAAP facts from 10-K fiscal-year durations. Values retain neither analyst
+  estimates nor invented gap filling. SEC does not define peer sets; ownership
+  normalization remains visibly unavailable.
+- **Content boundary:** SEC data is issuer reference, reported facts, and filing
+  metadata—not a market-price source. Master responses are limited to 2 MiB,
+  submissions/company facts to 8 MiB, and none are persisted.
 
 SEC/Federal Reserve RSS entries use the publisher URLs above. Structured EDGAR
-submissions and company facts, plus official economic series, remain planned
-adapters and are not current market-price substitutes.
+ownership forms and official economic series remain planned adapters and are
+not current market-price substitutes.

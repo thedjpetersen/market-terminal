@@ -22,8 +22,8 @@ use crate::{
         ConfiguredWatchlistCatalog, CsvPortfolioRepository, DemoAlertsReplay, DemoChartHistory,
         DemoChatGateway, DemoData, DemoInstrumentSearch, DemoMarketDataReplay,
         DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway, LiveNewsFeed,
-        LocalPersistence, OpenRouterConfig, OpenRouterGateway, SecInstrumentSearch,
-        SystemNewsArticleOpener,
+        LiveSecurityQuery, LocalPersistence, OpenRouterConfig, OpenRouterGateway,
+        SecInstrumentSearch, SystemNewsArticleOpener,
     },
 };
 
@@ -42,6 +42,8 @@ pub fn demo_app() -> App {
         instrument_search: Arc::new(DemoInstrumentSearch),
         chart_history: Arc::new(DemoChartHistory),
         chart_primary: ChartInstrument::from_terminal_subject("AAPL"),
+        security_query: Arc::new(DemoData),
+        security_symbol: "AAPL US".to_owned(),
     })
 }
 
@@ -56,6 +58,8 @@ struct AppProviders {
     instrument_search: Arc<dyn InstrumentSearch>,
     chart_history: Arc<dyn ChartHistoryQuery>,
     chart_primary: ChartInstrument,
+    security_query: Arc<dyn SecurityQuery>,
+    security_symbol: String,
 }
 
 fn build_app(providers: AppProviders) -> App {
@@ -70,11 +74,12 @@ fn build_app(providers: AppProviders) -> App {
         instrument_search,
         chart_history,
         chart_primary,
+        security_query,
+        security_symbol,
     } = providers;
     let data = Arc::new(DemoData);
     let overview_query: Arc<dyn OverviewQuery> = data.clone();
     let markets_query: Arc<dyn MarketsQuery> = data.clone();
-    let security_query: Arc<dyn SecurityQuery> = data.clone();
     let assistant_provider = std::env::var("MARKET_TERMINAL_AI_PROVIDER")
         .unwrap_or_else(|_| "codex".to_owned())
         .to_ascii_lowercase();
@@ -112,7 +117,10 @@ fn build_app(providers: AppProviders) -> App {
         )),
         Box::new(ChatWorkspace::new(chat)),
         Box::new(AlertsWorkspace::new(alerts_query)),
-        Box::new(SecurityWorkspace::new(security_query)),
+        Box::new(SecurityWorkspace::with_symbol(
+            security_query,
+            security_symbol,
+        )),
         Box::new(PortfolioWorkspace::new(portfolio_query)),
         Box::new(match article_opener {
             Some(opener) => NewsWorkspace::with_article_opener(news_query, opener),
@@ -130,11 +138,16 @@ pub fn persistent_app() -> App {
         Arc::new(CsvPortfolioRepository::from_env());
     let news_query: Arc<dyn NewsFeed> = Arc::new(LiveNewsFeed::from_env());
     let alpha_vantage = Arc::new(AlphaVantageMarketData::from_env());
+    let security_query: Arc<dyn SecurityQuery> = Arc::new(LiveSecurityQuery::from_env(
+        alpha_vantage.clone(),
+        alpha_vantage.clone(),
+    ));
     let spreadsheet_market_data: Arc<dyn SpreadsheetMarketData> = alpha_vantage.clone();
     let market_data: Arc<dyn MarketDataQuery> = alpha_vantage.clone();
     let chart_history: Arc<dyn ChartHistoryQuery> = alpha_vantage;
     let watchlist_catalog: Arc<dyn WatchlistCatalog> =
         Arc::new(ConfiguredWatchlistCatalog::from_env());
+    let initial_symbol = initial_chart_symbol();
     build_app(AppProviders {
         chat: Arc::new(IrcChatGateway::from_env()),
         portfolio_query,
@@ -145,7 +158,9 @@ pub fn persistent_app() -> App {
         watchlist_catalog,
         instrument_search: Arc::new(SecInstrumentSearch::from_env()),
         chart_history,
-        chart_primary: ChartInstrument::from_terminal_subject(&initial_chart_symbol()),
+        chart_primary: ChartInstrument::from_terminal_subject(&initial_symbol),
+        security_query,
+        security_symbol: format!("{initial_symbol} US"),
     })
     .with_session_repository(repository)
 }

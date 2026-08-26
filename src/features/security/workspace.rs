@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
+    Arc,
+};
 
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::{
@@ -15,27 +18,78 @@ use crate::{
     ui::{
         components::{render_pairs, render_table, styled_row, terminal_block},
         is_primary_click,
-        theme::{AMBER, CYAN, GREEN, MUTED},
+        theme::{AMBER, CYAN, GREEN, MUTED, RED},
     },
 };
 
-use super::{ResearchView, SecurityQuery, SecurityResearch, ID};
+use super::{ResearchView, SecurityError, SecurityPage, SecurityQuery, SecurityResearch, ID};
+
+struct SecurityRefresh {
+    generation: u64,
+    symbol: String,
+}
+
+struct SecurityRefreshResult {
+    generation: u64,
+    result: Result<SecurityPage, SecurityError>,
+}
 
 pub struct SecurityWorkspace {
     query: Arc<dyn SecurityQuery>,
     symbol: String,
     research_view: ResearchView,
     pending_intents: Vec<AppIntent>,
+    refresh_sender: SyncSender<SecurityRefresh>,
+    refresh_receiver: Receiver<SecurityRefreshResult>,
+    pending_refresh: Option<SecurityRefresh>,
+    desired_generation: u64,
+    page: Option<SecurityPage>,
+    error: Option<SecurityError>,
 }
 
 impl SecurityWorkspace {
     pub fn new(query: Arc<dyn SecurityQuery>) -> Self {
-        Self {
+        Self::with_symbol(query, "AAPL US")
+    }
+
+    pub fn with_symbol(query: Arc<dyn SecurityQuery>, symbol: impl Into<String>) -> Self {
+        let (refresh_sender, worker_receiver) = sync_channel::<SecurityRefresh>(1);
+        let (worker_sender, refresh_receiver) = sync_channel::<SecurityRefreshResult>(1);
+        let worker_query = query.clone();
+        std::thread::Builder::new()
+            .name("security-research".to_owned())
+            .spawn(move || {
+                while let Ok(mut refresh) = worker_receiver.recv() {
+                    while let Ok(newer) = worker_receiver.try_recv() {
+                        refresh = newer;
+                    }
+                    let result = worker_query.load_security(&refresh.symbol);
+                    if worker_sender
+                        .send(SecurityRefreshResult {
+                            generation: refresh.generation,
+                            result,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .expect("security research worker should start");
+        let mut workspace = Self {
             query,
-            symbol: "AAPL US".into(),
+            symbol: symbol.into(),
             research_view: ResearchView::Financials,
             pending_intents: Vec::new(),
-        }
+            refresh_sender,
+            refresh_receiver,
+            pending_refresh: None,
+            desired_generation: 0,
+            page: None,
+            error: None,
+        };
+        workspace.queue_refresh();
+        workspace
     }
 
     fn select_view(&mut self, function: &str) -> bool {
@@ -50,7 +104,59 @@ impl SecurityWorkspace {
         true
     }
 
-    fn ticker(&self) -> &str { self.symbol.split_whitespace().next().unwrap_or("AAPL") }
+    fn ticker(&self) -> &str {
+        self.symbol.split_whitespace().next().unwrap_or("AAPL")
+    }
+
+    fn queue_refresh(&mut self) {
+        self.desired_generation = self.desired_generation.wrapping_add(1);
+        self.pending_refresh = Some(SecurityRefresh {
+            generation: self.desired_generation,
+            symbol: self.symbol.clone(),
+        });
+        self.page = None;
+        self.error = None;
+        self.dispatch_pending_refresh();
+    }
+
+    fn refresh_live(&mut self) {
+        self.query.request_refresh(&self.symbol);
+        self.queue_refresh();
+    }
+
+    fn dispatch_pending_refresh(&mut self) {
+        let Some(refresh) = self.pending_refresh.take() else {
+            return;
+        };
+        match self.refresh_sender.try_send(refresh) {
+            Ok(()) => {}
+            Err(TrySendError::Full(refresh)) => self.pending_refresh = Some(refresh),
+            Err(TrySendError::Disconnected(_)) => {
+                self.error = Some(SecurityError::Unavailable(
+                    "security research worker stopped".to_owned(),
+                ));
+            }
+        }
+    }
+
+    fn poll_refresh(&mut self) {
+        while let Ok(refresh) = self.refresh_receiver.try_recv() {
+            if refresh.generation != self.desired_generation {
+                continue;
+            }
+            match refresh.result {
+                Ok(page) => {
+                    self.page = Some(page);
+                    self.error = None;
+                }
+                Err(error) => {
+                    self.page = None;
+                    self.error = Some(error);
+                }
+            }
+        }
+        self.dispatch_pending_refresh();
+    }
 }
 
 impl Workspace for SecurityWorkspace {
@@ -64,6 +170,7 @@ impl Workspace for SecurityWorkspace {
     }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
+        let previous_symbol = self.symbol.clone();
         let is_view_command = self.select_view(&invocation.function);
         for argument in &invocation.args {
             if let Some(view) = argument.strip_prefix("--view=") {
@@ -72,19 +179,41 @@ impl Workspace for SecurityWorkspace {
         }
 
         let mut subject = if matches!(invocation.function.as_str(), "SEC" | "EQUITY") {
-            invocation.args.iter().filter(|arg| !arg.starts_with("--")).cloned().collect()
+            invocation
+                .args
+                .iter()
+                .filter(|arg| !arg.starts_with("--"))
+                .cloned()
+                .collect()
         } else if is_view_command {
-            invocation.args.iter().filter(|arg| !arg.starts_with("--")).cloned().collect()
+            invocation
+                .args
+                .iter()
+                .filter(|arg| !arg.starts_with("--"))
+                .cloned()
+                .collect()
         } else {
             let mut tokens = vec![invocation.function.clone()];
-            tokens.extend(invocation.args.iter().filter(|arg| !arg.starts_with("--")).cloned());
+            tokens.extend(
+                invocation
+                    .args
+                    .iter()
+                    .filter(|arg| !arg.starts_with("--"))
+                    .cloned(),
+            );
             tokens
         };
-        if subject.last().is_some_and(|token| token.eq_ignore_ascii_case("EQUITY")) {
+        if subject
+            .last()
+            .is_some_and(|token| token.eq_ignore_ascii_case("EQUITY"))
+        {
             subject.pop();
         }
         if !subject.is_empty() {
             self.symbol = subject.join(" ");
+        }
+        if self.symbol != previous_symbol {
+            self.queue_refresh();
         }
         true
     }
@@ -105,6 +234,7 @@ impl Workspace for SecurityWorkspace {
                 command: format!("CHART {}", self.symbol),
                 origin: ID,
             }),
+            KeyCode::F(9) => self.refresh_live(),
             _ => return false,
         }
         true
@@ -112,6 +242,12 @@ impl Workspace for SecurityWorkspace {
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
         let rows = Layout::vertical([Constraint::Length(4), Constraint::Min(12)]).split(area);
+        if is_primary_click(event, rows[0]) {
+            return self.handle_key(KeyEvent::new(
+                KeyCode::F(9),
+                crossterm::event::KeyModifiers::NONE,
+            ));
+        }
         let grid = Layout::horizontal([
             Constraint::Percentage(62),
             Constraint::Percentage(19),
@@ -127,8 +263,7 @@ impl Workspace for SecurityWorkspace {
             });
             return true;
         }
-        let research = Layout::vertical([Constraint::Length(1), Constraint::Min(3)])
-            .split(left[1]);
+        let research = Layout::vertical([Constraint::Length(1), Constraint::Min(3)]).split(left[1]);
         if !is_primary_click(event, research[0]) {
             return false;
         }
@@ -144,18 +279,52 @@ impl Workspace for SecurityWorkspace {
         true
     }
 
-    fn poll_intents(&mut self) -> Vec<AppIntent> { std::mem::take(&mut self.pending_intents) }
+    fn poll_intents(&mut self) -> Vec<AppIntent> {
+        self.poll_refresh();
+        std::mem::take(&mut self.pending_intents)
+    }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
-        let snapshot = self.query.load_security(&self.symbol);
-        let research = self.query.load_research(&self.symbol);
         let rows = Layout::vertical([Constraint::Length(4), Constraint::Min(12)]).split(area);
+        let Some(page) = &self.page else {
+            let (title, detail, style) = match &self.error {
+                Some(error) => ("SECURITY DATA FAILED", error.to_string(), RED),
+                None => (
+                    "LOADING LIVE SECURITY DATA…",
+                    format!("{} · SEC EDGAR + MARKET DATA", self.symbol),
+                    AMBER,
+                ),
+            };
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(Span::styled(title, style)),
+                    Line::from(""),
+                    Line::from(Span::styled(detail, MUTED)),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Press F9 or click this panel header to retry.",
+                        MUTED,
+                    )),
+                ])
+                .block(terminal_block("SEC", "LIVE RESEARCH")),
+                area,
+            );
+            return;
+        };
+        let snapshot = &page.snapshot;
+        let research = &page.research;
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(format!(" {} · {}  ", snapshot.symbol, snapshot.name), AMBER),
                 Span::styled(format!("{}  ", snapshot.last), Style::new().fg(CYAN).bold()),
-                Span::styled(format!("{}  {}  ", snapshot.absolute_change, snapshot.percent_change), GREEN),
-                Span::styled(snapshot.session_summary, MUTED),
+                Span::styled(
+                    format!(
+                        "{}  {}  ",
+                        snapshot.absolute_change, snapshot.percent_change
+                    ),
+                    GREEN,
+                ),
+                Span::styled(snapshot.session_summary.as_str(), MUTED),
             ]))
             .block(Block::new().borders(Borders::ALL).border_style(AMBER))
             .alignment(Alignment::Center),
@@ -163,95 +332,342 @@ impl Workspace for SecurityWorkspace {
         );
 
         let grid = Layout::horizontal([
-            Constraint::Percentage(62), Constraint::Percentage(19), Constraint::Percentage(19),
-        ]).split(rows[1]);
-        let left = Layout::vertical([Constraint::Percentage(58), Constraint::Percentage(42)]).split(grid[0]);
+            Constraint::Percentage(62),
+            Constraint::Percentage(19),
+            Constraint::Percentage(19),
+        ])
+        .split(rows[1]);
+        let left = Layout::vertical([Constraint::Percentage(58), Constraint::Percentage(42)])
+            .split(grid[0]);
+        let y_bounds = price_bounds(&snapshot.price_series);
+        let x_max = snapshot
+            .price_series
+            .last()
+            .map(|point| point.0)
+            .unwrap_or(100.0)
+            .max(1.0);
+        let y_middle = (y_bounds[0] + y_bounds[1]) / 2.0;
         let chart = Chart::new(vec![Dataset::default()
             .name(format!("{} {}", snapshot.symbol, snapshot.last))
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
             .style(CYAN)
-            .data(snapshot.price_series)])
-            .block(terminal_block("GP", "INTRADAY PRICE"))
-            .x_axis(Axis::default().bounds([0., 100.]).labels(["09:30", "12:30", "16:00"]).style(MUTED))
-            .y_axis(Axis::default().bounds([195., 207.]).labels(["195", "201", "207"]).style(AMBER));
+            .data(&snapshot.price_series)])
+        .block(terminal_block("GP", "RECENT DAILY PRICE"))
+        .x_axis(
+            Axis::default()
+                .bounds([0.0, x_max])
+                .labels(["START", "RECENT", "LATEST"])
+                .style(MUTED),
+        )
+        .y_axis(
+            Axis::default()
+                .bounds(y_bounds)
+                .labels([
+                    format!("{:.2}", y_bounds[0]),
+                    format!("{y_middle:.2}"),
+                    format!("{:.2}", y_bounds[1]),
+                ])
+                .style(AMBER),
+        );
         frame.render_widget(chart, left[0]);
-        let research_areas = Layout::vertical([Constraint::Length(1), Constraint::Min(3)])
-            .split(left[1]);
-        let research_tabs = ResearchView::ALL.into_iter().enumerate().map(|(index, view)| {
-            let style = if view == self.research_view {
-                Style::new().bg(CYAN).fg(crate::ui::theme::BG).bold()
-            } else {
-                Style::new().fg(MUTED)
-            };
-            Span::styled(format!(" {} {} ", index + 1, view.label()), style)
-        }).collect::<Vec<_>>();
+        let research_areas =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(3)]).split(left[1]);
+        let research_tabs = ResearchView::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(index, view)| {
+                let style = if view == self.research_view {
+                    Style::new().bg(CYAN).fg(crate::ui::theme::BG).bold()
+                } else {
+                    Style::new().fg(MUTED)
+                };
+                Span::styled(format!(" {} {} ", index + 1, view.label()), style)
+            })
+            .collect::<Vec<_>>();
         frame.render_widget(Paragraph::new(Line::from(research_tabs)), research_areas[0]);
-        render_research(frame, research_areas[1], self.research_view, &research);
-        render_pairs(frame, grid[1], "DES", "KEY STATISTICS", &[
-            ["MARKET CAP", "$3.15T"], ["P/E (TTM)", "31.92X"], ["P/E (FY1)", "29.44X"],
-            ["DIV YIELD", "0.49%"], ["52W RANGE", "164—237"], ["BETA", "1.21"],
-        ]);
-        render_pairs(frame, grid[2], "ANR", "ANALYSTS", &[
-            ["BUY", "32"], ["HOLD", "12"], ["SELL", "3"], ["CONSENSUS", "4.31 / 5"],
-            ["TARGET", "$224.62"], ["UPSIDE", "+9.41%"],
-        ]);
+        render_research(frame, research_areas[1], self.research_view, research);
+        let statistics = snapshot
+            .statistics
+            .iter()
+            .take(8)
+            .map(|(label, value)| [label.clone(), value.clone()])
+            .collect::<Vec<_>>();
+        render_pairs(frame, grid[1], "DES", "REFERENCE DATA", &statistics);
+        let source_status = vec![
+            ["MARKET".to_owned(), snapshot.source.clone()],
+            ["RESEARCH".to_owned(), research.source.clone()],
+            [
+                "ESTIMATES".to_owned(),
+                availability(research.estimates.len(), "SEC DOES NOT PROVIDE").to_owned(),
+            ],
+            [
+                "OWNERSHIP".to_owned(),
+                availability(research.owners.len(), "NOT YET NORMALIZED").to_owned(),
+            ],
+            [
+                "PEERS".to_owned(),
+                availability(research.peers.len(), "NOT PROVIDED BY SEC").to_owned(),
+            ],
+            ["REFRESH".to_owned(), "F9 / CLICK HEADER".to_owned()],
+        ];
+        render_pairs(frame, grid[2], "SRC", "SOURCE STATUS", &source_status);
     }
+}
+
+fn availability(count: usize, unavailable: &'static str) -> String {
+    if count == 0 {
+        unavailable.to_owned()
+    } else {
+        format!("{count} RECORDS")
+    }
+}
+
+fn price_bounds(series: &[(f64, f64)]) -> [f64; 2] {
+    let (minimum, maximum) = series
+        .iter()
+        .map(|point| point.1)
+        .filter(|value| value.is_finite())
+        .fold(
+            (f64::INFINITY, f64::NEG_INFINITY),
+            |(minimum, maximum), value| (minimum.min(value), maximum.max(value)),
+        );
+    if !minimum.is_finite() || !maximum.is_finite() {
+        return [0.0, 1.0];
+    }
+    let padding = ((maximum - minimum) * 0.08)
+        .max(maximum.abs() * 0.01)
+        .max(0.01);
+    [minimum - padding, maximum + padding]
 }
 
 fn render_research(frame: &mut Frame, area: Rect, view: ResearchView, research: &SecurityResearch) {
     match view {
-        ResearchView::Financials => render_table(
-            frame, area, "FA", "FINANCIALS · 1-5/TAB SWITCH · N NEWS · C CHART",
-            ["USD BN", "FY24", "FY25E", "FY26E"],
-            vec![
-                styled_row(["REVENUE", "391.0", "414.8", "438.1"]),
-                styled_row(["EBITDA", "131.4", "140.7", "151.2"]),
-                styled_row(["EPS", "6.57", "7.24", "7.93"]),
-            ],
-            [Constraint::Percentage(34), Constraint::Percentage(22), Constraint::Percentage(22), Constraint::Percentage(22)],
+        ResearchView::Financials if research.financials.is_empty() => render_unavailable(
+            frame,
+            area,
+            "FA",
+            "SEC COMPANY FACTS",
+            "No comparable annual US-GAAP facts were returned.",
+        ),
+        ResearchView::Financials => {
+            let financials = research.financials.iter().rev().take(3).collect::<Vec<_>>();
+            let header = [
+                "USD BN / SHARE".to_owned(),
+                financials
+                    .first()
+                    .map_or("—", |value| value.period.as_str())
+                    .to_owned(),
+                financials
+                    .get(1)
+                    .map_or("—", |value| value.period.as_str())
+                    .to_owned(),
+                financials
+                    .get(2)
+                    .map_or("—", |value| value.period.as_str())
+                    .to_owned(),
+            ];
+            let row = |label: &str, value: fn(&super::FinancialPeriod) -> &str| {
+                styled_row([
+                    label.to_owned(),
+                    financials
+                        .first()
+                        .map_or("—", |period| value(period))
+                        .to_owned(),
+                    financials
+                        .get(1)
+                        .map_or("—", |period| value(period))
+                        .to_owned(),
+                    financials
+                        .get(2)
+                        .map_or("—", |period| value(period))
+                        .to_owned(),
+                ])
+            };
+            render_table(
+                frame,
+                area,
+                "FA",
+                "SEC COMPANY FACTS · ACTUAL REPORTED VALUES",
+                header,
+                vec![
+                    row("REVENUE", |value| &value.revenue_billions),
+                    row("OPERATING INCOME", |value| &value.operating_income_billions),
+                    row("NET INCOME", |value| &value.net_income_billions),
+                    row("DILUTED EPS", |value| &value.diluted_eps),
+                ],
+                [
+                    Constraint::Percentage(34),
+                    Constraint::Percentage(22),
+                    Constraint::Percentage(22),
+                    Constraint::Percentage(22),
+                ],
+            );
+        }
+        ResearchView::Estimates if research.estimates.is_empty() => render_unavailable(
+            frame,
+            area,
+            "EE",
+            "CONSENSUS ESTIMATES",
+            "SEC EDGAR does not provide analyst consensus estimates.",
         ),
         ResearchView::Estimates => render_table(
-            frame, area, "EE", "CONSENSUS ESTIMATES · RANGE",
+            frame,
+            area,
+            "EE",
+            "CONSENSUS ESTIMATES · RANGE",
             ["PERIOD", "REVENUE", "EPS", "HIGH", "LOW"],
-            research.estimates.iter().map(|value| styled_row([
-                value.period, value.revenue, value.eps, value.eps_high, value.eps_low,
-            ])).collect(),
-            [Constraint::Percentage(18), Constraint::Percentage(24), Constraint::Percentage(18), Constraint::Percentage(20), Constraint::Percentage(20)],
+            research
+                .estimates
+                .iter()
+                .map(|value| {
+                    styled_row([
+                        value.period.clone(),
+                        value.revenue.clone(),
+                        value.eps.clone(),
+                        value.eps_high.clone(),
+                        value.eps_low.clone(),
+                    ])
+                })
+                .collect(),
+            [
+                Constraint::Percentage(18),
+                Constraint::Percentage(24),
+                Constraint::Percentage(18),
+                Constraint::Percentage(20),
+                Constraint::Percentage(20),
+            ],
+        ),
+        ResearchView::Ownership if research.owners.is_empty() => render_unavailable(
+            frame,
+            area,
+            "OWN",
+            "INSTITUTIONAL OWNERSHIP",
+            "Ownership forms are not normalized in this live adapter yet.",
         ),
         ResearchView::Ownership => render_table(
-            frame, area, "OWN", "TOP INSTITUTIONAL HOLDERS",
+            frame,
+            area,
+            "OWN",
+            "TOP INSTITUTIONAL HOLDERS",
             ["MANAGER", "SHARES", "VALUE", "Q/Q"],
-            research.owners.iter().map(|value| styled_row([
-                value.manager, value.shares, value.value, value.quarterly_change,
-            ])).collect(),
-            [Constraint::Percentage(46), Constraint::Percentage(18), Constraint::Percentage(20), Constraint::Percentage(16)],
+            research
+                .owners
+                .iter()
+                .map(|value| {
+                    styled_row([
+                        value.manager.clone(),
+                        value.shares.clone(),
+                        value.value.clone(),
+                        value.quarterly_change.clone(),
+                    ])
+                })
+                .collect(),
+            [
+                Constraint::Percentage(46),
+                Constraint::Percentage(18),
+                Constraint::Percentage(20),
+                Constraint::Percentage(16),
+            ],
+        ),
+        ResearchView::Filings if research.filings.is_empty() => render_unavailable(
+            frame,
+            area,
+            "FIL",
+            "REGULATORY FILINGS",
+            "SEC submissions returned no supported recent filings.",
         ),
         ResearchView::Filings => render_table(
-            frame, area, "FIL", "REGULATORY FILINGS",
+            frame,
+            area,
+            "FIL",
+            "LIVE SEC REGULATORY FILINGS",
             ["FILED", "FORM", "PERIOD", "DESCRIPTION", "ACCESSION"],
-            research.filings.iter().map(|value| styled_row([
-                value.filed, value.form, value.period, value.description, value.accession,
-            ])).collect(),
-            [Constraint::Percentage(15), Constraint::Percentage(9), Constraint::Percentage(15), Constraint::Percentage(27), Constraint::Percentage(34)],
+            research
+                .filings
+                .iter()
+                .map(|value| {
+                    styled_row([
+                        value.filed.clone(),
+                        value.form.clone(),
+                        value.period.clone(),
+                        value.description.clone(),
+                        value.accession.clone(),
+                    ])
+                })
+                .collect(),
+            [
+                Constraint::Percentage(15),
+                Constraint::Percentage(9),
+                Constraint::Percentage(15),
+                Constraint::Percentage(27),
+                Constraint::Percentage(34),
+            ],
+        ),
+        ResearchView::Peers if research.peers.is_empty() => render_unavailable(
+            frame,
+            area,
+            "RV",
+            "RELATIVE VALUE",
+            "SEC EDGAR does not define comparable-company peer sets.",
         ),
         ResearchView::Peers => render_table(
-            frame, area, "RV", "RELATIVE VALUE · CANONICAL INSTRUMENT LINKED",
+            frame,
+            area,
+            "RV",
+            "RELATIVE VALUE · CANONICAL INSTRUMENT LINKED",
             ["SYMBOL", "COMPANY", "P/E", "EV/EBITDA", "REV GR", "GM"],
-            research.peers.iter().map(|value| styled_row([
-                value.symbol, value.name, value.price_to_earnings, value.ev_to_ebitda,
-                value.revenue_growth, value.gross_margin,
-            ])).collect(),
-            [Constraint::Percentage(13), Constraint::Percentage(25), Constraint::Percentage(13), Constraint::Percentage(18), Constraint::Percentage(16), Constraint::Percentage(15)],
+            research
+                .peers
+                .iter()
+                .map(|value| {
+                    styled_row([
+                        value.symbol.clone(),
+                        value.name.clone(),
+                        value.price_to_earnings.clone(),
+                        value.ev_to_ebitda.clone(),
+                        value.revenue_growth.clone(),
+                        value.gross_margin.clone(),
+                    ])
+                })
+                .collect(),
+            [
+                Constraint::Percentage(13),
+                Constraint::Percentage(25),
+                Constraint::Percentage(13),
+                Constraint::Percentage(18),
+                Constraint::Percentage(16),
+                Constraint::Percentage(15),
+            ],
         ),
     }
+}
+
+fn render_unavailable(
+    frame: &mut Frame,
+    area: Rect,
+    code: &'static str,
+    title: &'static str,
+    message: &'static str,
+) {
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled("UNAVAILABLE FROM CURRENT LIVE SOURCES", AMBER)),
+            Line::from(""),
+            Line::from(Span::styled(message, MUTED)),
+        ])
+        .block(terminal_block(code, title)),
+        area,
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::security::{
+        SecurityIdentity, SecurityPage, SecurityResearch, SecuritySnapshot,
+    };
     use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
-    use crate::features::security::SecuritySnapshot;
 
     struct StubQuery;
 
@@ -265,19 +681,44 @@ mod tests {
     }
 
     impl SecurityQuery for StubQuery {
-        fn load_security(&self, _symbol: &str) -> SecuritySnapshot {
-            SecuritySnapshot {
-                symbol: "AAPL US EQUITY", name: "APPLE", last: "205.30",
-                absolute_change: "+1.72", percent_change: "+0.84%", session_summary: "OPEN",
-                price_series: &[],
-            }
+        fn load_security(&self, symbol: &str) -> Result<SecurityPage, SecurityError> {
+            Ok(stub_page(symbol))
+        }
+    }
+
+    fn stub_page(symbol: &str) -> SecurityPage {
+        let identity = SecurityIdentity::from_terminal_symbol(symbol);
+        SecurityPage {
+            snapshot: SecuritySnapshot {
+                symbol: identity.terminal_symbol.clone(),
+                name: "TEST COMPANY".to_owned(),
+                last: "1.00".to_owned(),
+                absolute_change: "+0.00".to_owned(),
+                percent_change: "+0.00%".to_owned(),
+                session_summary: "TEST".to_owned(),
+                price_series: vec![(0.0, 1.0)],
+                statistics: Vec::new(),
+                source: "TEST".to_owned(),
+            },
+            research: SecurityResearch {
+                identity,
+                financials: Vec::new(),
+                estimates: Vec::new(),
+                owners: Vec::new(),
+                filings: Vec::new(),
+                peers: Vec::new(),
+                source: "TEST".to_owned(),
+            },
         }
     }
 
     #[test]
     fn research_commands_change_view_without_replacing_symbol() {
         let mut workspace = SecurityWorkspace::new(Arc::new(StubQuery));
-        workspace.handle_command(&CommandInvocation { function: "FIL".into(), args: vec![] });
+        workspace.handle_command(&CommandInvocation {
+            function: "FIL".into(),
+            args: vec![],
+        });
         assert_eq!(workspace.research_view, ResearchView::Filings);
         assert_eq!(workspace.symbol, "AAPL US");
     }
@@ -289,9 +730,13 @@ mod tests {
             KeyCode::Char('n'),
             crossterm::event::KeyModifiers::NONE,
         )));
-        assert_eq!(workspace.poll_intents(), vec![AppIntent::DispatchCommand {
-            command: "NEWS --symbol=AAPL".into(), origin: ID,
-        }]);
+        assert_eq!(
+            workspace.poll_intents(),
+            vec![AppIntent::DispatchCommand {
+                command: "NEWS --symbol=AAPL".into(),
+                origin: ID,
+            }]
+        );
     }
 
     #[test]
@@ -307,12 +752,49 @@ mod tests {
         .split(rows[1]);
         let left = Layout::vertical([Constraint::Percentage(58), Constraint::Percentage(42)])
             .split(grid[0]);
-        let tabs = Layout::vertical([Constraint::Length(1), Constraint::Min(3)])
-            .split(left[1])[0];
-        let second_tab = tabs.x.saturating_add(" 1 FA FINANCIALS ".chars().count() as u16);
+        let tabs = Layout::vertical([Constraint::Length(1), Constraint::Min(3)]).split(left[1])[0];
+        let second_tab = tabs
+            .x
+            .saturating_add(" 1 FA FINANCIALS ".chars().count() as u16);
 
         assert!(workspace.handle_mouse(click(second_tab, tabs.y), area));
 
         assert_eq!(workspace.research_view, ResearchView::Estimates);
+    }
+
+    #[test]
+    fn security_provider_never_blocks_workspace_construction() {
+        struct SlowQuery;
+
+        impl SecurityQuery for SlowQuery {
+            fn load_security(&self, symbol: &str) -> Result<SecurityPage, SecurityError> {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                Ok(stub_page(symbol))
+            }
+        }
+
+        let started = std::time::Instant::now();
+        let workspace = SecurityWorkspace::new(Arc::new(SlowQuery));
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+        assert!(workspace.page.is_none());
+    }
+
+    #[test]
+    fn completed_security_page_is_applied_from_the_background_worker() {
+        let mut workspace = SecurityWorkspace::new(Arc::new(StubQuery));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while workspace.page.is_none() && std::time::Instant::now() < deadline {
+            workspace.poll_refresh();
+            std::thread::yield_now();
+        }
+
+        assert_eq!(
+            workspace
+                .page
+                .as_ref()
+                .map(|page| page.snapshot.symbol.as_str()),
+            Some("AAPL US")
+        );
+        assert!(workspace.error.is_none());
     }
 }
