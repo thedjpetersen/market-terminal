@@ -10,12 +10,20 @@ use ratatui::{
 };
 
 use crate::app::App;
+use crate::app::{InputMode, ShellChrome};
 
 pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(
         Block::new().style(Style::new().bg(theme::BG).fg(theme::INK)),
         frame.area(),
     );
+    if app.input_mode() == InputMode::Navigation
+        && app.workspaces.shell_chrome(app.active_workspace()) == ShellChrome::Immersive
+    {
+        app.workspaces.render(app.active_workspace(), frame, frame.area());
+        return;
+    }
+
     let rows = Layout::vertical([
         Constraint::Length(3),
         Constraint::Length(2),

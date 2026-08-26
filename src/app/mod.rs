@@ -12,7 +12,7 @@ pub use input::InputMode;
 pub use events::{EventBus, EventEnvelope, EventTopic, SubscriptionId, SubscriptionMetrics};
 pub use workspace::{
     AppIntent, CommandArgument, CommandInvocation, CommandParseError, Workspace,
-    WorkspaceDescriptor, WorkspaceId,
+    ShellChrome, WorkspaceDescriptor, WorkspaceId,
     ShellContext, WorkspaceNavigationItem, WorkspaceRegistry,
 };
 
