@@ -46,10 +46,25 @@ retention constraints.
 - **Quality:** snapshot market values are shown as imported values with source
   status, never presented as a streaming quote feed.
 
-## SEC and Federal Reserve feeds
+## SEC EDGAR company tickers
+
+- **Surface:** interactive Find instrument master.
+- **Official source:** <https://www.sec.gov/files/company_tickers.json> and the
+  SEC's [developer resources](https://www.sec.gov/about/developer-resources).
+- **Identity:** each equity receives a zero-padded canonical CIK identity such
+  as `sec:cik:0000320193`; ticker and legal company name remain searchable
+  attributes rather than identity keys.
+- **Fair access:** requests use an application/contact user agent. Forks should
+  set `MARKET_TERMINAL_SEC_USER_AGENT` to their own contact as described by the
+  SEC's [EDGAR access guidance](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data).
+- **Caching and revision:** the master is fetched once on a bounded background
+  worker and held in memory. `F9` requests a coalesced full refresh; each
+  success or failure increments a revision observed by the workspace.
+- **Failure behavior:** loading and transport/HTTP/shape failures are visible
+  in the Find header. No demo identity is inserted into the interactive app.
+- **Content boundary:** this catalog is issuer reference data, not a market
+  price source. Responses are limited to 2 MiB and are not persisted.
 
 SEC/Federal Reserve RSS entries use the publisher URLs above. Structured EDGAR
-company tickers, submissions, company facts, and official economic series are
-planned adapters, not current market-price substitutes. Their addition must
-record API-specific fair-access, user-agent, caching, and revision behavior in
-this register before interactive wiring.
+submissions and company facts, plus official economic series, remain planned
+adapters and are not current market-price substitutes.

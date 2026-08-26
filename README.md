@@ -98,6 +98,22 @@ unentitled symbols show unavailable/permission-denied state; the app never
 fills them with generated prices. See [the data-source register](docs/data-sources.md)
 for freshness, attribution, caching, and retention details.
 
+## Live instrument master
+
+The interactive Find workspace loads the SEC EDGAR company-ticker master on a
+background worker and assigns canonical identities from zero-padded CIKs. It
+never substitutes the deterministic demo catalog when the SEC source is
+unavailable: the header reports loading, live-count, or explicit failure state.
+Search by ticker or company name, press `F9` (or click the Find header) to
+refresh, and press Enter on a result to open that security.
+
+SEC fair-access guidance requires an identifiable user agent. Set your own
+application/contact value when distributing or forking the terminal:
+
+```dotenv
+MARKET_TERMINAL_SEC_USER_AGENT="market-terminal/0.1.0 your-email@example.com"
+```
+
 ## Importing a real portfolio
 
 Export current positions as CSV from your brokerage, open the command bar with

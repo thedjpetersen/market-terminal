@@ -22,7 +22,8 @@ use crate::{
         ConfiguredWatchlistCatalog, CsvPortfolioRepository, DemoAlertsReplay, DemoChartHistory,
         DemoChatGateway, DemoData, DemoInstrumentSearch, DemoMarketDataReplay,
         DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway, LiveNewsFeed,
-        LocalPersistence, OpenRouterConfig, OpenRouterGateway, SystemNewsArticleOpener,
+        LocalPersistence, OpenRouterConfig, OpenRouterGateway, SecInstrumentSearch,
+        SystemNewsArticleOpener,
     },
 };
 
@@ -30,26 +31,40 @@ pub fn demo_app() -> App {
     let data = Arc::new(DemoData);
     let portfolio_query: Arc<dyn PortfolioRepository> = data.clone();
     let news_query: Arc<dyn NewsFeed> = data;
-    build_app(
-        Arc::new(DemoChatGateway::new()),
+    build_app(AppProviders {
+        chat: Arc::new(DemoChatGateway::new()),
         portfolio_query,
         news_query,
-        None,
-        Arc::new(DemoSpreadsheetMarketData),
-        Arc::new(DemoMarketDataReplay::new()),
-        Arc::new(DemoWatchlistCatalog),
-    )
+        article_opener: None,
+        spreadsheet_market_data: Arc::new(DemoSpreadsheetMarketData),
+        market_data: Arc::new(DemoMarketDataReplay::new()),
+        watchlist_catalog: Arc::new(DemoWatchlistCatalog),
+        instrument_search: Arc::new(DemoInstrumentSearch),
+    })
 }
 
-fn build_app(
-    chat_gateway: Arc<dyn ChatGateway>,
+struct AppProviders {
+    chat: Arc<dyn ChatGateway>,
     portfolio_query: Arc<dyn PortfolioRepository>,
     news_query: Arc<dyn NewsFeed>,
     article_opener: Option<Arc<dyn NewsArticleOpener>>,
     spreadsheet_market_data: Arc<dyn SpreadsheetMarketData>,
     market_data: Arc<dyn MarketDataQuery>,
     watchlist_catalog: Arc<dyn WatchlistCatalog>,
-) -> App {
+    instrument_search: Arc<dyn InstrumentSearch>,
+}
+
+fn build_app(providers: AppProviders) -> App {
+    let AppProviders {
+        chat,
+        portfolio_query,
+        news_query,
+        article_opener,
+        spreadsheet_market_data,
+        market_data,
+        watchlist_catalog,
+        instrument_search,
+    } = providers;
     let data = Arc::new(DemoData);
     let overview_query: Arc<dyn OverviewQuery> = data.clone();
     let markets_query: Arc<dyn MarketsQuery> = data.clone();
@@ -61,7 +76,6 @@ fn build_app(
         "codex" => Arc::new(CodexAppServerGateway::new(CodexAppServerConfig::from_env())),
         _ => Arc::new(OpenRouterGateway::new(OpenRouterConfig::from_env())),
     };
-    let instrument_search: Arc<dyn InstrumentSearch> = Arc::new(DemoInstrumentSearch);
     let chart_history: Arc<dyn ChartHistoryQuery> = Arc::new(DemoChartHistory);
     let alerts_query: Arc<dyn AlertsQuery> = Arc::new(DemoAlertsReplay::new());
 
@@ -88,7 +102,7 @@ fn build_app(
         Box::new(WatchlistWorkspace::new(market_data, watchlist_catalog)),
         Box::new(MarketsWorkspace::new(markets_query)),
         Box::new(ChartingWorkspace::new(chart_history)),
-        Box::new(ChatWorkspace::new(chat_gateway)),
+        Box::new(ChatWorkspace::new(chat)),
         Box::new(AlertsWorkspace::new(alerts_query)),
         Box::new(SecurityWorkspace::new(security_query)),
         Box::new(PortfolioWorkspace::new(portfolio_query)),
@@ -112,15 +126,16 @@ pub fn persistent_app() -> App {
     let market_data: Arc<dyn MarketDataQuery> = alpha_vantage;
     let watchlist_catalog: Arc<dyn WatchlistCatalog> =
         Arc::new(ConfiguredWatchlistCatalog::from_env());
-    build_app(
-        Arc::new(IrcChatGateway::from_env()),
+    build_app(AppProviders {
+        chat: Arc::new(IrcChatGateway::from_env()),
         portfolio_query,
         news_query,
-        Some(Arc::new(SystemNewsArticleOpener)),
+        article_opener: Some(Arc::new(SystemNewsArticleOpener)),
         spreadsheet_market_data,
         market_data,
         watchlist_catalog,
-    )
+        instrument_search: Arc::new(SecInstrumentSearch::from_env()),
+    })
     .with_session_repository(repository)
 }
 

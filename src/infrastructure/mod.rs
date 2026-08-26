@@ -12,6 +12,7 @@ mod local_persistence;
 mod market_data_demo;
 mod openrouter;
 mod portfolio_csv;
+mod sec_instruments;
 mod spreadsheet_demo;
 mod watchlist_config;
 
@@ -29,5 +30,6 @@ pub use local_persistence::LocalPersistence;
 pub use market_data_demo::{DemoMarketDataReplay, DemoWatchlistCatalog};
 pub use openrouter::{OpenRouterConfig, OpenRouterGateway};
 pub use portfolio_csv::CsvPortfolioRepository;
+pub use sec_instruments::SecInstrumentSearch;
 pub use spreadsheet_demo::DemoSpreadsheetMarketData;
 pub use watchlist_config::ConfiguredWatchlistCatalog;

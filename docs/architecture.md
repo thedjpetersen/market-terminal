@@ -129,8 +129,9 @@ context.
 
 The next structural steps are intentionally additive:
 
-- split `DemoData` into live quote, reference-data, news, and portfolio
-  adapters;
+- finish replacing the remaining `DemoData` overview, market-analytics, and
+  security-research composition with live adapters (quotes, news, portfolio,
+  and SEC instrument identity are already independently wired);
 - connect streaming adapters to the bounded event bus with acknowledgement and
   tracing where delivery guarantees require it;
 - add caching, retries, entitlements, and observability as infrastructure

@@ -26,17 +26,20 @@ pub struct InstrumentSearchWorkspace {
     results: Vec<Instrument>,
     selected: usize,
     pending_intents: Vec<AppIntent>,
+    catalog_revision: u64,
 }
 
 impl InstrumentSearchWorkspace {
     pub fn new(query: Arc<dyn InstrumentSearch>) -> Self {
         let results = query.search("", 12);
+        let catalog_revision = query.revision();
         Self {
             query,
             search_term: String::new(),
             results,
             selected: 0,
             pending_intents: Vec::new(),
+            catalog_revision,
         }
     }
 
@@ -68,7 +71,9 @@ impl Workspace for InstrumentSearchWorkspace {
         }
     }
 
-    fn is_favorite(&self) -> bool { true }
+    fn is_favorite(&self) -> bool {
+        true
+    }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
         self.refresh(invocation.args.join(" "));
@@ -94,6 +99,10 @@ impl Workspace for InstrumentSearchWorkspace {
                 }
                 true
             }
+            KeyCode::F(9) => {
+                self.query.request_refresh();
+                true
+            }
             _ => false,
         }
     }
@@ -105,15 +114,26 @@ impl Workspace for InstrumentSearchWorkspace {
             Constraint::Length(3),
         ])
         .split(area);
+        if crate::ui::is_primary_click(event, rows[0]) {
+            return self.handle_key(KeyEvent::new(
+                KeyCode::F(9),
+                crossterm::event::KeyModifiers::NONE,
+            ));
+        }
         if let Some(index) = table_row_at(event, rows[1], self.results.len()) {
             self.selected = index;
             return true;
         }
         if crate::ui::is_primary_click(event, rows[2]) {
-            let open_start = rows[2].x.saturating_add(" ↑↓/JK SELECT   ".chars().count() as u16);
+            let open_start = rows[2]
+                .x
+                .saturating_add(" ↑↓/JK SELECT   ".chars().count() as u16);
             let open_width = " ENTER OPEN SECURITY   ".chars().count() as u16;
             if event.column >= open_start && event.column < open_start.saturating_add(open_width) {
-                return self.handle_key(KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE));
+                return self.handle_key(KeyEvent::new(
+                    KeyCode::Enter,
+                    crossterm::event::KeyModifiers::NONE,
+                ));
             }
             return true;
         }
@@ -123,7 +143,15 @@ impl Workspace for InstrumentSearchWorkspace {
         false
     }
 
-    fn poll_intents(&mut self) -> Vec<AppIntent> { std::mem::take(&mut self.pending_intents) }
+    fn poll_intents(&mut self) -> Vec<AppIntent> {
+        let revision = self.query.revision();
+        if revision != self.catalog_revision {
+            self.catalog_revision = revision;
+            self.results = self.query.search(&self.search_term, 12);
+            self.selected = self.selected.min(self.results.len().saturating_sub(1));
+        }
+        std::mem::take(&mut self.pending_intents)
+    }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
         let rows = Layout::vertical([
@@ -143,6 +171,7 @@ impl Workspace for InstrumentSearchWorkspace {
                 Span::styled(" QUERY  ", Style::new().bg(AMBER).fg(BG).bold()),
                 Span::styled(format!(" {query}"), INK),
                 Span::styled(format!("   {} MATCHES", self.results.len()), MUTED),
+                Span::styled(format!("   {}", self.query.status()), MUTED),
             ]))
             .block(terminal_block("FIND", "INSTRUMENT MASTER")),
             rows[0],
@@ -193,7 +222,9 @@ impl Workspace for InstrumentSearchWorkspace {
                 Span::styled(" ENTER ", AMBER),
                 Span::styled("OPEN SECURITY   ", MUTED),
                 Span::styled(" / FIND <QUERY> ", AMBER),
-                Span::styled("NEW SEARCH", MUTED),
+                Span::styled("NEW SEARCH   ", MUTED),
+                Span::styled(" F9/CLICK HEADER ", AMBER),
+                Span::styled("REFRESH LIVE MASTER", MUTED),
             ])),
             rows[2],
         );
