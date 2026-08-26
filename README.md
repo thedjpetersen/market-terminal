@@ -1,5 +1,7 @@
 # Market Terminal
 
+_I pasted this tweet into ChatGPT and just told it to keep going in between boogieboarding_
+
 <img width="592" height="877" alt="image" src="https://github.com/user-attachments/assets/19912571-d2f0-4ef8-8230-bb868e14389a" />
 
 
