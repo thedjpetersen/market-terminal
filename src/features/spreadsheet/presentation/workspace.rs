@@ -68,6 +68,7 @@ pub struct SpreadsheetWorkspace {
     visible_columns: StateCell<u8>,
     visible_rows: StateCell<u16>,
     edit: Option<EditSession>,
+    clipboard: Option<(String, CellAddress)>,
     status: String,
 }
 
@@ -82,6 +83,7 @@ impl SpreadsheetWorkspace {
             visible_columns: StateCell::new(8),
             visible_rows: StateCell::new(18),
             edit: None,
+            clipboard: None,
             status: String::new(),
         };
         workspace.seed_demo_workbook();
@@ -103,12 +105,24 @@ impl SpreadsheetWorkspace {
             ("A11", "Growth"),
             ("B11", "0.12"),
             ("A12", "Forward revenue"),
-            ("B12", "=B10*(1+B11)"),
+            ("B12", "=Assumptions!B10*(1+Assumptions!B11)"),
         ] {
             self.spreadsheet
                 .set_cell(address, raw)
                 .expect("demo seed addresses are valid");
         }
+        self.spreadsheet.add_sheet("Assumptions").expect("demo sheet name is unique");
+        self.spreadsheet.select_sheet("Assumptions").expect("demo sheet exists");
+        self.spreadsheet
+            .set_cells([
+                ("A9", "MODEL ASSUMPTIONS"),
+                ("A10", "Revenue"),
+                ("B10", "1250"),
+                ("A11", "Growth"),
+                ("B11", "0.12"),
+            ])
+            .expect("assumption seed addresses are valid");
+        self.spreadsheet.select_sheet("Sheet1").expect("default demo sheet exists");
         self.refresh_market_data();
         self.spreadsheet.clear_history();
         self.status = "READY · LIVE FIELDS LOADED".to_owned();
@@ -254,6 +268,46 @@ impl SpreadsheetWorkspace {
             self.status = format!("ERROR · {error}");
         } else {
             self.status = format!("CLEARED {address}");
+        }
+    }
+
+    fn copy_selected(&mut self) {
+        let sheet = self.spreadsheet.workbook().active_sheet().name().to_owned();
+        self.clipboard = Some((sheet, self.cursor));
+        self.status = format!("COPIED {}", self.cursor);
+    }
+
+    fn paste_selected(&mut self) {
+        let Some((sheet, source)) = self.clipboard.clone() else {
+            self.status = "CLIPBOARD EMPTY".to_owned();
+            return;
+        };
+        if !sheet.eq_ignore_ascii_case(self.spreadsheet.workbook().active_sheet().name()) {
+            self.status = "PASTE REQUIRES THE SOURCE SHEET".to_owned();
+            return;
+        }
+        let source = source.to_string();
+        let target = self.selected_address();
+        match self.spreadsheet.copy_cell(&source, &target) {
+            Ok(value) => self.status = format!("PASTED {source} → {target} · {value}"),
+            Err(error) => self.status = format!("ERROR · {error}"),
+        }
+    }
+
+    fn fill_from_adjacent(&mut self, vertical: bool) {
+        let source = if vertical {
+            self.cursor.row().checked_sub(1).and_then(|row| CellAddress::new(self.cursor.column(), row).ok())
+        } else {
+            self.cursor.column().checked_sub(1).and_then(|column| CellAddress::new(column, self.cursor.row()).ok())
+        };
+        let Some(source) = source else {
+            self.status = if vertical { "NO CELL ABOVE TO FILL" } else { "NO CELL LEFT TO FILL" }.to_owned();
+            return;
+        };
+        let target = self.selected_address();
+        match self.spreadsheet.copy_cell(&source.to_string(), &target) {
+            Ok(value) => self.status = format!("FILLED {source} → {target} · {value}"),
+            Err(error) => self.status = format!("ERROR · {error}"),
         }
     }
 
@@ -427,7 +481,7 @@ impl SpreadsheetWorkspace {
             Paragraph::new(Line::from(vec![
                 Span::styled(format!(" {mode} "), Style::new().bg(AMBER).fg(BG).bold()),
                 Span::styled(format!(" {}   ", self.status), INK),
-                Span::styled("CTRL-Z/Y UNDO/REDO  CTRL-PGUP/DN SHEETS  SHIFT-F11 NEW  F2 EDIT", MUTED),
+                Span::styled("Y COPY  P PASTE  CTRL-D/R FILL  CTRL-Z/Y UNDO/REDO  F2 EDIT", MUTED),
             ]))
             .style(Style::new().bg(FOOTER_BG)),
             area,
@@ -497,9 +551,13 @@ impl Workspace for SpreadsheetWorkspace {
             KeyCode::Char('Z') if control && shift => self.redo(),
             KeyCode::Char('z') if control => self.undo(),
             KeyCode::Char('y') if control => self.redo(),
+            KeyCode::Char('d') if control => self.fill_from_adjacent(true),
+            KeyCode::Char('r') if control => self.fill_from_adjacent(false),
             KeyCode::PageDown if control => self.select_adjacent_sheet(true),
             KeyCode::PageUp if control => self.select_adjacent_sheet(false),
             KeyCode::F(11) if shift => self.add_sheet(None),
+            KeyCode::Char('y') => self.copy_selected(),
+            KeyCode::Char('p') => self.paste_selected(),
             KeyCode::Up | KeyCode::Char('k') => self.move_cursor(0, -1),
             KeyCode::Down | KeyCode::Char('j') => self.move_cursor(0, 1),
             KeyCode::Left | KeyCode::Char('h') => self.move_cursor(-1, 0),
@@ -609,6 +667,8 @@ mod tests {
         assert_eq!(workspace.spreadsheet.cell("A2").unwrap().raw, "SPY US Equity");
         assert_eq!(workspace.spreadsheet.cell("E2").unwrap().value, CellValue::Number(132_617.5));
         assert!(matches!(workspace.spreadsheet.cell("E7").unwrap().value, CellValue::Number(_)));
+        assert_eq!(workspace.spreadsheet.cell("B12").unwrap().value, CellValue::Number(1400.0));
+        assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 2);
     }
 
     #[test]
@@ -685,19 +745,19 @@ mod tests {
             KeyCode::F(11),
             KeyModifiers::SHIFT,
         )));
-        assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 2);
-        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Sheet2");
+        assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 3);
+        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Sheet3");
 
         assert!(workspace.handle_key(modified_key(
             KeyCode::PageUp,
             KeyModifiers::CONTROL,
         )));
-        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Sheet1");
+        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Assumptions");
         assert!(workspace.handle_key(modified_key(
             KeyCode::PageDown,
             KeyModifiers::CONTROL,
         )));
-        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Sheet2");
+        assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Sheet3");
     }
 
     #[test]
@@ -718,9 +778,26 @@ mod tests {
             function: "SHEET".to_owned(),
             args: vec!["DELETE".to_owned()],
         });
-        assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 1);
-        workspace.handle_key(modified_key(KeyCode::Char('z'), KeyModifiers::CONTROL));
         assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 2);
+        workspace.handle_key(modified_key(KeyCode::Char('z'), KeyModifiers::CONTROL));
+        assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 3);
         assert_eq!(workspace.spreadsheet.workbook().active_sheet().name(), "Base Case");
+    }
+
+    #[test]
+    fn keyboard_copy_paste_and_fill_translate_relative_formulas() {
+        let mut workspace = workspace();
+        workspace.spreadsheet.set_cell("A20", "5").unwrap();
+        workspace.spreadsheet.set_cell("B20", "=A20").unwrap();
+        workspace.cursor = "B20".parse().unwrap();
+        assert!(workspace.handle_key(key(KeyCode::Char('y'))));
+        workspace.cursor = "C21".parse().unwrap();
+        assert!(workspace.handle_key(key(KeyCode::Char('p'))));
+        assert_eq!(workspace.spreadsheet.cell("C21").unwrap().raw, "=B21");
+
+        workspace.spreadsheet.set_cell("C20", "=B20 * 2").unwrap();
+        workspace.cursor = "C21".parse().unwrap();
+        assert!(workspace.handle_key(modified_key(KeyCode::Char('d'), KeyModifiers::CONTROL)));
+        assert_eq!(workspace.spreadsheet.cell("C21").unwrap().raw, "=B21 * 2");
     }
 }

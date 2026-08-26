@@ -4,7 +4,6 @@ _I pasted this tweet into ChatGPT and just told it to keep going in between boog
 
 <img width="592" height="877" alt="image" src="https://github.com/user-attachments/assets/19912571-d2f0-4ef8-8230-bb868e14389a" />
 
-
 A native Rust, open-source market workstation inspired by the information
 density and keyboard ergonomics of professional financial terminals.
 
@@ -21,8 +20,8 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 - Portfolio — positions, allocation, attribution, scenarios, and activity
 - News — filters, unread/bookmarks, story detail, linked securities, and an
   economic-event calendar
-- Spreadsheet — incremental recalculation, ranges, lookups, conditional/text
-  formulas, undo/redo, CSV, and market refresh
+- Spreadsheet — workbook-scoped recalculation, cross-sheet and mixed absolute
+  references, translated copy/fill, lookups, undo/redo, CSV, and market refresh
 - AI — OpenRouter-backed analysis and natural-language workspace control
 - Find — canonical instrument identity and ranked symbol/company discovery
 - Monitor — configurable watchlists, bounded quote streams, sorting,

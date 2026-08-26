@@ -1,13 +1,85 @@
 use std::fmt;
 
-use super::{CellAddress, CellRange};
+use super::{AddressError, CellAddress, CellRange, CellReference};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FormulaReference {
+    sheet: Option<String>,
+    cell: CellReference,
+}
+
+impl FormulaReference {
+    pub fn new(sheet: Option<String>, cell: CellReference) -> Self { Self { sheet, cell } }
+
+    pub fn sheet(&self) -> Option<&str> { self.sheet.as_deref() }
+
+    pub const fn cell(&self) -> CellReference { self.cell }
+
+    fn translated(&self, column_delta: i16, row_delta: i32) -> Result<Self, AddressError> {
+        Ok(Self {
+            sheet: self.sheet.clone(),
+            cell: self.cell.translated(column_delta, row_delta)?,
+        })
+    }
+}
+
+impl fmt::Display for FormulaReference {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(sheet) = &self.sheet {
+            write_sheet_name(formatter, sheet)?;
+            write!(formatter, "!")?;
+        }
+        self.cell.fmt(formatter)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaRange {
+    sheet: Option<String>,
+    start: CellReference,
+    end: CellReference,
+}
+
+impl FormulaRange {
+    pub fn new(sheet: Option<String>, start: CellReference, end: CellReference) -> Self {
+        Self { sheet, start, end }
+    }
+
+    pub fn sheet(&self) -> Option<&str> { self.sheet.as_deref() }
+
+    pub const fn start(&self) -> CellReference { self.start }
+
+    pub const fn end(&self) -> CellReference { self.end }
+
+    pub fn addresses(&self) -> impl Iterator<Item = CellAddress> {
+        CellRange::new(self.start.address(), self.end.address()).addresses()
+    }
+
+    fn translated(&self, column_delta: i16, row_delta: i32) -> Result<Self, AddressError> {
+        Ok(Self {
+            sheet: self.sheet.clone(),
+            start: self.start.translated(column_delta, row_delta)?,
+            end: self.end.translated(column_delta, row_delta)?,
+        })
+    }
+}
+
+impl fmt::Display for FormulaRange {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(sheet) = &self.sheet {
+            write_sheet_name(formatter, sheet)?;
+            write!(formatter, "!")?;
+        }
+        write!(formatter, "{}:{}", self.start, self.end)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(f64),
     Text(String),
-    Reference(CellAddress),
-    Range(CellRange),
+    Reference(FormulaReference),
+    Range(FormulaRange),
     Unary { operator: UnaryOperator, operand: Box<Expr> },
     Binary { left: Box<Expr>, operator: BinaryOperator, right: Box<Expr> },
     Function { function: AggregateFunction, arguments: Vec<Expr> },
@@ -52,6 +124,95 @@ pub enum AggregateFunction {
     XLookup,
 }
 
+impl fmt::Display for Expr {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_with_precedence(formatter, 0)
+    }
+}
+
+impl Expr {
+    fn fmt_with_precedence(
+        &self,
+        formatter: &mut fmt::Formatter<'_>,
+        parent_precedence: u8,
+    ) -> fmt::Result {
+        match self {
+            Self::Number(number) => write!(formatter, "{number}"),
+            Self::Text(text) => write!(formatter, "\"{}\"", text.replace('\"', "\"\"")),
+            Self::Reference(reference) => reference.fmt(formatter),
+            Self::Range(range) => range.fmt(formatter),
+            Self::Unary { operator, operand } => {
+                let precedence = 4;
+                let parenthesize = precedence < parent_precedence;
+                if parenthesize { write!(formatter, "(")?; }
+                write!(formatter, "{}", match operator { UnaryOperator::Plus => "+", UnaryOperator::Minus => "-" })?;
+                operand.fmt_with_precedence(formatter, precedence)?;
+                if parenthesize { write!(formatter, ")")?; }
+                Ok(())
+            }
+            Self::Binary { left, operator, right } => {
+                let precedence = operator.precedence();
+                let parenthesize = precedence < parent_precedence;
+                if parenthesize { write!(formatter, "(")?; }
+                left.fmt_with_precedence(formatter, precedence)?;
+                write!(formatter, " {} ", operator.symbol())?;
+                right.fmt_with_precedence(formatter, precedence + 1)?;
+                if parenthesize { write!(formatter, ")")?; }
+                Ok(())
+            }
+            Self::Function { function, arguments } => {
+                write!(formatter, "{}(", function.name())?;
+                for (index, argument) in arguments.iter().enumerate() {
+                    if index > 0 { write!(formatter, ", ")?; }
+                    argument.fmt_with_precedence(formatter, 0)?;
+                }
+                write!(formatter, ")")
+            }
+        }
+    }
+}
+
+impl BinaryOperator {
+    const fn precedence(self) -> u8 {
+        match self {
+            Self::Equal | Self::NotEqual | Self::LessThan | Self::LessThanOrEqual
+            | Self::GreaterThan | Self::GreaterThanOrEqual => 1,
+            Self::Add | Self::Subtract => 2,
+            Self::Multiply | Self::Divide => 3,
+        }
+    }
+
+    const fn symbol(self) -> &'static str {
+        match self {
+            Self::Add => "+", Self::Subtract => "-", Self::Multiply => "*", Self::Divide => "/",
+            Self::Equal => "=", Self::NotEqual => "<>", Self::LessThan => "<",
+            Self::LessThanOrEqual => "<=", Self::GreaterThan => ">", Self::GreaterThanOrEqual => ">=",
+        }
+    }
+}
+
+impl AggregateFunction {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Sum => "SUM", Self::Average => "AVERAGE", Self::Minimum => "MIN",
+            Self::Maximum => "MAX", Self::Count => "COUNT", Self::CountA => "COUNTA",
+            Self::If => "IF", Self::And => "AND", Self::Or => "OR", Self::Not => "NOT",
+            Self::Concat => "CONCAT", Self::Length => "LEN", Self::Absolute => "ABS",
+            Self::Round => "ROUND", Self::XLookup => "XLOOKUP",
+        }
+    }
+}
+
+fn write_sheet_name(formatter: &mut fmt::Formatter<'_>, sheet: &str) -> fmt::Result {
+    if sheet.chars().next().is_some_and(|character| character.is_ascii_alphabetic())
+        && sheet.chars().all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        write!(formatter, "{sheet}")
+    } else {
+        write!(formatter, "'{}'", sheet.replace('\'', "''"))
+    }
+}
+
 pub fn parse_formula(input: &str) -> Result<Expr, FormulaError> {
     let input = input.trim();
     let input = input.strip_prefix('=').unwrap_or(input);
@@ -63,6 +224,50 @@ pub fn parse_formula(input: &str) -> Result<Expr, FormulaError> {
     } else {
         Err(parser.error("unexpected trailing input"))
     }
+}
+
+/// Rewrites relative A1 references as if a formula were copied by the given
+/// offset. Absolute row and column markers are retained independently.
+pub fn translate_formula(
+    input: &str,
+    column_delta: i16,
+    row_delta: i32,
+) -> Result<String, FormulaError> {
+    let expression = parse_formula(input)?;
+    let translated = translate_expression(&expression, column_delta, row_delta)
+        .map_err(|error| FormulaError { position: 0, message: error.to_string() })?;
+    Ok(format!("={translated}"))
+}
+
+fn translate_expression(
+    expression: &Expr,
+    column_delta: i16,
+    row_delta: i32,
+) -> Result<Expr, AddressError> {
+    Ok(match expression {
+        Expr::Number(number) => Expr::Number(*number),
+        Expr::Text(text) => Expr::Text(text.clone()),
+        Expr::Reference(reference) => {
+            Expr::Reference(reference.translated(column_delta, row_delta)?)
+        }
+        Expr::Range(range) => Expr::Range(range.translated(column_delta, row_delta)?),
+        Expr::Unary { operator, operand } => Expr::Unary {
+            operator: *operator,
+            operand: Box::new(translate_expression(operand, column_delta, row_delta)?),
+        },
+        Expr::Binary { left, operator, right } => Expr::Binary {
+            left: Box::new(translate_expression(left, column_delta, row_delta)?),
+            operator: *operator,
+            right: Box::new(translate_expression(right, column_delta, row_delta)?),
+        },
+        Expr::Function { function, arguments } => Expr::Function {
+            function: *function,
+            arguments: arguments
+                .iter()
+                .map(|argument| translate_expression(argument, column_delta, row_delta))
+                .collect::<Result<_, _>>()?,
+        },
+    })
 }
 
 struct Parser<'a> {
@@ -158,6 +363,7 @@ impl<'a> Parser<'a> {
             }
             Some('"') => self.parse_text(),
             Some(character) if character.is_ascii_digit() || character == '.' => self.parse_number(),
+            Some('\'') => self.parse_quoted_sheet_reference(),
             Some(character) if character.is_ascii_alphabetic() || character == '$' => self.parse_name_or_reference(),
             Some(_) => Err(self.error("expected a number, cell reference, function, or parenthesized expression")),
             None => Err(self.error("expected an expression")),
@@ -211,16 +417,61 @@ impl<'a> Parser<'a> {
         if self.peek() == Some('$') {
             self.advance();
         }
-        while self.peek().is_some_and(|character| character.is_ascii_alphabetic()) {
+        while self
+            .peek()
+            .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
             self.advance();
         }
         let name_end = self.position;
         self.skip_whitespace();
+        if self.peek() == Some('!') {
+            let sheet = self.source[start..name_end].to_owned();
+            self.advance();
+            return self.parse_reference(Some(sheet));
+        }
         if self.peek() == Some('(') {
             let name = self.source[start..name_end].to_owned();
             return self.parse_function(&name);
         }
 
+        self.position = start;
+        self.parse_reference(None)
+    }
+
+    fn parse_quoted_sheet_reference(&mut self) -> Result<Expr, FormulaError> {
+        self.advance();
+        let mut sheet = String::new();
+        loop {
+            match self.peek() {
+                Some('\'') => {
+                    self.advance();
+                    if self.peek() == Some('\'') {
+                        self.advance();
+                        sheet.push('\'');
+                    } else {
+                        break;
+                    }
+                }
+                Some(character) => {
+                    self.advance();
+                    sheet.push(character);
+                }
+                None => return Err(self.error("unterminated sheet name")),
+            }
+        }
+        self.expect('!')?;
+        self.parse_reference(Some(sheet))
+    }
+
+    fn parse_reference(&mut self, sheet: Option<String>) -> Result<Expr, FormulaError> {
+        let start = self.position;
+        if self.peek() == Some('$') {
+            self.advance();
+        }
+        while self.peek().is_some_and(|character| character.is_ascii_alphabetic()) {
+            self.advance();
+        }
         if self.peek() == Some('$') {
             self.advance();
         }
@@ -228,11 +479,11 @@ impl<'a> Parser<'a> {
             self.advance();
         }
         let address = self.source[start..self.position]
-            .parse::<CellAddress>()
+            .parse::<CellReference>()
             .map_err(|_| self.error("invalid cell reference"))?;
         self.skip_whitespace();
         if self.peek() != Some(':') {
-            return Ok(Expr::Reference(address));
+            return Ok(Expr::Reference(FormulaReference::new(sheet, address)));
         }
         self.advance();
         self.skip_whitespace();
@@ -250,9 +501,9 @@ impl<'a> Parser<'a> {
             self.advance();
         }
         let end = self.source[range_start..self.position]
-            .parse::<CellAddress>()
+            .parse::<CellReference>()
             .map_err(|_| self.error("invalid range end"))?;
-        Ok(Expr::Range(CellRange::new(address, end)))
+        Ok(Expr::Range(FormulaRange::new(sheet, address, end)))
     }
 
     fn parse_function(&mut self, name: &str) -> Result<Expr, FormulaError> {
@@ -394,5 +645,31 @@ mod tests {
     #[test]
     fn parser_reports_unterminated_text() {
         assert!(parse_formula("=\"unterminated").is_err());
+    }
+
+    #[test]
+    fn parser_accepts_qualified_and_quoted_sheet_references() {
+        let expression = parse_formula("=Inputs!$B2 + 'Base Case'!C$4").unwrap();
+        let Expr::Binary { left, right, .. } = expression else { panic!("expected binary") };
+        let Expr::Reference(left) = *left else { panic!("expected reference") };
+        let Expr::Reference(right) = *right else { panic!("expected reference") };
+        assert_eq!(left.sheet(), Some("Inputs"));
+        assert_eq!(left.cell().to_string(), "$B2");
+        assert_eq!(right.sheet(), Some("Base Case"));
+        assert_eq!(right.cell().to_string(), "C$4");
+    }
+
+    #[test]
+    fn translation_respects_mixed_absolute_axes_and_sheet_names() {
+        let translated = translate_formula(
+            "=A1 + $A1 + A$1 + $A$1 + 'Base Case'!B2",
+            2,
+            3,
+        )
+        .unwrap();
+        assert_eq!(
+            translated,
+            "=C4 + $A4 + C$1 + $A$1 + 'Base Case'!D5"
+        );
     }
 }
