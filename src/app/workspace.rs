@@ -190,6 +190,15 @@ pub struct ShellContext {
     pub workspace_order: Vec<WorkspaceId>,
 }
 
+/// Controls how much application chrome surrounds a workspace. Analytical
+/// dashboards can opt into the full terminal while editors and navigational
+/// workspaces retain the standard header, workspace rail, and footer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellChrome {
+    Standard,
+    Immersive,
+}
+
 /// The only application-level mutations a feature may request.
 ///
 /// Keeping these intents small and validated at the registry boundary lets
@@ -213,6 +222,8 @@ pub trait Workspace: Send {
 
     /// Receives a command after its function alias resolves to this workspace.
     fn handle_command(&mut self, _invocation: &CommandInvocation) -> bool { false }
+
+    fn shell_chrome(&self) -> ShellChrome { ShellChrome::Standard }
 
     /// Direct feature hotkeys are optional. Existing descriptors can opt out with `\0`.
     fn hotkey(&self) -> Option<char> {
@@ -298,6 +309,13 @@ impl WorkspaceRegistry {
         if let Some(workspace) = self.entries.iter().find(|entry| entry.descriptor().id == id) {
             workspace.render(frame, area);
         }
+    }
+
+    pub fn shell_chrome(&self, id: WorkspaceId) -> ShellChrome {
+        self.entries
+            .iter()
+            .find(|entry| entry.descriptor().id == id)
+            .map_or(ShellChrome::Standard, |workspace| workspace.shell_chrome())
     }
 
     pub fn handle_key(&mut self, id: WorkspaceId, key: KeyEvent) -> bool {
