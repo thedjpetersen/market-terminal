@@ -139,8 +139,8 @@ impl Expr {
         match self {
             Self::Number(number) => write!(formatter, "{number}"),
             Self::Text(text) => write!(formatter, "\"{}\"", text.replace('\"', "\"\"")),
-            Self::Reference(reference) => reference.fmt(formatter),
-            Self::Range(range) => range.fmt(formatter),
+            Self::Reference(reference) => write!(formatter, "{reference}"),
+            Self::Range(range) => write!(formatter, "{range}"),
             Self::Unary { operator, operand } => {
                 let precedence = 4;
                 let parenthesize = precedence < parent_precedence;
