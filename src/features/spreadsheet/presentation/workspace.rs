@@ -667,7 +667,14 @@ mod tests {
         assert_eq!(workspace.spreadsheet.cell("A2").unwrap().raw, "SPY US Equity");
         assert_eq!(workspace.spreadsheet.cell("E2").unwrap().value, CellValue::Number(132_617.5));
         assert!(matches!(workspace.spreadsheet.cell("E7").unwrap().value, CellValue::Number(_)));
-        assert_eq!(workspace.spreadsheet.cell("B12").unwrap().value, CellValue::Number(1400.0));
+        let forward_revenue = workspace
+            .spreadsheet
+            .cell("B12")
+            .unwrap()
+            .value
+            .as_number()
+            .unwrap();
+        assert!((forward_revenue - 1400.0).abs() < 1e-9);
         assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 2);
     }
 
