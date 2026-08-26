@@ -57,6 +57,14 @@ kept alongside the workbook and carries provider, observation/receive times,
 quality, entitlement failure, and availability. This first slice deliberately
 does not make arbitrary provider calls from the formula evaluator.
 
+The interactive Monitor uses the same Alpha Vantage adapter through the
+Market-Data-owned `MarketDataQuery` port. `WatchlistWorkspace` submits snapshots
+to a capacity-one worker and only applies results during polling; construction,
+input, and rendering perform no network I/O. A shared 60-second adapter cache
+coalesces the Monitor and Spreadsheet's identical provider requests. Demo
+adapters remain available only to deterministic unit/gallery hosts and are not
+wired by `persistent_app` for these surfaces.
+
 ## Why there is no global data service
 
 A single `MarketDataProvider` spanning quotes, portfolios, news, analytics,

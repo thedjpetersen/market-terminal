@@ -12,6 +12,8 @@ impl SpreadsheetMarketData for DemoSpreadsheetMarketData {
             .iter()
             .filter_map(|request| {
                 let value = match (request.security.as_str(), request.field.as_str()) {
+                    ("IBM US Equity", "PX_LAST") => 234.19,
+                    ("IBM US Equity", "CHG_PCT_1D") => 1.36,
                     ("SPY US Equity", "PX_LAST") => 530.47,
                     ("QQQ US Equity", "PX_LAST") => 455.18,
                     ("AVGO US Equity", "PX_LAST") => 176.42,

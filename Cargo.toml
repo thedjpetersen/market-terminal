@@ -15,7 +15,7 @@ feed-rs = "2.4"
 futures-util = "0.3"
 irc = { version = "1.1", default-features = false, features = ["tls-rust"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }

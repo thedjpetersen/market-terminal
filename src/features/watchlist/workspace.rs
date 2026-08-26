@@ -1,4 +1,11 @@
-use std::{cmp::Ordering, collections::HashMap, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    sync::{
+        mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
+        Arc,
+    },
+};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui::{
@@ -12,8 +19,8 @@ use ratatui::{
 use crate::{
     app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
     features::market_data::{
-        DataQuality, MarketDataError, MarketDataQuery, Price, QuoteSnapshot, QuoteSubscription,
-        QuoteSubscriptionRequest, Quantity, SubscriptionMetrics,
+        DataQuality, MarketDataError, MarketDataQuery, Price, Quantity, QuoteSnapshot,
+        QuoteSubscription, QuoteSubscriptionRequest, SubscriptionMetrics,
     },
     ui::{
         components::terminal_block,
@@ -58,8 +65,22 @@ struct MonitorRow {
     quote: Option<QuoteSnapshot>,
 }
 
+struct QuoteRefresh {
+    generation: u64,
+    instruments: Vec<crate::features::market_data::CanonicalInstrumentId>,
+}
+
+struct QuoteRefreshResult {
+    generation: u64,
+    result: Result<Vec<QuoteSnapshot>, MarketDataError>,
+}
+
 pub struct WatchlistWorkspace {
     market_data: Arc<dyn MarketDataQuery>,
+    refresh_sender: SyncSender<QuoteRefresh>,
+    refresh_receiver: Receiver<QuoteRefreshResult>,
+    next_refresh_generation: u64,
+    applied_refresh_generation: u64,
     catalog: Arc<dyn WatchlistCatalog>,
     definition: WatchlistDefinition,
     rows: Vec<MonitorRow>,
@@ -71,15 +92,36 @@ pub struct WatchlistWorkspace {
 }
 
 impl WatchlistWorkspace {
-    pub fn new(
-        market_data: Arc<dyn MarketDataQuery>,
-        catalog: Arc<dyn WatchlistCatalog>,
-    ) -> Self {
+    pub fn new(market_data: Arc<dyn MarketDataQuery>, catalog: Arc<dyn WatchlistCatalog>) -> Self {
+        let (refresh_sender, worker_receiver) = sync_channel::<QuoteRefresh>(1);
+        let (worker_sender, refresh_receiver) = sync_channel::<QuoteRefreshResult>(1);
+        let worker_market_data = market_data.clone();
+        std::thread::Builder::new()
+            .name("watchlist-market-data".to_owned())
+            .spawn(move || {
+                while let Ok(refresh) = worker_receiver.recv() {
+                    let result = worker_market_data.quote_snapshots(&refresh.instruments);
+                    if worker_sender
+                        .send(QuoteRefreshResult {
+                            generation: refresh.generation,
+                            result,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .expect("watchlist market-data worker should start");
         let definition = catalog
             .load_watchlist(None)
             .unwrap_or_else(|| WatchlistDefinition::new("empty", "EMPTY", Vec::new()));
         let mut workspace = Self {
             market_data,
+            refresh_sender,
+            refresh_receiver,
+            next_refresh_generation: 0,
+            applied_refresh_generation: 0,
             catalog,
             definition,
             rows: Vec::new(),
@@ -89,6 +131,7 @@ impl WatchlistWorkspace {
             subscription: None,
             pending_intents: Vec::new(),
         };
+        workspace.reset_rows();
         workspace.refresh();
         workspace.start_subscription();
         workspace
@@ -100,6 +143,7 @@ impl WatchlistWorkspace {
             self.definition = definition;
             self.selected = 0;
             self.column_preset = ColumnPreset::Configured;
+            self.reset_rows();
             self.refresh();
             self.start_subscription();
         } else {
@@ -114,32 +158,66 @@ impl WatchlistWorkspace {
             .iter()
             .map(|item| item.instrument_id.clone())
             .collect::<Vec<_>>();
-        match self.market_data.quote_snapshots(&ids) {
-            Ok(quotes) => {
-                let quotes = quotes
-                    .into_iter()
-                    .map(|quote| (quote.instrument_id.clone(), quote))
-                    .collect::<HashMap<_, _>>();
-                self.rows = self
-                    .definition
-                    .items
-                    .iter()
-                    .cloned()
-                    .map(|item| MonitorRow {
-                        quote: quotes.get(&item.instrument_id).cloned(),
-                        item,
-                    })
-                    .collect();
-                self.sort_rows();
-                self.selected = self.selected.min(self.rows.len().saturating_sub(1));
-                self.status = format!("{} QUOTES LOADED", self.rows.len());
+        if ids.is_empty() {
+            self.status = "WATCHLIST IS EMPTY".to_owned();
+            return;
+        }
+        let generation = self.next_refresh_generation.wrapping_add(1);
+        match self.refresh_sender.try_send(QuoteRefresh {
+            generation,
+            instruments: ids,
+        }) {
+            Ok(()) => {
+                self.next_refresh_generation = generation;
+                self.status = "LOADING LIVE QUOTES…".to_owned();
             }
-            Err(error) => {
-                self.status = if self.rows.is_empty() {
-                    error.to_string()
-                } else {
-                    format!("LAST KNOWN GOOD · {error}")
-                };
+            Err(TrySendError::Full(_)) => {
+                self.status = "QUOTE REFRESH ALREADY IN PROGRESS".to_owned();
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.status = "QUOTE WORKER IS UNAVAILABLE".to_owned();
+            }
+        }
+    }
+
+    fn reset_rows(&mut self) {
+        self.rows = self
+            .definition
+            .items
+            .iter()
+            .cloned()
+            .map(|item| MonitorRow { item, quote: None })
+            .collect();
+    }
+
+    fn poll_refresh(&mut self) {
+        while let Ok(refresh) = self.refresh_receiver.try_recv() {
+            if refresh.generation < self.applied_refresh_generation {
+                continue;
+            }
+            self.applied_refresh_generation = refresh.generation;
+            match refresh.result {
+                Ok(quotes) => {
+                    let quotes = quotes
+                        .into_iter()
+                        .map(|quote| (quote.instrument_id.clone(), quote))
+                        .collect::<HashMap<_, _>>();
+                    for row in &mut self.rows {
+                        if let Some(quote) = quotes.get(&row.item.instrument_id) {
+                            row.quote = Some(quote.clone());
+                        }
+                    }
+                    self.sort_rows();
+                    self.selected = self.selected.min(self.rows.len().saturating_sub(1));
+                    self.status = format!("{} QUOTES LOADED", self.rows.len());
+                }
+                Err(error) => {
+                    self.status = if self.rows.iter().all(|row| row.quote.is_none()) {
+                        error.to_string()
+                    } else {
+                        format!("LAST KNOWN GOOD · {error}")
+                    };
+                }
             }
         }
     }
@@ -254,7 +332,9 @@ impl Workspace for WatchlistWorkspace {
         }
     }
 
-    fn is_favorite(&self) -> bool { true }
+    fn is_favorite(&self) -> bool {
+        true
+    }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
         let name = invocation.args.join(" ");
@@ -334,9 +414,8 @@ impl Workspace for WatchlistWorkspace {
             for (label, key) in controls {
                 let width = label.chars().count() as u16;
                 if event.column >= x && event.column < x.saturating_add(width) {
-                    return key.is_none_or(|key| {
-                        self.handle_key(KeyEvent::new(key, KeyModifiers::NONE))
-                    });
+                    return key
+                        .is_none_or(|key| self.handle_key(KeyEvent::new(key, KeyModifiers::NONE)));
                 }
                 x = x.saturating_add(width);
             }
@@ -349,6 +428,7 @@ impl Workspace for WatchlistWorkspace {
     }
 
     fn poll_intents(&mut self) -> Vec<AppIntent> {
+        self.poll_refresh();
         self.poll_subscription();
         std::mem::take(&mut self.pending_intents)
     }
@@ -363,10 +443,16 @@ impl Workspace for WatchlistWorkspace {
         let quality_counts = quality_counts(&self.rows);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(format!(" {} ", self.definition.name), Style::new().bg(AMBER).fg(BG).bold()),
+                Span::styled(
+                    format!(" {} ", self.definition.name),
+                    Style::new().bg(AMBER).fg(BG).bold(),
+                ),
                 Span::styled(format!(" {} INSTRUMENTS  ", self.rows.len()), INK),
                 Span::styled(
-                    format!("RT {}  DELAYED/STALE {}  BLOCKED {}  ", quality_counts.0, quality_counts.1, quality_counts.2),
+                    format!(
+                        "RT {}  DELAYED/STALE {}  BLOCKED {}  ",
+                        quality_counts.0, quality_counts.1, quality_counts.2
+                    ),
                     MUTED,
                 ),
                 Span::styled(self.status.as_str(), YELLOW),
@@ -376,14 +462,25 @@ impl Workspace for WatchlistWorkspace {
         );
 
         let columns = self.visible_columns();
-        let widths = columns.iter().map(|column| column_width(*column)).collect::<Vec<_>>();
+        let widths = columns
+            .iter()
+            .map(|column| column_width(*column))
+            .collect::<Vec<_>>();
         let header = Row::new(columns.iter().map(|column| column.label()))
             .style(Style::new().fg(AMBER).bold())
             .bottom_margin(1);
         let rows = self.rows.iter().enumerate().map(|(index, row)| {
             let selected = index == self.selected;
-            Row::new(columns.iter().map(|column| render_cell(row, *column, selected)))
-                .style(if selected { Style::new().bg(CYAN).fg(BG).bold() } else { Style::new() })
+            Row::new(
+                columns
+                    .iter()
+                    .map(|column| render_cell(row, *column, selected)),
+            )
+            .style(if selected {
+                Style::new().bg(CYAN).fg(BG).bold()
+            } else {
+                Style::new()
+            })
         });
         frame.render_widget(
             Table::new(rows, widths)
@@ -401,7 +498,11 @@ impl Workspace for WatchlistWorkspace {
                 Span::styled("OPEN SEC  ", MUTED),
                 Span::styled("S/SHIFT-S ", AMBER),
                 Span::styled(
-                    format!("SORT {} {}  ", self.definition.sort.field.label(), self.definition.sort.direction.marker()),
+                    format!(
+                        "SORT {} {}  ",
+                        self.definition.sort.field.label(),
+                        self.definition.sort.direction.marker()
+                    ),
                     MUTED,
                 ),
                 Span::styled("C ", AMBER),
@@ -450,7 +551,10 @@ fn compare_rows(left: &MonitorRow, right: &MonitorRow, field: SortField) -> Orde
 }
 
 fn quote_number(row: &MonitorRow, read: impl FnOnce(&QuoteSnapshot) -> Option<f64>) -> f64 {
-    row.quote.as_ref().and_then(read).unwrap_or(f64::NEG_INFINITY)
+    row.quote
+        .as_ref()
+        .and_then(read)
+        .unwrap_or(f64::NEG_INFINITY)
 }
 
 fn render_cell(row: &MonitorRow, column: MonitorColumn, selected: bool) -> Cell<'static> {
@@ -458,9 +562,9 @@ fn render_cell(row: &MonitorRow, column: MonitorColumn, selected: bool) -> Cell<
     let value = match column {
         MonitorColumn::Symbol => row.item.symbol.clone(),
         MonitorColumn::Last => format_price(quote.and_then(|quote| quote.last)),
-        MonitorColumn::Change => format_signed_price(
-            quote.and_then(|quote| quote.change.map(|change| change.absolute)),
-        ),
+        MonitorColumn::Change => {
+            format_signed_price(quote.and_then(|quote| quote.change.map(|change| change.absolute)))
+        }
         MonitorColumn::ChangePercent => quote
             .and_then(|quote| quote.change)
             .map(|change| format!("{:+.2}%", change.percent.value()))
@@ -487,9 +591,9 @@ fn cell_style(quote: Option<&QuoteSnapshot>, column: MonitorColumn, value: &str)
     if matches!(column, MonitorColumn::Quality) {
         return match quote.map(|quote| quote.quality) {
             Some(DataQuality::RealTime) => Style::new().fg(GREEN),
-            Some(DataQuality::Delayed { .. } | DataQuality::Stale { .. } | DataQuality::Derived) => {
-                Style::new().fg(YELLOW)
-            }
+            Some(
+                DataQuality::Delayed { .. } | DataQuality::Stale { .. } | DataQuality::Derived,
+            ) => Style::new().fg(YELLOW),
             _ => Style::new().fg(RED),
         };
     }
@@ -519,7 +623,9 @@ fn column_width(column: MonitorColumn) -> Constraint {
 }
 
 fn format_price(price: Option<Price>) -> String {
-    price.map(|price| format!("{:.2}", price.value())).unwrap_or_else(|| "--".to_owned())
+    price
+        .map(|price| format!("{:.2}", price.value()))
+        .unwrap_or_else(|| "--".to_owned())
 }
 
 fn format_signed_price(price: Option<Price>) -> String {
@@ -554,9 +660,9 @@ fn quality_counts(rows: &[MonitorRow]) -> (usize, usize, usize) {
     rows.iter().fold((0, 0, 0), |mut counts, row| {
         match row.quote.as_ref().map(|quote| quote.quality) {
             Some(DataQuality::RealTime) => counts.0 += 1,
-            Some(DataQuality::Delayed { .. } | DataQuality::Stale { .. } | DataQuality::Derived) => {
-                counts.1 += 1
-            }
+            Some(
+                DataQuality::Delayed { .. } | DataQuality::Stale { .. } | DataQuality::Derived,
+            ) => counts.1 += 1,
             _ => counts.2 += 1,
         }
         counts
@@ -566,11 +672,11 @@ fn quality_counts(rows: &[MonitorRow]) -> (usize, usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     use crate::features::market_data::{
         CacheStatus, CanonicalInstrumentId, DataProvenance, HistoryRequest, Percent, PriceBar,
         PriceChange, ProviderId, UtcTimestamp,
     };
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
     struct StubMarketData;
 
@@ -616,7 +722,10 @@ mod tests {
                 .collect())
         }
 
-        fn price_history(&self, _request: &HistoryRequest) -> Result<Vec<PriceBar>, MarketDataError> {
+        fn price_history(
+            &self,
+            _request: &HistoryRequest,
+        ) -> Result<Vec<PriceBar>, MarketDataError> {
             Ok(Vec::new())
         }
     }
@@ -647,10 +756,43 @@ mod tests {
         }
     }
 
+    struct SlowMarketData;
+
+    impl MarketDataQuery for SlowMarketData {
+        fn quote_snapshots(
+            &self,
+            instruments: &[CanonicalInstrumentId],
+        ) -> Result<Vec<QuoteSnapshot>, MarketDataError> {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            StubMarketData.quote_snapshots(instruments)
+        }
+
+        fn price_history(
+            &self,
+            request: &HistoryRequest,
+        ) -> Result<Vec<PriceBar>, MarketDataError> {
+            StubMarketData.price_history(request)
+        }
+    }
+
+    #[test]
+    fn slow_live_snapshot_loading_does_not_block_workspace_construction() {
+        let started = std::time::Instant::now();
+        let workspace = WatchlistWorkspace::new(Arc::new(SlowMarketData), Arc::new(StubCatalog));
+
+        assert!(started.elapsed() < std::time::Duration::from_millis(75));
+        assert_eq!(workspace.rows.len(), 2);
+        assert_eq!(workspace.status, "LOADING LIVE QUOTES…");
+    }
+
     #[test]
     fn aliases_and_named_watchlist_commands_are_supported() {
-        let mut workspace = WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(StubCatalog));
-        assert_eq!(workspace.descriptor().commands, &["MON", "WATCH", "WATCHLIST"]);
+        let mut workspace =
+            WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(StubCatalog));
+        assert_eq!(
+            workspace.descriptor().commands,
+            &["MON", "WATCH", "WATCHLIST"]
+        );
 
         workspace.handle_command(&CommandInvocation {
             function: "MON".to_owned(),
@@ -663,7 +805,8 @@ mod tests {
 
     #[test]
     fn keyboard_selection_opens_canonical_row_in_security() {
-        let mut workspace = WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(StubCatalog));
+        let mut workspace =
+            WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(StubCatalog));
         workspace.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         workspace.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
@@ -678,7 +821,8 @@ mod tests {
 
     #[test]
     fn clicking_a_monitor_row_selects_it() {
-        let mut workspace = WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(StubCatalog));
+        let mut workspace =
+            WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(StubCatalog));
 
         assert!(workspace.handle_mouse(click(2, 7), Rect::new(0, 0, 120, 30)));
 
@@ -687,7 +831,8 @@ mod tests {
 
     #[test]
     fn sort_and_column_controls_are_deterministic() {
-        let mut workspace = WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(StubCatalog));
+        let mut workspace =
+            WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(StubCatalog));
         workspace.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
         workspace.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
 

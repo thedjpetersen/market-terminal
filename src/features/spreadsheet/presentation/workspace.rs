@@ -154,26 +154,11 @@ impl SpreadsheetWorkspace {
             ("C1", "DAY %"),
             ("D1", "SHARES"),
             ("E1", "MARKET VALUE"),
-            ("A2", "SPY US Equity"),
+            ("A2", "IBM US Equity"),
             ("B2", "=PX_LAST(A2)"),
             ("C2", "=PX_CHANGE(A2, \"1D\")"),
             ("D2", "250"),
             ("E2", "=B2*D2"),
-            ("A3", "QQQ US Equity"),
-            ("B3", "=PX_LAST(A3)"),
-            ("C3", "=PX_CHANGE(A3, \"1D\")"),
-            ("D3", "180"),
-            ("E3", "=B3*D3"),
-            ("A4", "AVGO US Equity"),
-            ("B4", "=PX_LAST(A4)"),
-            ("C4", "=PX_CHANGE(A4, \"1D\")"),
-            ("D4", "120"),
-            ("E4", "=B4*D4"),
-            ("A5", "NVDA US Equity"),
-            ("B5", "=PX_LAST(A5)"),
-            ("C5", "=PX_CHANGE(A5, \"1D\")"),
-            ("D5", "300"),
-            ("E5", "=B5*D5"),
             ("A7", "PORTFOLIO VALUE"),
             ("E7", "=SUM(E2:E5)"),
             ("A9", "MODEL INPUTS"),
@@ -1088,10 +1073,7 @@ mod tests {
                 .iter()
                 .filter_map(|request| {
                     let value = match (request.security.as_str(), request.field.as_str()) {
-                        ("SPY US Equity", "PX_LAST") => 530.47,
-                        ("QQQ US Equity", "PX_LAST") => 455.18,
-                        ("AVGO US Equity", "PX_LAST") => 176.42,
-                        ("NVDA US Equity", "PX_LAST") => 119.31,
+                        ("IBM US Equity", "PX_LAST") => 234.19,
                         (_, "CHG_PCT_1D") => 1.0,
                         _ => return None,
                     };
@@ -1144,7 +1126,7 @@ mod tests {
         let workspace = workspace();
         assert_eq!(
             workspace.spreadsheet.cell("A2").unwrap().raw,
-            "SPY US Equity"
+            "IBM US Equity"
         );
         assert_eq!(
             workspace.spreadsheet.cell("B2").unwrap().raw,
@@ -1157,12 +1139,12 @@ mod tests {
         let evaluated = workspace.evaluated_spreadsheet();
         assert_eq!(
             evaluated.cell("E2").unwrap().value,
-            CellValue::Number(132_617.5)
+            CellValue::Number(58_547.5)
         );
-        assert!(matches!(
+        assert_eq!(
             evaluated.cell("E7").unwrap().value,
-            CellValue::Number(_)
-        ));
+            CellValue::Number(58_547.5)
+        );
         let forward_revenue = workspace
             .spreadsheet
             .cell("B12")
@@ -1185,7 +1167,7 @@ mod tests {
         let mut ready = workspace();
         ready.cursor = "B2".parse().unwrap();
         let status = ready.selected_external_status().unwrap();
-        assert!(status.contains("SPY US Equity · PX_LAST · TEST FEED"));
+        assert!(status.contains("IBM US Equity · PX_LAST · TEST FEED"));
         assert!(status.contains("OBS 2026-08-26T13:00:00-07:00"));
         assert!(status.contains("REALTIME"));
     }
@@ -1193,39 +1175,37 @@ mod tests {
     #[test]
     fn financial_cells_render_stale_permission_and_unavailable_states() {
         let mut workspace = workspace();
-        let spy = MarketDataRequest::new("SPY US Equity", "PX_LAST");
-        let qqq = MarketDataRequest::new("QQQ US Equity", "PX_LAST");
-        let avgo = MarketDataRequest::new("AVGO US Equity", "PX_LAST");
+        let ibm = MarketDataRequest::new("IBM US Equity", "PX_LAST");
         workspace.external_states.insert(
-            spy,
+            ibm,
             ExternalCellState::Resolved(MarketDataState::Stale {
                 value: 529.0,
                 provenance: provenance(),
             }),
         );
-        workspace.external_states.insert(
-            qqq,
-            ExternalCellState::Resolved(MarketDataState::PermissionDenied {
-                provider: "TEST FEED".to_owned(),
-            }),
-        );
-        workspace.external_states.insert(
-            avgo,
-            ExternalCellState::Resolved(MarketDataState::Unavailable {
-                reason: "no observation".to_owned(),
-            }),
-        );
-
         assert_eq!(
             workspace.external_display("B2".parse().unwrap()),
             Some("~529".to_owned())
         );
-        assert_eq!(
-            workspace.external_display("B3".parse().unwrap()),
-            Some("#DENIED".to_owned())
+        let ibm = MarketDataRequest::new("IBM US Equity", "PX_LAST");
+        workspace.external_states.insert(
+            ibm.clone(),
+            ExternalCellState::Resolved(MarketDataState::PermissionDenied {
+                provider: "TEST FEED".to_owned(),
+            }),
         );
         assert_eq!(
-            workspace.external_display("B4".parse().unwrap()),
+            workspace.external_display("B2".parse().unwrap()),
+            Some("#DENIED".to_owned())
+        );
+        workspace.external_states.insert(
+            ibm,
+            ExternalCellState::Resolved(MarketDataState::Unavailable {
+                reason: "no observation".to_owned(),
+            }),
+        );
+        assert_eq!(
+            workspace.external_display("B2".parse().unwrap()),
             Some("#N/A".to_owned())
         );
     }

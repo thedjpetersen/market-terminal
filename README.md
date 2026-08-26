@@ -80,6 +80,24 @@ MARKET_TERMINAL_NEWS_FEEDS="https://example.com/markets.xml,https://example.com/
 MARKET_TERMINAL_NEWS_REFRESH_SECS=300
 ```
 
+## Live market data
+
+The interactive Monitor and Spreadsheet resolve quote fields through Alpha
+Vantage on bounded background workers; provider latency never runs on the input
+or render thread. Configure a personal key and comma-separated watchlist:
+
+```dotenv
+ALPHA_VANTAGE_API_KEY="your-key"
+MARKET_TERMINAL_WATCHLIST="IBM,AAPL,MSFT"
+```
+
+With no key, the app uses Alpha Vantage's real `demo` quote endpoint and limits
+the default watchlist/sheet to IBM. Quote cells are explicitly labeled delayed
+end-of-day data with provider, observation, and receive times. Unsupported or
+unentitled symbols show unavailable/permission-denied state; the app never
+fills them with generated prices. See [the data-source register](docs/data-sources.md)
+for freshness, attribution, caching, and retention details.
+
 ## Importing a real portfolio
 
 Export current positions as CSV from your brokerage, open the command bar with

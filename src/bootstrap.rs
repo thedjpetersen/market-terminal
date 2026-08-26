@@ -11,15 +11,16 @@ use crate::{
         market_data::MarketDataQuery,
         markets::{MarketsQuery, MarketsWorkspace},
         news::{NewsArticleOpener, NewsFeed, NewsWorkspace},
-        overview::{ID as OVERVIEW, OverviewQuery, OverviewWorkspace},
+        overview::{OverviewQuery, OverviewWorkspace, ID as OVERVIEW},
         portfolio::{PortfolioRepository, PortfolioWorkspace},
         security::{SecurityQuery, SecurityWorkspace},
         spreadsheet::{SpreadsheetMarketData, SpreadsheetWorkspace},
         watchlist::{WatchlistCatalog, WatchlistWorkspace},
     },
     infrastructure::{
-        CodexAppServerConfig, CodexAppServerGateway, CsvPortfolioRepository, DemoAlertsReplay,
-        DemoChartHistory, DemoChatGateway, DemoData, DemoInstrumentSearch, DemoMarketDataReplay,
+        AlphaVantageMarketData, CodexAppServerConfig, CodexAppServerGateway,
+        ConfiguredWatchlistCatalog, CsvPortfolioRepository, DemoAlertsReplay, DemoChartHistory,
+        DemoChatGateway, DemoData, DemoInstrumentSearch, DemoMarketDataReplay,
         DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway, LiveNewsFeed,
         LocalPersistence, OpenRouterConfig, OpenRouterGateway, SystemNewsArticleOpener,
     },
@@ -34,6 +35,9 @@ pub fn demo_app() -> App {
         portfolio_query,
         news_query,
         None,
+        Arc::new(DemoSpreadsheetMarketData),
+        Arc::new(DemoMarketDataReplay::new()),
+        Arc::new(DemoWatchlistCatalog),
     )
 }
 
@@ -42,13 +46,14 @@ fn build_app(
     portfolio_query: Arc<dyn PortfolioRepository>,
     news_query: Arc<dyn NewsFeed>,
     article_opener: Option<Arc<dyn NewsArticleOpener>>,
+    spreadsheet_market_data: Arc<dyn SpreadsheetMarketData>,
+    market_data: Arc<dyn MarketDataQuery>,
+    watchlist_catalog: Arc<dyn WatchlistCatalog>,
 ) -> App {
     let data = Arc::new(DemoData);
     let overview_query: Arc<dyn OverviewQuery> = data.clone();
     let markets_query: Arc<dyn MarketsQuery> = data.clone();
     let security_query: Arc<dyn SecurityQuery> = data.clone();
-    let spreadsheet_market_data: Arc<dyn SpreadsheetMarketData> =
-        Arc::new(DemoSpreadsheetMarketData);
     let assistant_provider = std::env::var("MARKET_TERMINAL_AI_PROVIDER")
         .unwrap_or_else(|_| "codex".to_owned())
         .to_ascii_lowercase();
@@ -58,8 +63,6 @@ fn build_app(
     };
     let instrument_search: Arc<dyn InstrumentSearch> = Arc::new(DemoInstrumentSearch);
     let chart_history: Arc<dyn ChartHistoryQuery> = Arc::new(DemoChartHistory);
-    let market_data: Arc<dyn MarketDataQuery> = Arc::new(DemoMarketDataReplay::new());
-    let watchlist_catalog: Arc<dyn WatchlistCatalog> = Arc::new(DemoWatchlistCatalog);
     let alerts_query: Arc<dyn AlertsQuery> = Arc::new(DemoAlertsReplay::new());
 
     let workspaces = WorkspaceRegistry::new(vec![
@@ -104,11 +107,19 @@ pub fn persistent_app() -> App {
     let portfolio_query: Arc<dyn PortfolioRepository> =
         Arc::new(CsvPortfolioRepository::from_env());
     let news_query: Arc<dyn NewsFeed> = Arc::new(LiveNewsFeed::from_env());
+    let alpha_vantage = Arc::new(AlphaVantageMarketData::from_env());
+    let spreadsheet_market_data: Arc<dyn SpreadsheetMarketData> = alpha_vantage.clone();
+    let market_data: Arc<dyn MarketDataQuery> = alpha_vantage;
+    let watchlist_catalog: Arc<dyn WatchlistCatalog> =
+        Arc::new(ConfiguredWatchlistCatalog::from_env());
     build_app(
         Arc::new(IrcChatGateway::from_env()),
         portfolio_query,
         news_query,
         Some(Arc::new(SystemNewsArticleOpener)),
+        spreadsheet_market_data,
+        market_data,
+        watchlist_catalog,
     )
     .with_session_repository(repository)
 }

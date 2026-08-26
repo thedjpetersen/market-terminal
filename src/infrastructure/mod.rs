@@ -1,4 +1,5 @@
 mod alerts_demo;
+mod alpha_vantage;
 mod article_opener;
 mod charting_demo;
 mod chat_demo;
@@ -12,8 +13,10 @@ mod market_data_demo;
 mod openrouter;
 mod portfolio_csv;
 mod spreadsheet_demo;
+mod watchlist_config;
 
 pub use alerts_demo::DemoAlertsReplay;
+pub use alpha_vantage::AlphaVantageMarketData;
 pub use article_opener::SystemNewsArticleOpener;
 pub use charting_demo::DemoChartHistory;
 pub use chat_demo::DemoChatGateway;
@@ -27,3 +30,4 @@ pub use market_data_demo::{DemoMarketDataReplay, DemoWatchlistCatalog};
 pub use openrouter::{OpenRouterConfig, OpenRouterGateway};
 pub use portfolio_csv::CsvPortfolioRepository;
 pub use spreadsheet_demo::DemoSpreadsheetMarketData;
+pub use watchlist_config::ConfiguredWatchlistCatalog;
