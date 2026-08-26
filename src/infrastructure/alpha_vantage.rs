@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::{NaiveDate, Utc};
+use chrono::{Datelike, NaiveDate, Utc};
 use reqwest::{blocking::Client, Url};
 use serde_json::Value;
 
@@ -29,7 +29,10 @@ const DEFAULT_BASE_URL: &str = "https://www.alphavantage.co/query";
 const DEFAULT_TIMEOUT_SECS: u64 = 12;
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const QUOTE_CACHE_TTL: Duration = Duration::from_secs(60);
+const HISTORY_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 const PROVIDER_ID: &str = "alpha-vantage";
+
+type HistoryCache = Arc<Mutex<HashMap<(String, bool), (Instant, Vec<ProviderBar>)>>>;
 
 #[derive(Clone)]
 pub struct AlphaVantageConfig {
@@ -80,6 +83,7 @@ pub struct AlphaVantageMarketData {
     config: AlphaVantageConfig,
     client: Client,
     quote_cache: Arc<Mutex<HashMap<String, (Instant, ProviderQuote)>>>,
+    history_cache: HistoryCache,
 }
 
 impl AlphaVantageMarketData {
@@ -93,6 +97,7 @@ impl AlphaVantageMarketData {
             config,
             client,
             quote_cache: Arc::new(Mutex::new(HashMap::new())),
+            history_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -133,18 +138,38 @@ impl AlphaVantageMarketData {
         Ok(quote)
     }
 
-    fn daily_history(&self, symbol: &str) -> Result<Vec<ProviderBar>, MarketDataError> {
+    fn daily_history(&self, symbol: &str, full: bool) -> Result<Vec<ProviderBar>, MarketDataError> {
         let symbol = normalize_symbol(symbol)?;
-        if self.config.demo {
+        if self.config.demo && symbol != "IBM" {
             return Err(MarketDataError::PermissionDenied(
-                "Alpha Vantage daily history requires ALPHA_VANTAGE_API_KEY".to_owned(),
+                "Alpha Vantage demo history is limited to IBM; set ALPHA_VANTAGE_API_KEY"
+                    .to_owned(),
             ));
         }
-        let payload = self.request(&[
-            ("function", "TIME_SERIES_DAILY"),
-            ("symbol", symbol.as_str()),
-            ("outputsize", "compact"),
-        ])?;
+        let cache_key = (symbol.clone(), full);
+        {
+            let cache = self
+                .history_cache
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if let Some((stored_at, bars)) = cache.get(&cache_key) {
+                if stored_at.elapsed() <= HISTORY_CACHE_TTL {
+                    return Ok(bars.clone());
+                }
+            }
+        }
+        let payload = if full {
+            self.request(&[
+                ("function", "TIME_SERIES_DAILY"),
+                ("symbol", symbol.as_str()),
+                ("outputsize", "full"),
+            ])?
+        } else {
+            self.request(&[
+                ("function", "TIME_SERIES_DAILY"),
+                ("symbol", symbol.as_str()),
+            ])?
+        };
         let series = payload
             .get("Time Series (Daily)")
             .and_then(Value::as_object)
@@ -175,6 +200,10 @@ impl AlphaVantageMarketData {
             })
             .collect::<Result<Vec<_>, MarketDataError>>()?;
         bars.sort_by_key(|bar| bar.date);
+        self.history_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(cache_key, (Instant::now(), bars.clone()));
         Ok(bars)
     }
 
@@ -250,7 +279,11 @@ impl MarketDataQuery for AlphaVantageMarketData {
             .as_str()
             .get(..10)
             .unwrap_or(request.end.as_str());
-        self.daily_history(&symbol)?
+        let full = NaiveDate::parse_from_str(start, "%Y-%m-%d")
+            .ok()
+            .zip(NaiveDate::parse_from_str(end, "%Y-%m-%d").ok())
+            .is_some_and(|(start, end)| (end - start).num_days() > 140);
+        self.daily_history(&symbol, full)?
             .into_iter()
             .filter(|bar| {
                 let date = bar.date.format("%Y-%m-%d").to_string();
@@ -277,12 +310,27 @@ impl ChartHistoryQuery for AlphaVantageMarketData {
             .split_whitespace()
             .next()
             .unwrap_or_default();
+        let full = !matches!(request.period, ChartPeriod::OneMonth);
         let mut bars = self
-            .daily_history(symbol)
-            .map_err(|error| ChartHistoryError::Unavailable(error.to_string()))?;
+            .daily_history(symbol, full)
+            .map_err(chart_history_error)?;
+        if request.period == ChartPeriod::YearToDate {
+            let current_year = Utc::now().year();
+            bars.retain(|bar| bar.date.year() == current_year);
+        } else if request.period == ChartPeriod::FiveYears {
+            bars = aggregate_weekly(bars);
+        }
         let count = request.period.sample_count();
-        if bars.len() > count {
+        if bars.len() > count && request.period != ChartPeriod::YearToDate {
             bars.drain(..bars.len() - count);
+        }
+        if bars.len() < count && request.period != ChartPeriod::YearToDate {
+            return Err(ChartHistoryError::PermissionDenied(format!(
+                "{} returned {} of {} required observations; this period needs full-history entitlement",
+                request.instrument.symbol,
+                bars.len(),
+                count
+            )));
         }
         let bars = bars
             .into_iter()
@@ -394,6 +442,33 @@ struct ProviderBar {
     low: f64,
     close: f64,
     volume: u64,
+}
+
+fn aggregate_weekly(bars: Vec<ProviderBar>) -> Vec<ProviderBar> {
+    let mut weekly = Vec::<ProviderBar>::new();
+    for bar in bars {
+        let week = bar.date.iso_week();
+        if let Some(current) = weekly.last_mut() {
+            let current_week = current.date.iso_week();
+            if current_week.year() == week.year() && current_week.week() == week.week() {
+                current.high = current.high.max(bar.high);
+                current.low = current.low.min(bar.low);
+                current.close = bar.close;
+                current.volume = current.volume.saturating_add(bar.volume);
+                current.date = bar.date;
+                continue;
+            }
+        }
+        weekly.push(bar);
+    }
+    weekly
+}
+
+fn chart_history_error(error: MarketDataError) -> ChartHistoryError {
+    match error {
+        MarketDataError::PermissionDenied(message) => ChartHistoryError::PermissionDenied(message),
+        error => ChartHistoryError::Unavailable(error.to_string()),
+    }
 }
 
 fn normalize_symbol(symbol: &str) -> Result<String, MarketDataError> {
@@ -553,6 +628,45 @@ mod tests {
     }
 
     #[test]
+    fn daily_bars_aggregate_into_ordered_ohlcv_weeks() {
+        let date = |day| NaiveDate::from_ymd_opt(2026, 8, day).unwrap();
+        let bars = vec![
+            ProviderBar {
+                date: date(24),
+                open: 10.0,
+                high: 12.0,
+                low: 9.0,
+                close: 11.0,
+                volume: 100,
+            },
+            ProviderBar {
+                date: date(25),
+                open: 11.0,
+                high: 13.0,
+                low: 10.0,
+                close: 12.5,
+                volume: 200,
+            },
+            ProviderBar {
+                date: date(31),
+                open: 13.0,
+                high: 14.0,
+                low: 12.0,
+                close: 13.5,
+                volume: 300,
+            },
+        ];
+
+        let weekly = aggregate_weekly(bars);
+        assert_eq!(weekly.len(), 2);
+        assert_eq!(weekly[0].open, 10.0);
+        assert_eq!(weekly[0].high, 13.0);
+        assert_eq!(weekly[0].low, 9.0);
+        assert_eq!(weekly[0].close, 12.5);
+        assert_eq!(weekly[0].volume, 300);
+    }
+
+    #[test]
     #[ignore = "live Alpha Vantage contract test"]
     fn live_demo_quote_flows_through_market_and_spreadsheet_ports() {
         let adapter = AlphaVantageMarketData::new(AlphaVantageConfig::demo());
@@ -589,5 +703,27 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    #[ignore = "live Alpha Vantage full-history contract test"]
+    fn live_demo_history_flows_through_chart_port() {
+        let adapter = AlphaVantageMarketData::new(AlphaVantageConfig::demo());
+        let request = ChartHistoryRequest::new(
+            crate::features::charting::ChartInstrument::from_terminal_subject("IBM"),
+            ChartPeriod::FiveYears,
+        );
+        let history = adapter
+            .load_history(&request)
+            .expect("live IBM weekly history");
+
+        assert_eq!(history.instrument.symbol, "IBM");
+        assert_eq!(history.bars.len(), ChartPeriod::FiveYears.sample_count());
+        assert_eq!(history.quality, HistoryQuality::Delayed);
+        assert!(history
+            .bars
+            .windows(2)
+            .all(|bars| bars[0].timestamp < bars[1].timestamp));
+        assert!(history.bars.iter().all(|bar| bar.close > 0.0));
     }
 }

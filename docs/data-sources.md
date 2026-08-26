@@ -6,18 +6,22 @@ retention constraints.
 
 ## Alpha Vantage
 
-- **Surfaces:** interactive Monitor snapshots and Spreadsheet `PX_LAST` /
-  `PX_CHANGE(..., "1D")` cells.
+- **Surfaces:** interactive Monitor snapshots, Chart daily/weekly history, and
+  Spreadsheet `PX_LAST` / `PX_CHANGE(..., "1D")` cells.
 - **Official documentation:** <https://www.alphavantage.co/documentation/>
 - **Authentication:** `ALPHA_VANTAGE_API_KEY`; when absent, the documented
-  `demo` key is used and the adapter restricts requests to IBM.
+  `demo` key is used and the adapter restricts quote/history requests to IBM.
 - **Freshness:** `GLOBAL_QUOTE` without a realtime/delayed premium entitlement
   is end-of-day data. The UI labels it delayed rather than executable/live.
 - **Attribution/provenance:** provider ID, source trading day, receive time,
   field, and quality travel with every usable value.
-- **Caching:** successful quotes are retained in process for 60 seconds to
-  coalesce identical screen requests. No licensed quote is written to the repo,
-  workbook, test fixture, screenshot input, or telemetry.
+- **History semantics:** 1M uses recent daily bars; 6M/YTD/1Y require sufficient
+  full daily history; 5Y is aggregated into ordered weekly OHLCV bars. The 1D
+  view reports permission denied until an entitled intraday adapter is wired.
+- **Caching:** successful quotes are retained in process for 60 seconds and
+  history for 15 minutes to coalesce identical screen requests. No licensed
+  quote/history is written to the repo, workbook, test fixture, screenshot
+  input, or telemetry.
 - **Failure/entitlement:** rate limits, invalid responses, missing fields, and
   demo-key restrictions become typed unavailable or permission-denied states.
 - **Redistribution:** no redistribution right is assumed. Users are responsible

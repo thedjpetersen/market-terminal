@@ -5,7 +5,7 @@ use crate::{
     features::{
         alerts::{AlertsQuery, AlertsWorkspace},
         assistant::{AssistantGateway, AssistantWorkspace},
-        charting::{ChartHistoryQuery, ChartingWorkspace},
+        charting::{ChartHistoryQuery, ChartInstrument, ChartingWorkspace},
         chat::{ChatGateway, ChatWorkspace},
         instrument::{InstrumentSearch, InstrumentSearchWorkspace},
         market_data::MarketDataQuery,
@@ -40,6 +40,8 @@ pub fn demo_app() -> App {
         market_data: Arc::new(DemoMarketDataReplay::new()),
         watchlist_catalog: Arc::new(DemoWatchlistCatalog),
         instrument_search: Arc::new(DemoInstrumentSearch),
+        chart_history: Arc::new(DemoChartHistory),
+        chart_primary: ChartInstrument::from_terminal_subject("AAPL"),
     })
 }
 
@@ -52,6 +54,8 @@ struct AppProviders {
     market_data: Arc<dyn MarketDataQuery>,
     watchlist_catalog: Arc<dyn WatchlistCatalog>,
     instrument_search: Arc<dyn InstrumentSearch>,
+    chart_history: Arc<dyn ChartHistoryQuery>,
+    chart_primary: ChartInstrument,
 }
 
 fn build_app(providers: AppProviders) -> App {
@@ -64,6 +68,8 @@ fn build_app(providers: AppProviders) -> App {
         market_data,
         watchlist_catalog,
         instrument_search,
+        chart_history,
+        chart_primary,
     } = providers;
     let data = Arc::new(DemoData);
     let overview_query: Arc<dyn OverviewQuery> = data.clone();
@@ -76,7 +82,6 @@ fn build_app(providers: AppProviders) -> App {
         "codex" => Arc::new(CodexAppServerGateway::new(CodexAppServerConfig::from_env())),
         _ => Arc::new(OpenRouterGateway::new(OpenRouterConfig::from_env())),
     };
-    let chart_history: Arc<dyn ChartHistoryQuery> = Arc::new(DemoChartHistory);
     let alerts_query: Arc<dyn AlertsQuery> = Arc::new(DemoAlertsReplay::new());
 
     let workspaces = WorkspaceRegistry::new(vec![
@@ -101,7 +106,10 @@ fn build_app(providers: AppProviders) -> App {
         Box::new(InstrumentSearchWorkspace::new(instrument_search)),
         Box::new(WatchlistWorkspace::new(market_data, watchlist_catalog)),
         Box::new(MarketsWorkspace::new(markets_query)),
-        Box::new(ChartingWorkspace::new(chart_history)),
+        Box::new(ChartingWorkspace::with_primary(
+            chart_history,
+            chart_primary,
+        )),
         Box::new(ChatWorkspace::new(chat)),
         Box::new(AlertsWorkspace::new(alerts_query)),
         Box::new(SecurityWorkspace::new(security_query)),
@@ -123,7 +131,8 @@ pub fn persistent_app() -> App {
     let news_query: Arc<dyn NewsFeed> = Arc::new(LiveNewsFeed::from_env());
     let alpha_vantage = Arc::new(AlphaVantageMarketData::from_env());
     let spreadsheet_market_data: Arc<dyn SpreadsheetMarketData> = alpha_vantage.clone();
-    let market_data: Arc<dyn MarketDataQuery> = alpha_vantage;
+    let market_data: Arc<dyn MarketDataQuery> = alpha_vantage.clone();
+    let chart_history: Arc<dyn ChartHistoryQuery> = alpha_vantage;
     let watchlist_catalog: Arc<dyn WatchlistCatalog> =
         Arc::new(ConfiguredWatchlistCatalog::from_env());
     build_app(AppProviders {
@@ -135,8 +144,24 @@ pub fn persistent_app() -> App {
         market_data,
         watchlist_catalog,
         instrument_search: Arc::new(SecInstrumentSearch::from_env()),
+        chart_history,
+        chart_primary: ChartInstrument::from_terminal_subject(&initial_chart_symbol()),
     })
     .with_session_repository(repository)
+}
+
+fn initial_chart_symbol() -> String {
+    std::env::var("MARKET_TERMINAL_CHART_SYMBOL")
+        .ok()
+        .map(|symbol| symbol.trim().to_ascii_uppercase())
+        .filter(|symbol| {
+            !symbol.is_empty()
+                && symbol.len() <= 32
+                && symbol.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '.' | '-')
+                })
+        })
+        .unwrap_or_else(|| "IBM".to_owned())
 }
 
 pub fn default_state_directory() -> PathBuf {

@@ -82,21 +82,25 @@ MARKET_TERMINAL_NEWS_REFRESH_SECS=300
 
 ## Live market data
 
-The interactive Monitor and Spreadsheet resolve quote fields through Alpha
-Vantage on bounded background workers; provider latency never runs on the input
-or render thread. Configure a personal key and comma-separated watchlist:
+The interactive Monitor, Chart, and Spreadsheet resolve quote/history fields
+through Alpha Vantage on bounded background workers; provider latency never
+runs on the input or render thread. Configure a personal key, comma-separated
+watchlist, and initial chart symbol:
 
 ```dotenv
 ALPHA_VANTAGE_API_KEY="your-key"
 MARKET_TERMINAL_WATCHLIST="IBM,AAPL,MSFT"
+MARKET_TERMINAL_CHART_SYMBOL="AAPL"
 ```
 
-With no key, the app uses Alpha Vantage's real `demo` quote endpoint and limits
-the default watchlist/sheet to IBM. Quote cells are explicitly labeled delayed
-end-of-day data with provider, observation, and receive times. Unsupported or
-unentitled symbols show unavailable/permission-denied state; the app never
-fills them with generated prices. See [the data-source register](docs/data-sources.md)
-for freshness, attribution, caching, and retention details.
+With no key, the app uses Alpha Vantage's real `demo` quote and full-history
+IBM data, and limits the default monitor, chart, and sheet to IBM. Quote cells
+and history are explicitly labeled delayed end-of-day data with provider and
+quality. Unsupported symbols, one-day intraday history, or unentitled periods
+show unavailable/permission-denied state; the app never fills them with
+generated prices or replayed bars. Press `F9` or click the Chart header to
+refresh. See [the data-source register](docs/data-sources.md) for freshness,
+attribution, caching, and retention details.
 
 ## Live instrument master
 

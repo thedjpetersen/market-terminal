@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
+    Arc,
+};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{
@@ -11,7 +14,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{CommandInvocation, Workspace, WorkspaceDescriptor},
+    app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
     ui::{
         components::terminal_block,
         contains, is_primary_click,
@@ -20,9 +23,9 @@ use crate::{
 };
 
 use super::{
-    domain::{percent_change, simple_moving_average}, ChartHistoryQuery, ChartInstrument,
-    ChartPeriod, ChartSpecification, HistoryError, HistoryRequest, HistorySeries, Normalization,
-    Study, ID,
+    domain::{percent_change, simple_moving_average},
+    ChartHistoryQuery, ChartInstrument, ChartPeriod, ChartSpecification, HistoryError,
+    HistoryRequest, HistorySeries, Normalization, Study, ID,
 };
 
 const SERIES_COLORS: [Color; 4] = [CYAN, YELLOW, GREEN, RED];
@@ -80,26 +83,80 @@ struct PreparedChart {
     source: String,
 }
 
+struct ChartRefresh {
+    generation: u64,
+    requests: Vec<HistoryRequest>,
+}
+
+struct ChartRefreshResult {
+    generation: u64,
+    result: Result<Vec<HistorySeries>, HistoryError>,
+}
+
 pub struct ChartingWorkspace {
-    query: Arc<dyn ChartHistoryQuery>,
     specification: ChartSpecification,
     status: String,
     cursor_offset: usize,
     line_mode: ChartLineMode,
+    refresh_sender: SyncSender<ChartRefresh>,
+    refresh_receiver: Receiver<ChartRefreshResult>,
+    pending_refresh: Option<ChartRefresh>,
+    desired_generation: u64,
+    history: Option<Vec<HistorySeries>>,
+    history_error: Option<HistoryError>,
 }
 
 impl ChartingWorkspace {
     pub fn new(query: Arc<dyn ChartHistoryQuery>) -> Self {
-        Self {
-            query,
-            specification: ChartSpecification::new(ChartInstrument::from_terminal_subject("AAPL")),
+        Self::with_primary(query, ChartInstrument::from_terminal_subject("AAPL"))
+    }
+
+    pub fn with_primary(query: Arc<dyn ChartHistoryQuery>, primary: ChartInstrument) -> Self {
+        let (refresh_sender, worker_receiver) = sync_channel::<ChartRefresh>(1);
+        let (worker_sender, refresh_receiver) = sync_channel::<ChartRefreshResult>(1);
+        std::thread::Builder::new()
+            .name("chart-history".to_owned())
+            .spawn(move || {
+                while let Ok(mut refresh) = worker_receiver.recv() {
+                    while let Ok(newer) = worker_receiver.try_recv() {
+                        refresh = newer;
+                    }
+                    let result = refresh
+                        .requests
+                        .iter()
+                        .map(|request| query.load_history(request))
+                        .collect();
+                    if worker_sender
+                        .send(ChartRefreshResult {
+                            generation: refresh.generation,
+                            result,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .expect("chart history worker should start");
+        let mut workspace = Self {
+            specification: ChartSpecification::new(primary),
             status: "READY · [/] PERIOD · N NORMALIZE · V VOLUME · S SMA".to_owned(),
             cursor_offset: 0,
             line_mode: ChartLineMode::Smooth,
-        }
+            refresh_sender,
+            refresh_receiver,
+            pending_refresh: None,
+            desired_generation: 0,
+            history: None,
+            history_error: None,
+        };
+        workspace.queue_history();
+        workspace
     }
 
-    pub fn specification(&self) -> &ChartSpecification { &self.specification }
+    pub fn specification(&self) -> &ChartSpecification {
+        &self.specification
+    }
 
     fn toggle_default_comparison(&mut self) {
         let comparison = ChartInstrument::from_terminal_subject("SPY");
@@ -122,25 +179,85 @@ impl ChartingWorkspace {
         }
     }
 
-    fn load_chart(&self) -> Result<PreparedChart, HistoryError> {
+    fn history_requests(&self) -> Vec<HistoryRequest> {
         let mut instruments = Vec::with_capacity(1 + self.specification.comparisons.len());
         instruments.push(self.specification.primary.clone());
         instruments.extend(self.specification.comparisons.iter().cloned());
 
-        let series = instruments
+        instruments
             .into_iter()
-            .map(|instrument| {
-                self.query.load_history(&HistoryRequest::new(
-                    instrument,
-                    self.specification.period,
-                ))
+            .map(|instrument| HistoryRequest::new(instrument, self.specification.period))
+            .collect()
+    }
+
+    fn queue_history(&mut self) {
+        self.desired_generation = self.desired_generation.wrapping_add(1);
+        self.pending_refresh = Some(ChartRefresh {
+            generation: self.desired_generation,
+            requests: self.history_requests(),
+        });
+        self.history = None;
+        self.history_error = None;
+        self.status = format!(
+            "LOADING LIVE HISTORY · {} · {}",
+            self.specification.primary.symbol,
+            self.specification.period.label()
+        );
+        self.dispatch_pending_refresh();
+    }
+
+    fn dispatch_pending_refresh(&mut self) {
+        let Some(refresh) = self.pending_refresh.take() else {
+            return;
+        };
+        match self.refresh_sender.try_send(refresh) {
+            Ok(()) => {}
+            Err(TrySendError::Full(refresh)) => self.pending_refresh = Some(refresh),
+            Err(TrySendError::Disconnected(_)) => {
+                self.history_error = Some(HistoryError::Unavailable(
+                    "chart history worker stopped".to_owned(),
+                ));
+                self.status = "CHART HISTORY WORKER STOPPED".to_owned();
+            }
+        }
+    }
+
+    fn poll_history(&mut self) {
+        while let Ok(refresh) = self.refresh_receiver.try_recv() {
+            if refresh.generation != self.desired_generation {
+                continue;
+            }
+            match refresh.result {
+                Ok(series) => {
+                    self.status = format!("{} LIVE SERIES LOADED", series.len());
+                    self.history = Some(series);
+                    self.history_error = None;
+                }
+                Err(error) => {
+                    self.status = error.to_string();
+                    self.history = None;
+                    self.history_error = Some(error);
+                }
+            }
+        }
+        self.dispatch_pending_refresh();
+    }
+
+    fn prepared_chart(&self) -> Result<PreparedChart, HistoryError> {
+        let series = self.history.as_deref().ok_or_else(|| {
+            self.history_error.clone().unwrap_or_else(|| {
+                HistoryError::Unavailable("live chart history is loading".to_owned())
             })
-            .collect::<Result<Vec<_>, _>>()?;
+        })?;
         prepare_chart(&self.specification, series)
     }
 
     fn render_header(&self, frame: &mut Frame, area: Rect, chart: &PreparedChart) {
-        let change_style = if chart.change_percent >= 0.0 { GREEN } else { RED };
+        let change_style = if chart.change_percent >= 0.0 {
+            GREEN
+        } else {
+            RED
+        };
         let comparisons = if self.specification.comparisons.is_empty() {
             "NONE".to_owned()
         } else {
@@ -168,7 +285,10 @@ impl ChartingWorkspace {
                     format!(" {}  ", self.specification.primary.symbol),
                     Style::new().bg(AMBER).fg(BG).bold(),
                 ),
-                Span::styled(format!(" {:.2}  ", chart.last), Style::new().fg(CYAN).bold()),
+                Span::styled(
+                    format!(" {:.2}  ", chart.last),
+                    Style::new().fg(CYAN).bold(),
+                ),
                 Span::styled(format!("{:+.2}%  ", chart.change_percent), change_style),
                 Span::styled(
                     format!(
@@ -196,11 +316,10 @@ impl ChartingWorkspace {
         } else {
             Layout::horizontal([Constraint::Percentage(100), Constraint::Length(0)]).split(area)
         };
-        let selected_index = chart
-            .primary_values
-            .len()
-            .saturating_sub(1)
-            .saturating_sub(self.cursor_offset.min(chart.primary_values.len().saturating_sub(1)));
+        let selected_index = chart.primary_values.len().saturating_sub(1).saturating_sub(
+            self.cursor_offset
+                .min(chart.primary_values.len().saturating_sub(1)),
+        );
         let selected_x = selected_index as f64;
         let cursor = [
             (selected_x, chart.y_bounds[0]),
@@ -289,8 +408,16 @@ impl ChartingWorkspace {
         chart: &PreparedChart,
         selected_index: usize,
     ) {
-        let selected_value = chart.primary_values.get(selected_index).copied().unwrap_or_default();
-        let selected_close = chart.primary_closes.get(selected_index).copied().unwrap_or_default();
+        let selected_value = chart
+            .primary_values
+            .get(selected_index)
+            .copied()
+            .unwrap_or_default();
+        let selected_close = chart
+            .primary_closes
+            .get(selected_index)
+            .copied()
+            .unwrap_or_default();
         let observation = selected_index + 1;
         let total = chart.primary_values.len();
         let mut lines = vec![
@@ -300,7 +427,10 @@ impl ChartingWorkspace {
             Line::from(Span::styled(format!("PLOT {selected_value:+.2}"), INK)),
             Line::from(""),
             Line::from(Span::styled("RANGE", AMBER)),
-            Line::from(Span::styled(format!("HIGH {:.2}", chart.session_high), GREEN)),
+            Line::from(Span::styled(
+                format!("HIGH {:.2}", chart.session_high),
+                GREEN,
+            )),
             Line::from(Span::styled(format!("LOW  {:.2}", chart.session_low), RED)),
             Line::from(Span::styled(
                 format!("SPAN {:.2}", chart.session_high - chart.session_low),
@@ -330,7 +460,8 @@ impl ChartingWorkspace {
                 Span::styled("■ ", line.color),
                 Span::styled(format!("{:<7}", line.name), MUTED),
                 Span::styled(
-                    value.map(|value| format!("{value:+.2}"))
+                    value
+                        .map(|value| format!("{value:+.2}"))
                         .unwrap_or_else(|| "—".to_owned()),
                     line.color,
                 ),
@@ -370,11 +501,22 @@ impl Workspace for ChartingWorkspace {
         }
     }
 
-    fn is_favorite(&self) -> bool { true }
+    fn is_favorite(&self) -> bool {
+        true
+    }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
+        let previous_primary = self.specification.primary.clone();
+        let previous_period = self.specification.period;
+        let previous_comparisons = self.specification.comparisons.clone();
         apply_chart_command(&mut self.specification, &invocation.args, &mut self.status);
         self.cursor_offset = 0;
+        if self.specification.primary != previous_primary
+            || self.specification.period != previous_period
+            || self.specification.comparisons != previous_comparisons
+        {
+            self.queue_history();
+        }
         true
     }
 
@@ -383,13 +525,13 @@ impl Workspace for ChartingWorkspace {
             KeyCode::Right | KeyCode::Char(']') => {
                 self.specification.period = self.specification.period.next();
                 self.cursor_offset = 0;
-                self.status = format!("PERIOD · {}", self.specification.period.label());
+                self.queue_history();
                 true
             }
             KeyCode::Left | KeyCode::Char('[') => {
                 self.specification.period = self.specification.period.previous();
                 self.cursor_offset = 0;
-                self.status = format!("PERIOD · {}", self.specification.period.label());
+                self.queue_history();
                 true
             }
             KeyCode::Char('n') => {
@@ -409,11 +551,12 @@ impl Workspace for ChartingWorkspace {
             }
             KeyCode::Char('c') => {
                 self.toggle_default_comparison();
+                self.queue_history();
                 true
             }
             KeyCode::Char('x') => {
                 self.specification.comparisons.clear();
-                self.status = "COMPARISONS CLEARED".to_owned();
+                self.queue_history();
                 true
             }
             KeyCode::Char(',') => {
@@ -436,6 +579,10 @@ impl Workspace for ChartingWorkspace {
                 self.status = format!("LINE MODE · {}", self.line_mode.label());
                 true
             }
+            KeyCode::F(9) => {
+                self.queue_history();
+                true
+            }
             _ => false,
         }
     }
@@ -447,19 +594,16 @@ impl Workspace for ChartingWorkspace {
             Constraint::Length(3),
         ])
         .split(area);
+        if is_primary_click(event, sections[0]) {
+            return self.handle_key(KeyEvent::new(KeyCode::F(9), KeyModifiers::NONE));
+        }
         if contains(sections[1], event.column, event.row) {
             match event.kind {
                 MouseEventKind::ScrollUp => {
-                    return self.handle_key(KeyEvent::new(
-                        KeyCode::Char(','),
-                        KeyModifiers::NONE,
-                    ));
+                    return self.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::NONE));
                 }
                 MouseEventKind::ScrollDown => {
-                    return self.handle_key(KeyEvent::new(
-                        KeyCode::Char('.'),
-                        KeyModifiers::NONE,
-                    ));
+                    return self.handle_key(KeyEvent::new(KeyCode::Char('.'), KeyModifiers::NONE));
                 }
                 _ => {}
             }
@@ -488,7 +632,7 @@ impl Workspace for ChartingWorkspace {
         if !is_primary_click(event, sections[1]) {
             return false;
         }
-        let Ok(chart) = self.load_chart() else {
+        let Ok(chart) = self.prepared_chart() else {
             return true;
         };
         if chart.primary_values.is_empty() {
@@ -511,12 +655,20 @@ impl Workspace for ChartingWorkspace {
         }
         let plot_x = chart_area.x.saturating_add(1);
         let plot_width = chart_area.width.saturating_sub(2).max(1);
-        let relative = event.column.saturating_sub(plot_x).min(plot_width.saturating_sub(1));
+        let relative = event
+            .column
+            .saturating_sub(plot_x)
+            .min(plot_width.saturating_sub(1));
         let last = chart.primary_values.len() - 1;
         let selected = usize::from(relative) * last / usize::from(plot_width);
         self.cursor_offset = last.saturating_sub(selected);
         self.status = format!("INSPECT · {} OBSERVATION(S) BACK", self.cursor_offset);
         true
+    }
+
+    fn poll_intents(&mut self) -> Vec<AppIntent> {
+        self.poll_history();
+        Vec::new()
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
@@ -527,15 +679,13 @@ impl Workspace for ChartingWorkspace {
         ])
         .split(area);
 
-        match self.load_chart() {
+        match self.prepared_chart() {
             Ok(chart) => {
                 self.render_header(frame, sections[0], &chart);
                 if self.specification.has_study(Study::Volume) {
-                    let plots = Layout::vertical([
-                        Constraint::Percentage(72),
-                        Constraint::Percentage(28),
-                    ])
-                    .split(sections[1]);
+                    let plots =
+                        Layout::vertical([Constraint::Percentage(72), Constraint::Percentage(28)])
+                            .split(sections[1]);
                     self.render_price_chart(frame, plots[0], &chart);
                     self.render_volume_chart(frame, plots[1], &chart);
                 } else {
@@ -575,7 +725,9 @@ impl Workspace for ChartingWorkspace {
                 Span::styled(" E ", AMBER),
                 Span::styled("LATEST  ", MUTED),
                 Span::styled(" L ", AMBER),
-                Span::styled("LINE MODE", MUTED),
+                Span::styled("LINE MODE  ", MUTED),
+                Span::styled(" F9/CLICK HEADER ", AMBER),
+                Span::styled("REFRESH", MUTED),
             ]))
             .style(Style::new().fg(INK)),
             sections[2],
@@ -585,7 +737,7 @@ impl Workspace for ChartingWorkspace {
 
 fn prepare_chart(
     specification: &ChartSpecification,
-    series: Vec<HistorySeries>,
+    series: &[HistorySeries],
 ) -> Result<PreparedChart, HistoryError> {
     let Some(primary) = series.first() else {
         return Err(HistoryError::Unavailable("no series returned".to_owned()));
@@ -597,7 +749,11 @@ fn prepare_chart(
         )));
     }
 
-    let first_close = primary.bars.first().map(|bar| bar.close).unwrap_or_default();
+    let first_close = primary
+        .bars
+        .first()
+        .map(|bar| bar.close)
+        .unwrap_or_default();
     let last = primary.bars.last().map(|bar| bar.close).unwrap_or_default();
     let change_percent = if first_close.abs() < f64::EPSILON {
         0.0
@@ -634,7 +790,9 @@ fn prepare_chart(
         .collect::<Vec<_>>();
 
     for study in &specification.studies {
-        let Study::SimpleMovingAverage { window } = *study else { continue };
+        let Study::SimpleMovingAverage { window } = *study else {
+            continue;
+        };
         let closes = primary.bars.iter().map(|bar| bar.close).collect::<Vec<_>>();
         let moving_average = simple_moving_average(&closes, window);
         let points = moving_average
@@ -667,24 +825,23 @@ fn prepare_chart(
         .iter()
         .flat_map(|line| line.points.iter().map(|point| point.1))
         .filter(|value| value.is_finite())
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(minimum, maximum), value| {
-            (minimum.min(value), maximum.max(value))
-        });
+        .fold(
+            (f64::INFINITY, f64::NEG_INFINITY),
+            |(minimum, maximum), value| (minimum.min(value), maximum.max(value)),
+        );
     let y_bounds = padded_bounds(minimum, maximum);
     let primary_values = lines
         .first()
         .map(|line| line.points.iter().map(|point| point.1).collect())
         .unwrap_or_default();
-    let volume_max = volume_bars
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(1)
-        .max(1);
+    let volume_max = volume_bars.iter().copied().max().unwrap_or(1).max(1);
     let average_volume = if volume_bars.is_empty() {
         0
     } else {
-        (volume_bars.iter().map(|value| u128::from(*value)).sum::<u128>()
+        (volume_bars
+            .iter()
+            .map(|value| u128::from(*value))
+            .sum::<u128>()
             / volume_bars.len() as u128) as u64
     };
     let session_high = primary
@@ -771,7 +928,10 @@ fn apply_chart_command(
                 index += 1;
                 let start = index;
                 while index < args.len() && !is_option_token(&args[index]) {
-                    for symbol in args[index].split(',').filter(|symbol| !symbol.trim().is_empty()) {
+                    for symbol in args[index]
+                        .split(',')
+                        .filter(|symbol| !symbol.trim().is_empty())
+                    {
                         if let Err(error) = specification
                             .add_comparison(ChartInstrument::from_terminal_subject(symbol))
                         {
@@ -785,7 +945,10 @@ fn apply_chart_command(
                 }
             }
             "PERIOD" => {
-                if let Some(period) = args.get(index + 1).and_then(|value| ChartPeriod::parse(value)) {
+                if let Some(period) = args
+                    .get(index + 1)
+                    .and_then(|value| ChartPeriod::parse(value))
+                {
                     specification.period = period;
                     index += 2;
                 } else {
@@ -812,7 +975,9 @@ fn apply_chart_command(
                     .get(index + 1)
                     .and_then(|value| parse_sma_window(value));
                 let window = parsed_window.unwrap_or(20);
-                if let Err(error) = specification.toggle_study(Study::SimpleMovingAverage { window }) {
+                if let Err(error) =
+                    specification.toggle_study(Study::SimpleMovingAverage { window })
+                {
                     *status = format!("CHART ERROR · {error}");
                 }
                 index += usize::from(parsed_window.is_some()) + 1;
@@ -913,7 +1078,10 @@ mod tests {
 
         assert_eq!(workspace.specification.primary.symbol, "MSFT");
         assert_eq!(workspace.specification.period, ChartPeriod::SixMonths);
-        assert_eq!(workspace.specification.normalization, Normalization::PercentChange);
+        assert_eq!(
+            workspace.specification.normalization,
+            Normalization::PercentChange
+        );
         assert_eq!(workspace.specification.comparisons.len(), 2);
         assert!(workspace
             .specification
@@ -928,7 +1096,10 @@ mod tests {
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE)));
         assert_eq!(workspace.specification.period, initial_period.next());
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)));
-        assert_eq!(workspace.specification.normalization, Normalization::PercentChange);
+        assert_eq!(
+            workspace.specification.normalization,
+            Normalization::PercentChange
+        );
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE)));
         assert!(!workspace.specification.has_study(Study::Volume));
     }
@@ -960,7 +1131,7 @@ mod tests {
         spec.add_comparison(ChartInstrument::from_terminal_subject("SPY"))
             .unwrap();
         let query = StubHistory;
-        let series = [&spec.primary, &spec.comparisons[0]]
+        let series: Vec<HistorySeries> = [&spec.primary, &spec.comparisons[0]]
             .into_iter()
             .map(|instrument| {
                 query
@@ -969,7 +1140,7 @@ mod tests {
             })
             .collect();
 
-        let chart = prepare_chart(&spec, series).unwrap();
+        let chart = prepare_chart(&spec, &series).unwrap();
         assert_eq!(chart.lines[0].points[0].1, 0.0);
         assert_eq!(chart.lines[1].points[0].1, 0.0);
         assert!((chart.lines[0].points[2].1 - 21.0).abs() < 1e-10);
@@ -980,5 +1151,38 @@ mod tests {
         let workspace = ChartingWorkspace::new(Arc::new(StubHistory));
         assert_eq!(workspace.descriptor().commands, &["CHART", "GRAPH"]);
         assert_eq!(workspace.descriptor().id, ID);
+    }
+
+    #[test]
+    fn history_loading_never_blocks_workspace_construction() {
+        struct SlowHistory;
+
+        impl ChartHistoryQuery for SlowHistory {
+            fn load_history(
+                &self,
+                request: &HistoryRequest,
+            ) -> Result<HistorySeries, HistoryError> {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                StubHistory.load_history(request)
+            }
+        }
+
+        let started = std::time::Instant::now();
+        let workspace = ChartingWorkspace::new(Arc::new(SlowHistory));
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+        assert!(workspace.history.is_none());
+    }
+
+    #[test]
+    fn completed_history_is_applied_from_the_background_worker() {
+        let mut workspace = ChartingWorkspace::new(Arc::new(StubHistory));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while workspace.history.is_none() && std::time::Instant::now() < deadline {
+            workspace.poll_history();
+            std::thread::yield_now();
+        }
+
+        assert_eq!(workspace.history.as_ref().map(Vec::len), Some(1));
+        assert!(workspace.history_error.is_none());
     }
 }
