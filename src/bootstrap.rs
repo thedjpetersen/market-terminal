@@ -21,8 +21,8 @@ use crate::{
         AlphaVantageMarketData, CodexAppServerConfig, CodexAppServerGateway,
         ConfiguredWatchlistCatalog, CsvPortfolioRepository, DemoAlertsReplay, DemoChartHistory,
         DemoChatGateway, DemoData, DemoInstrumentSearch, DemoMarketDataReplay,
-        DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway, LiveNewsFeed,
-        LiveSecurityQuery, LocalPersistence, OpenRouterConfig, OpenRouterGateway,
+        DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway, LiveAlertsQuery,
+        LiveNewsFeed, LiveSecurityQuery, LocalPersistence, OpenRouterConfig, OpenRouterGateway,
         SecInstrumentSearch, SystemNewsArticleOpener,
     },
 };
@@ -44,6 +44,7 @@ pub fn demo_app() -> App {
         chart_primary: ChartInstrument::from_terminal_subject("AAPL"),
         security_query: Arc::new(DemoData),
         security_symbol: "AAPL US".to_owned(),
+        alerts_query: Arc::new(DemoAlertsReplay::new()),
     })
 }
 
@@ -60,6 +61,7 @@ struct AppProviders {
     chart_primary: ChartInstrument,
     security_query: Arc<dyn SecurityQuery>,
     security_symbol: String,
+    alerts_query: Arc<dyn AlertsQuery>,
 }
 
 fn build_app(providers: AppProviders) -> App {
@@ -76,6 +78,7 @@ fn build_app(providers: AppProviders) -> App {
         chart_primary,
         security_query,
         security_symbol,
+        alerts_query,
     } = providers;
     let data = Arc::new(DemoData);
     let overview_query: Arc<dyn OverviewQuery> = data.clone();
@@ -87,7 +90,6 @@ fn build_app(providers: AppProviders) -> App {
         "codex" => Arc::new(CodexAppServerGateway::new(CodexAppServerConfig::from_env())),
         _ => Arc::new(OpenRouterGateway::new(OpenRouterConfig::from_env())),
     };
-    let alerts_query: Arc<dyn AlertsQuery> = Arc::new(DemoAlertsReplay::new());
 
     let workspaces = WorkspaceRegistry::new(vec![
         Box::new(OverviewWorkspace::new(overview_query)),
@@ -142,6 +144,7 @@ pub fn persistent_app() -> App {
         alpha_vantage.clone(),
         alpha_vantage.clone(),
     ));
+    let alerts_query: Arc<dyn AlertsQuery> = Arc::new(LiveAlertsQuery::new(alpha_vantage.clone()));
     let spreadsheet_market_data: Arc<dyn SpreadsheetMarketData> = alpha_vantage.clone();
     let market_data: Arc<dyn MarketDataQuery> = alpha_vantage.clone();
     let chart_history: Arc<dyn ChartHistoryQuery> = alpha_vantage;
@@ -161,6 +164,7 @@ pub fn persistent_app() -> App {
         chart_primary: ChartInstrument::from_terminal_subject(&initial_symbol),
         security_query,
         security_symbol: format!("{initial_symbol} US"),
+        alerts_query,
     })
     .with_session_repository(repository)
 }

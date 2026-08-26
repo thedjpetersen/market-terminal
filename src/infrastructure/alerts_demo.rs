@@ -26,7 +26,10 @@ impl Default for DemoAlertsReplay {
 }
 
 impl AlertsQuery for DemoAlertsReplay {
-    fn load_snapshot(&self) -> AlertSnapshot {
+    fn load_snapshot(
+        &self,
+        _instruments: &[InstrumentRef],
+    ) -> Result<AlertSnapshot, crate::features::alerts::AlertsError> {
         let mut cursor = self
             .cursor
             .lock()
@@ -34,7 +37,7 @@ impl AlertsQuery for DemoAlertsReplay {
         let frame = ALERT_FRAMES[(*cursor).min(ALERT_FRAMES.len() - 1)];
         *cursor = (*cursor + 1).min(ALERT_FRAMES.len() - 1);
 
-        AlertSnapshot::new(
+        Ok(AlertSnapshot::new(
             frame.sequence,
             frame.as_of,
             (frame.sequence == 0).then(demo_rules).unwrap_or_default(),
@@ -45,7 +48,7 @@ impl AlertsQuery for DemoAlertsReplay {
                 .map(DemoObservation::into_domain)
                 .collect(),
             "DETERMINISTIC REPLAY · SIMULATED LOCAL",
-        )
+        ))
     }
 }
 
@@ -213,10 +216,10 @@ mod tests {
     #[test]
     fn replay_holds_final_frame_with_stable_evaluation_ids() {
         let replay = DemoAlertsReplay::new();
-        let first = replay.load_snapshot();
-        let _second = replay.load_snapshot();
-        let final_frame = replay.load_snapshot();
-        let repeated_final = replay.load_snapshot();
+        let first = replay.load_snapshot(&[]).unwrap();
+        let _second = replay.load_snapshot(&[]).unwrap();
+        let final_frame = replay.load_snapshot(&[]).unwrap();
+        let repeated_final = replay.load_snapshot(&[]).unwrap();
 
         assert_eq!(first.rules.len(), 3);
         assert!(final_frame.rules.is_empty());

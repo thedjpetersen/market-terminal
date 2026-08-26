@@ -7,7 +7,7 @@ pub use domain::{
     AlertLifecycle, AlertObservation, AlertRule, AlertRuleId, AlertSnapshot, AlertStatus,
     AlertTrigger, DebouncePolicy, InstrumentRef,
 };
-pub use port::AlertsQuery;
+pub use port::{AlertsError, AlertsQuery};
 pub use workspace::AlertsWorkspace;
 
 use crate::app::WorkspaceId;

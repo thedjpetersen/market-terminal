@@ -116,6 +116,16 @@ adapter does not yet normalize institutional ownership filings. Those panels
 say so explicitly instead of showing generated values. Press `F9` or click the
 Security header to invalidate the page cache and fetch again.
 
+## Live alert observations
+
+Alert rules remain local and clearly marked as simulated delivery, but the
+interactive app evaluates them against real Alpha Vantage quote snapshots.
+Create a rule with `ALERT IBM > 250` or `ALERT IBM MOVE < -2`, then press `R`
+or click the Alerts header to fetch a new observation. Evaluation IDs derive
+from provider, canonical instrument, observation time, price, and move, so
+refreshing the same delayed record is idempotent and cannot satisfy debounce by
+accident. Provider entitlement and availability failures are shown directly.
+
 ## Live instrument master
 
 The interactive Find workspace loads the SEC EDGAR company-ticker master on a
@@ -191,6 +201,13 @@ Run unit tests:
 
 ```bash
 cargo test
+```
+
+Run the opt-in contracts against the configured live providers serially. The
+serial setting respects the public Alpha Vantage demo-key request limit:
+
+```bash
+cargo test --lib -- --ignored --nocapture --test-threads=1
 ```
 
 Create a release binary:

@@ -6,8 +6,9 @@ retention constraints.
 
 ## Alpha Vantage
 
-- **Surfaces:** interactive Monitor snapshots, Chart daily/weekly history, and
-  Spreadsheet `PX_LAST` / `PX_CHANGE(..., "1D")` cells.
+- **Surfaces:** interactive Monitor snapshots, Chart daily/weekly history,
+  local Alert rule observations, and Spreadsheet `PX_LAST` /
+  `PX_CHANGE(..., "1D")` cells.
 - **Official documentation:** <https://www.alphavantage.co/documentation/>
 - **Authentication:** `ALPHA_VANTAGE_API_KEY`; when absent, the documented
   `demo` key is used and the adapter restricts quote/history requests to IBM.
@@ -24,6 +25,9 @@ retention constraints.
   input, or telemetry.
 - **Failure/entitlement:** rate limits, invalid responses, missing fields, and
   demo-key restrictions become typed unavailable or permission-denied states.
+- **Alert boundary:** quote observations are live provider inputs, while alert
+  delivery remains simulated/local. Stable evaluation IDs prevent a cached or
+  repeated provider observation from counting twice toward debounce.
 - **Redistribution:** no redistribution right is assumed. Users are responsible
   for selecting an Alpha Vantage plan appropriate to their display and use.
 

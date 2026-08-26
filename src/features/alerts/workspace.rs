@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
+    Arc,
+};
 
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::{
@@ -10,7 +13,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{CommandInvocation, Workspace, WorkspaceDescriptor},
+    app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
     ui::{
         components::terminal_block,
         scroll_key, table_row_at,
@@ -20,39 +23,119 @@ use crate::{
 
 use super::{
     AlertCondition, AlertEvaluation, AlertLifecycle, AlertRule, AlertRuleId, AlertSnapshot,
-    AlertStatus, AlertsQuery, DebouncePolicy, InstrumentRef, ID,
+    AlertStatus, AlertsError, AlertsQuery, DebouncePolicy, InstrumentRef, ID,
 };
 
+struct AlertsRefresh {
+    generation: u64,
+    instruments: Vec<InstrumentRef>,
+}
+
+struct AlertsRefreshResult {
+    generation: u64,
+    result: Result<AlertSnapshot, AlertsError>,
+}
+
 pub struct AlertsWorkspace {
-    query: Arc<dyn AlertsQuery>,
     rules: Vec<AlertRule>,
     selected: usize,
     status: String,
     snapshot_as_of: String,
     snapshot_source: String,
     local_rule_sequence: u64,
+    refresh_sender: SyncSender<AlertsRefresh>,
+    refresh_receiver: Receiver<AlertsRefreshResult>,
+    pending_refresh: Option<AlertsRefresh>,
+    desired_generation: u64,
 }
 
 impl AlertsWorkspace {
     pub fn new(query: Arc<dyn AlertsQuery>) -> Self {
+        let (refresh_sender, worker_receiver) = sync_channel::<AlertsRefresh>(1);
+        let (worker_sender, refresh_receiver) = sync_channel::<AlertsRefreshResult>(1);
+        std::thread::Builder::new()
+            .name("alert-observations".to_owned())
+            .spawn(move || {
+                while let Ok(mut refresh) = worker_receiver.recv() {
+                    while let Ok(newer) = worker_receiver.try_recv() {
+                        refresh = newer;
+                    }
+                    let result = query.load_snapshot(&refresh.instruments);
+                    if worker_sender
+                        .send(AlertsRefreshResult {
+                            generation: refresh.generation,
+                            result,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .expect("alert observation worker should start");
         let mut workspace = Self {
-            query,
             rules: Vec::new(),
             selected: 0,
             status: "LOADING LOCAL ALERTS".to_owned(),
             snapshot_as_of: "--".to_owned(),
             snapshot_source: "SIMULATED LOCAL".to_owned(),
             local_rule_sequence: 0,
+            refresh_sender,
+            refresh_receiver,
+            pending_refresh: None,
+            desired_generation: 0,
         };
-        workspace.replay();
+        workspace.refresh();
         workspace
     }
 
-    pub fn rules(&self) -> &[AlertRule] { &self.rules }
+    pub fn rules(&self) -> &[AlertRule] {
+        &self.rules
+    }
 
-    fn replay(&mut self) {
-        let snapshot = self.query.load_snapshot();
-        self.apply_snapshot(snapshot);
+    fn refresh(&mut self) {
+        self.desired_generation = self.desired_generation.wrapping_add(1);
+        let mut instruments = Vec::<InstrumentRef>::new();
+        for rule in &self.rules {
+            if !instruments
+                .iter()
+                .any(|instrument| instrument.canonical_id == rule.instrument.canonical_id)
+            {
+                instruments.push(rule.instrument.clone());
+            }
+        }
+        self.pending_refresh = Some(AlertsRefresh {
+            generation: self.desired_generation,
+            instruments,
+        });
+        self.status = "LOADING LIVE ALERT OBSERVATIONS…".to_owned();
+        self.dispatch_pending_refresh();
+    }
+
+    fn dispatch_pending_refresh(&mut self) {
+        let Some(refresh) = self.pending_refresh.take() else {
+            return;
+        };
+        match self.refresh_sender.try_send(refresh) {
+            Ok(()) => {}
+            Err(TrySendError::Full(refresh)) => self.pending_refresh = Some(refresh),
+            Err(TrySendError::Disconnected(_)) => {
+                self.status = "ALERT OBSERVATION WORKER STOPPED".to_owned();
+            }
+        }
+    }
+
+    fn poll_refresh(&mut self) {
+        while let Ok(refresh) = self.refresh_receiver.try_recv() {
+            if refresh.generation != self.desired_generation {
+                continue;
+            }
+            match refresh.result {
+                Ok(snapshot) => self.apply_snapshot(snapshot),
+                Err(error) => self.status = error.to_string(),
+            }
+        }
+        self.dispatch_pending_refresh();
     }
 
     fn apply_snapshot(&mut self, snapshot: AlertSnapshot) {
@@ -81,11 +164,17 @@ impl AlertsWorkspace {
         self.snapshot_as_of = snapshot.as_of;
         self.snapshot_source = snapshot.source;
         self.status = if triggered > 0 {
-            format!("REPLAY {} · {triggered} NEW TRIGGER(S)", snapshot.sequence)
+            format!(
+                "SNAPSHOT {} · {triggered} NEW TRIGGER(S)",
+                snapshot.sequence
+            )
         } else if duplicates > 0 {
-            format!("REPLAY {} · IDEMPOTENT · NO NEW TRIGGERS", snapshot.sequence)
+            format!(
+                "SNAPSHOT {} · IDEMPOTENT · NO NEW TRIGGERS",
+                snapshot.sequence
+            )
         } else {
-            format!("REPLAY {} · EVALUATED", snapshot.sequence)
+            format!("SNAPSHOT {} · EVALUATED", snapshot.sequence)
         };
     }
 
@@ -94,7 +183,10 @@ impl AlertsWorkspace {
             self.selected = 0;
             return;
         }
-        self.selected = self.selected.saturating_add_signed(delta).min(self.rules.len() - 1);
+        self.selected = self
+            .selected
+            .saturating_add_signed(delta)
+            .min(self.rules.len() - 1);
     }
 
     fn toggle_selected(&mut self) {
@@ -118,8 +210,8 @@ impl AlertsWorkspace {
 
     fn handle_alert_command(&mut self, invocation: &CommandInvocation) {
         if invocation.args.is_empty() {
-            self.status = "USE ALERT <SYMBOL> <|> <PRICE> OR ALERT <SYMBOL> MOVE <|> <%>"
-                .to_owned();
+            self.status =
+                "USE ALERT <SYMBOL> <|> <PRICE> OR ALERT <SYMBOL> MOVE <|> <%>".to_owned();
             return;
         }
 
@@ -160,8 +252,8 @@ impl AlertsWorkspace {
             self.selected = index;
             self.status = format!("{} RULE SELECTED", symbol.to_ascii_uppercase());
         } else {
-            self.status = "INVALID ALERT · EXAMPLES: ALERT AAPL > 206 · ALERT NVDA MOVE < -3"
-                .to_owned();
+            self.status =
+                "INVALID ALERT · EXAMPLES: ALERT AAPL > 206 · ALERT NVDA MOVE < -3".to_owned();
         }
     }
 }
@@ -176,11 +268,17 @@ impl Workspace for AlertsWorkspace {
         }
     }
 
-    fn is_favorite(&self) -> bool { true }
+    fn is_favorite(&self) -> bool {
+        true
+    }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
         if invocation.function.eq_ignore_ascii_case("ALERT") {
+            let rule_count = self.rules.len();
             self.handle_alert_command(invocation);
+            if self.rules.len() > rule_count {
+                self.refresh();
+            }
         } else {
             self.status = "ALERT REGISTER · SIMULATED LOCAL DELIVERY".to_owned();
         }
@@ -206,7 +304,7 @@ impl Workspace for AlertsWorkspace {
                 true
             }
             KeyCode::Char('r') => {
-                self.replay();
+                self.refresh();
                 true
             }
             _ => false,
@@ -221,6 +319,12 @@ impl Workspace for AlertsWorkspace {
             Constraint::Length(2),
         ])
         .split(area);
+        if crate::ui::is_primary_click(event, areas[0]) {
+            return self.handle_key(KeyEvent::new(
+                KeyCode::Char('r'),
+                crossterm::event::KeyModifiers::NONE,
+            ));
+        }
         if let Some(index) = table_row_at(event, areas[1], self.rules.len()) {
             self.selected = index;
             return true;
@@ -230,7 +334,7 @@ impl Workspace for AlertsWorkspace {
                 (" ↑↓/JK SELECT  ", None),
                 ("SPACE/E ENABLE/DISABLE  ", Some(KeyCode::Char(' '))),
                 ("A ACKNOWLEDGE  ", Some(KeyCode::Char('a'))),
-                ("R REPLAY EVALUATION  ", Some(KeyCode::Char('r'))),
+                ("R REFRESH LIVE EVALUATION  ", Some(KeyCode::Char('r'))),
             ];
             let mut x = areas[3].x;
             for (label, key) in controls {
@@ -248,6 +352,11 @@ impl Workspace for AlertsWorkspace {
             return self.handle_key(key);
         }
         false
+    }
+
+    fn poll_intents(&mut self) -> Vec<AppIntent> {
+        self.poll_refresh();
+        Vec::new()
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
@@ -273,7 +382,13 @@ impl Workspace for AlertsWorkspace {
         );
 
         let header = Row::new([
-            "STATE", "SYMBOL", "CONDITION", "LAST", "MOVE", "DEBOUNCE", "DELIVERY",
+            "STATE",
+            "SYMBOL",
+            "CONDITION",
+            "LAST",
+            "MOVE",
+            "DEBOUNCE",
+            "DELIVERY",
         ])
         .style(Style::new().fg(AMBER).bold())
         .bottom_margin(1);
@@ -298,7 +413,11 @@ impl Workspace for AlertsWorkspace {
                 Cell::from(debounce_label(rule)),
                 Cell::from(rule.delivery.label()),
             ])
-            .style(if selected { Style::new().bg(CYAN).fg(BG).bold() } else { Style::new() })
+            .style(if selected {
+                Style::new().bg(CYAN).fg(BG).bold()
+            } else {
+                Style::new()
+            })
         });
         frame.render_widget(
             Table::new(
@@ -320,9 +439,14 @@ impl Workspace for AlertsWorkspace {
         );
 
         frame.render_widget(
-            Paragraph::new(selected_detail(&self.rules, self.selected, &self.snapshot_as_of, &self.snapshot_source))
-                .wrap(Wrap { trim: true })
-                .block(terminal_block("AUDIT", "SELECTED RULE")),
+            Paragraph::new(selected_detail(
+                &self.rules,
+                self.selected,
+                &self.snapshot_as_of,
+                &self.snapshot_source,
+            ))
+            .wrap(Wrap { trim: true })
+            .block(terminal_block("AUDIT", "SELECTED RULE")),
             areas[2],
         );
 
@@ -335,7 +459,7 @@ impl Workspace for AlertsWorkspace {
                 Span::styled("A ", AMBER),
                 Span::styled("ACKNOWLEDGE  ", MUTED),
                 Span::styled("R ", AMBER),
-                Span::styled("REPLAY EVALUATION  ", MUTED),
+                Span::styled("REFRESH LIVE EVALUATION  ", MUTED),
                 Span::styled("SIMULATED · LOCAL ONLY · NO EXTERNAL NOTIFICATION", YELLOW),
             ])),
             areas[3],
@@ -357,7 +481,9 @@ fn parse_condition(args: &[String]) -> Option<AlertCondition> {
             }
         }
         [_, kind, operator, value]
-            if kind.eq_ignore_ascii_case("MOVE") || kind == "%" || kind.eq_ignore_ascii_case("PCT") =>
+            if kind.eq_ignore_ascii_case("MOVE")
+                || kind == "%"
+                || kind.eq_ignore_ascii_case("PCT") =>
         {
             let value = value.trim_end_matches('%').parse::<f64>().ok()?;
             if !value.is_finite() {
@@ -375,9 +501,8 @@ fn parse_condition(args: &[String]) -> Option<AlertCondition> {
 
 fn canonical_id_for_symbol(symbol: &str) -> String {
     match symbol {
-        "SPY" => "us:arcx:spy".to_owned(),
         "SPX" => "index:spx".to_owned(),
-        _ => format!("us:xnas:{}", symbol.to_ascii_lowercase()),
+        _ => format!("us:listed:{}", symbol.to_ascii_lowercase()),
     }
 }
 
@@ -425,7 +550,10 @@ fn status_counts(rules: &[AlertRule]) -> (usize, usize, usize) {
         .iter()
         .filter(|rule| matches!(&rule.status, AlertStatus::Acknowledged { .. }))
         .count();
-    let disabled = rules.iter().filter(|rule| rule.lifecycle == AlertLifecycle::Disabled).count();
+    let disabled = rules
+        .iter()
+        .filter(|rule| rule.lifecycle == AlertLifecycle::Disabled)
+        .count();
     (triggered, acknowledged, disabled)
 }
 
@@ -451,7 +579,10 @@ fn selected_detail(
         Line::from(vec![
             Span::styled(format!("{}  ", rule.id), AMBER),
             Span::styled(format!("{}  ", rule.lifecycle.label()), INK),
-            Span::styled(format!("{}  ", rule.status.label()), status_style(&rule.status, false)),
+            Span::styled(
+                format!("{}  ", rule.status.label()),
+                status_style(&rule.status, false),
+            ),
             Span::styled(rule.delivery.label(), YELLOW),
         ]),
         Line::styled(
@@ -477,10 +608,26 @@ mod tests {
     }
 
     impl AlertsQuery for StubAlerts {
-        fn load_snapshot(&self) -> AlertSnapshot {
-            self.snapshots.lock().expect("stub snapshots poisoned").pop_front().unwrap_or_else(|| {
-                AlertSnapshot::new(99, "2026-08-25T20:00:99Z", Vec::new(), Vec::new(), "STUB")
-            })
+        fn load_snapshot(
+            &self,
+            _instruments: &[InstrumentRef],
+        ) -> Result<AlertSnapshot, AlertsError> {
+            Ok(self
+                .snapshots
+                .lock()
+                .expect("stub snapshots poisoned")
+                .pop_front()
+                .unwrap_or_else(|| {
+                    AlertSnapshot::new(99, "2026-08-25T20:00:99Z", Vec::new(), Vec::new(), "STUB")
+                }))
+        }
+    }
+
+    fn settle(workspace: &mut AlertsWorkspace) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while workspace.rules.is_empty() && std::time::Instant::now() < deadline {
+            workspace.poll_refresh();
+            std::thread::yield_now();
         }
     }
 
@@ -511,7 +658,8 @@ mod tests {
 
     #[test]
     fn exposes_exact_alert_command_vocabulary_without_hotkey_collision() {
-        let workspace = AlertsWorkspace::new(stub_query(false));
+        let mut workspace = AlertsWorkspace::new(stub_query(false));
+        settle(&mut workspace);
 
         assert_eq!(workspace.descriptor().commands, &["ALERT", "ALERTS"]);
         assert_eq!(workspace.hotkey(), None);
@@ -521,10 +669,17 @@ mod tests {
     #[test]
     fn keyboard_toggles_and_acknowledges_selected_rule() {
         let mut workspace = AlertsWorkspace::new(stub_query(true));
-        assert!(matches!(&workspace.rules[0].status, AlertStatus::Triggered { .. }));
+        settle(&mut workspace);
+        assert!(matches!(
+            &workspace.rules[0].status,
+            AlertStatus::Triggered { .. }
+        ));
 
         workspace.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
-        assert!(matches!(&workspace.rules[0].status, AlertStatus::Acknowledged { .. }));
+        assert!(matches!(
+            &workspace.rules[0].status,
+            AlertStatus::Acknowledged { .. }
+        ));
         workspace.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
         assert_eq!(workspace.rules[0].lifecycle, AlertLifecycle::Disabled);
     }
@@ -532,18 +687,59 @@ mod tests {
     #[test]
     fn alert_command_creates_price_and_percent_rules_locally() {
         let mut workspace = AlertsWorkspace::new(stub_query(false));
+        settle(&mut workspace);
         workspace.handle_command(&CommandInvocation {
             function: "ALERT".to_owned(),
             args: vec!["MSFT".to_owned(), ">".to_owned(), "510".to_owned()],
         });
         workspace.handle_command(&CommandInvocation {
             function: "ALERT".to_owned(),
-            args: vec!["NVDA".to_owned(), "MOVE".to_owned(), "<".to_owned(), "-3%".to_owned()],
+            args: vec![
+                "NVDA".to_owned(),
+                "MOVE".to_owned(),
+                "<".to_owned(),
+                "-3%".to_owned(),
+            ],
         });
 
         assert_eq!(workspace.rules.len(), 3);
-        assert_eq!(workspace.rules[1].condition, AlertCondition::price_above(510.0));
-        assert_eq!(workspace.rules[2].condition, AlertCondition::percent_move_below(-3.0));
-        assert_eq!(workspace.rules[2].delivery.label(), "SIMULATED · LOCAL ONLY");
+        assert_eq!(
+            workspace.rules[1].condition,
+            AlertCondition::price_above(510.0)
+        );
+        assert_eq!(
+            workspace.rules[2].condition,
+            AlertCondition::percent_move_below(-3.0)
+        );
+        assert_eq!(
+            workspace.rules[2].delivery.label(),
+            "SIMULATED · LOCAL ONLY"
+        );
+    }
+
+    #[test]
+    fn alert_provider_never_blocks_workspace_construction() {
+        struct SlowAlerts;
+
+        impl AlertsQuery for SlowAlerts {
+            fn load_snapshot(
+                &self,
+                _instruments: &[InstrumentRef],
+            ) -> Result<AlertSnapshot, AlertsError> {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                Ok(AlertSnapshot::new(
+                    0,
+                    "2026-08-25T20:00:00Z",
+                    Vec::new(),
+                    Vec::new(),
+                    "TEST",
+                ))
+            }
+        }
+
+        let started = std::time::Instant::now();
+        let workspace = AlertsWorkspace::new(Arc::new(SlowAlerts));
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+        assert!(workspace.rules.is_empty());
     }
 }
