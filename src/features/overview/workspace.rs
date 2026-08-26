@@ -210,11 +210,12 @@ impl OverviewWorkspace {
         frame.render_widget(block, area);
         let columns = Layout::horizontal([
             Constraint::Percentage(26),
-            Constraint::Percentage(74),
+            Constraint::Length(1),
+            Constraint::Min(0),
         ])
         .split(inner);
         render_countries(frame, columns[0]);
-        render_holdings(frame, columns[1]);
+        render_holdings(frame, columns[2]);
     }
 
     fn render_news(&self, frame: &mut Frame, area: Rect) {
@@ -222,14 +223,16 @@ impl OverviewWorkspace {
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let columns = Layout::horizontal([
-            Constraint::Percentage(19),
-            Constraint::Percentage(20),
-            Constraint::Percentage(61),
+            Constraint::Percentage(23),
+            Constraint::Length(1),
+            Constraint::Percentage(23),
+            Constraint::Length(1),
+            Constraint::Min(0),
         ])
         .split(inner);
         render_movers(frame, columns[0], "▲ Winners", &WINNERS);
-        render_movers(frame, columns[1], "▼ Losers", &LOSERS);
-        render_headlines(frame, columns[2]);
+        render_movers(frame, columns[2], "▼ Losers", &LOSERS);
+        render_headlines(frame, columns[4]);
     }
 
     fn render_function_strip(&self, frame: &mut Frame, area: Rect) {
@@ -328,14 +331,14 @@ fn render_risk_table(frame: &mut Frame, area: Rect) {
         .bottom_margin(1);
     let rows = vec![
         Row::new([
-            metric_cell("001", false),
+            Cell::from("001").style(Style::new().fg(INK)),
             metric_cell("+17.02%", true),
             metric_cell("−6.3%", true),
             metric_cell("13.2%", false),
             metric_cell("2.79", true),
         ]),
         Row::new([
-            metric_cell("002", false),
+            Cell::from("002").style(Style::new().fg(INK)),
             metric_cell("+13.87%", false),
             metric_cell("−6.6%", false),
             metric_cell("12.8%", true),
@@ -420,10 +423,14 @@ fn render_holdings(frame: &mut Frame, area: Rect) {
             .style(Style::new().fg(INK).add_modifier(Modifier::ITALIC)),
         rows[0],
     );
-    let columns = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(rows[1]);
+    let columns = Layout::horizontal([
+        Constraint::Percentage(50),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .split(rows[1]);
     render_holding_half(frame, columns[0], 0);
-    render_holding_half(frame, columns[1], 5);
+    render_holding_half(frame, columns[2], 5);
 }
 
 fn render_holding_half(frame: &mut Frame, area: Rect, offset: usize) {
