@@ -36,7 +36,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         app.handle_key(key(KeyCode::Char(',')));
     })?;
     capture(&output, &font, "chat", |app| command(app, "CHAT"))?;
-    capture(&output, &font, "spreadsheet", |app| command(app, "SHEET B12"))?;
+    capture(&output, &font, "spreadsheet", |app| {
+        command(app, "SHEET");
+        app.handle_key(key(KeyCode::Right));
+        for _ in 0..11 {
+            app.handle_key(key(KeyCode::Down));
+        }
+    })?;
     capture(&output, &font, "alerts", |app| {
         command(app, "ALERTS");
         app.handle_key(key(KeyCode::Char('r')));
