@@ -238,6 +238,8 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     let provenance = match app.active_workspace().as_str() {
         "overview" if gallery_replay => "GALLERY ANALYTICS · NOT LIVE",
         "overview" => "IMPORTED PORTFOLIO + LIVE NEWS · PERFORMANCE MAY BE UNAVAILABLE",
+        "desk" if gallery_replay => "GALLERY SPLIT DESK · NOT LIVE",
+        "desk" => "COMPOSITE LIVE DESK · EACH PANE RETAINS SOURCE PROVENANCE",
         "markets" if gallery_replay => "GALLERY MARKET ANALYTICS · NOT LIVE",
         "markets" => "EXTERNAL LISTED-INSTRUMENT SNAPSHOTS · SOURCE LIMITS SHOWN",
         "news" if gallery_replay => "GALLERY NEWS SNAPSHOT · NOT LIVE",

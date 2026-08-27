@@ -15,6 +15,8 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 
 - Overview — imported positions and live cached headlines, with unavailable
   performance fields left explicit rather than synthesized
+- Desk — responsive Monitor and Chart panes above News, with Tab/1/2/3 pane
+  focus and click routing
 - Markets — external listed-instrument snapshots, with unsupported cross-asset
   and analytics datasets called out instead of mocked
 - Security — quote/chart, financials, estimates, ownership, filings, peers,
@@ -46,6 +48,12 @@ Overview composes those same real snapshots without performing I/O while
 rendering. Persistent workspaces do not substitute deterministic gallery
 analytics when an external source is missing; the separate gallery host remains
 available for screenshots and tests.
+
+`DESK` (aliases `SPLIT` and `DASHBOARD`) opens the combined workspace adapted
+from `alphai-tui`. Press `Tab`/`Shift+Tab` or `1`/`2`/`3` to focus Monitor,
+Chart, or News. Clicking inside a pane focuses it and sends subsequent keys to
+that pane. On short terminals the News pane yields instead of crushing the
+market panels; use `NEWS` for the full feed.
 
 Run `HELP` from the command bar—or press `F1`—to open the command and controls
 guide without leaving the current workspace. Close it with `Esc`, `Q`, `F1`,

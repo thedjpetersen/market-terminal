@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
-    app::{App, RuntimeSettingsSummary, WorkspaceRegistry},
+    app::{App, DeskWorkspace, RuntimeSettingsSummary, WorkspaceRegistry},
     features::{
         alerts::{AlertsQuery, AlertsWorkspace},
         assistant::{AssistantGateway, AssistantWorkspace},
@@ -105,13 +105,31 @@ fn build_app(providers: AppProviders) -> App {
     } else {
         SpreadsheetWorkspace::empty(spreadsheet_market_data, Arc::new(LocalSpreadsheetFiles))
     };
+    let desk_news = match article_opener.clone() {
+        Some(opener) => NewsWorkspace::with_article_opener(news_query.clone(), opener),
+        None => NewsWorkspace::new(news_query.clone()),
+    };
+    let desk_workspace = DeskWorkspace::new(
+        Box::new(WatchlistWorkspace::with_snapshot_refresh_interval(
+            market_data.clone(),
+            watchlist_catalog.clone(),
+            snapshot_refresh_interval,
+        )),
+        Box::new(ChartingWorkspace::with_primary(
+            chart_history.clone(),
+            chart_primary.clone(),
+        )),
+        Box::new(desk_news),
+    );
 
     let workspaces = WorkspaceRegistry::new(vec![
         Box::new(OverviewWorkspace::new(overview_query)),
+        Box::new(desk_workspace),
         Box::new(AssistantWorkspace::new(
             assistant_gateway,
             vec![
                 "overview".to_owned(),
+                "desk".to_owned(),
                 "assistant".to_owned(),
                 "instrument_search".to_owned(),
                 "watchlist".to_owned(),

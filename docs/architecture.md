@@ -17,6 +17,8 @@ bootstrap ──▶ app kernel
 
 - `app` owns lifecycle, input modes, keyboard/mouse routing, and the stable
   `Workspace` plug-in contract. It has no market or portfolio business rules.
+  Its generic `DeskWorkspace` composes three existing workspace instances and
+  routes focus/render/input without importing their domain models.
   It snapshots its shell state through the persistence context's narrow
   repository port.
 - `features/<name>` is a bounded context. It owns its domain types, outbound

@@ -418,6 +418,7 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::styled("USEFUL COMMANDS", theme::AMBER),
             Line::raw("HELP                 This guide"),
             Line::raw("SETTINGS             Effective configuration"),
+            Line::raw("DESK                 Monitor + Chart + News"),
             Line::raw("PORT IMPORT <CSV>    Import positions"),
             Line::raw("PORT RELOAD          Reload positions"),
             Line::raw("SHEET IMPORT <CSV>   Replace active sheet"),

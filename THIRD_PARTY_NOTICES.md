@@ -10,7 +10,10 @@ official Alpaca adapter in `src/infrastructure/alpaca.rs` also adapts the
 upstream response-shape, price-fallback, feed-selection, and bar-ordering work
 to this project's typed ports and bounded synchronous workers. The secret-free
 first-run/effective-settings overlay is based on the upstream settings-flow
-idea, with new state and rendering written for this application's shell.
+idea, with new state and rendering written for this application's shell. The
+responsive Monitor/Chart/News split-desk composition also adapts the upstream
+split-view behavior to this application's generic `Workspace` contract; its
+implementation is identified in `src/app/desk.rs`.
 
 MIT License
 

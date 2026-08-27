@@ -1,3 +1,4 @@
+mod desk;
 mod events;
 mod input;
 mod settings;
@@ -13,6 +14,7 @@ use crate::{
     ui::{self, ShellClickTarget},
 };
 
+pub use desk::{DeskWorkspace, DESK_ID};
 pub use events::{EventBus, EventEnvelope, EventTopic, SubscriptionId, SubscriptionMetrics};
 pub use input::{CommandEditMode, InputMode};
 pub use settings::RuntimeSettingsSummary;
@@ -854,11 +856,19 @@ mod tests {
 
     #[test]
     fn clicking_the_ai_navigation_item_opens_the_drawer() {
+        let frame_area = Rect::new(0, 0, 160, 48);
         let mut app = bootstrap::demo_app();
         app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
         let underlying = app.active_workspace();
+        let navigation_row = crate::ui::ShellLayout::new(frame_area).navigation.y;
+        let assistant_column = (0..frame_area.width)
+            .find(|column| {
+                crate::ui::hit_test(&app, frame_area, *column, navigation_row)
+                    == Some(crate::ui::ShellClickTarget::Navigation(ASSISTANT))
+            })
+            .expect("assistant navigation item should be clickable");
 
-        app.handle_mouse(left_click(18, 3), Rect::new(0, 0, 160, 48));
+        app.handle_mouse(left_click(assistant_column, navigation_row), frame_area);
 
         assert_eq!(app.active_workspace, underlying);
         assert!(app.assistant_drawer_visible());
