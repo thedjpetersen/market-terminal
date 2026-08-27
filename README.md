@@ -82,10 +82,10 @@ MARKET_TERMINAL_NEWS_REFRESH_SECS=300
 
 ## Live market data
 
-The interactive Monitor, Chart, and Spreadsheet resolve quote/history fields
-through Alpha Vantage on bounded background workers; provider latency never
-runs on the input or render thread. Configure a personal key, comma-separated
-watchlist, and initial chart symbol:
+The interactive Monitor, Chart, Alerts, Security, and Spreadsheet resolve
+quote/history fields on bounded background workers; provider latency never
+runs on the input or render thread. Alpha Vantage is the default. Configure a
+personal key, comma-separated watchlist, and initial chart symbol:
 
 ```dotenv
 ALPHA_VANTAGE_API_KEY="your-key"
@@ -109,14 +109,32 @@ periods; `Home` returns the inspection cursor to the latest observation. The
 same studies can be requested from the command bar, for example
 `CHART AAPL 1Y EMA20 RSI14`.
 
+To use Alpaca's official Market Data API instead, create Alpaca data keys and
+select the provider explicitly:
+
+```dotenv
+MARKET_TERMINAL_MARKET_DATA_PROVIDER="alpaca"
+APCA_API_KEY_ID="your-key-id"
+APCA_API_SECRET_KEY="your-secret-key"
+ALPACA_FEED="iex"
+MARKET_TERMINAL_WATCHLIST="AAPL,MSFT,NVDA"
+MARKET_TERMINAL_CHART_SYMBOL="AAPL"
+```
+
+`iex` is the safe default for Alpaca Basic accounts; use `sip` only with the
+corresponding entitlement. Query-only providers refresh the Monitor every 60
+seconds by default; set `MARKET_TERMINAL_QUOTE_REFRESH_SECS` between 5 and
+3,600 seconds to change it. `R` refreshes immediately.
+
 ## Live security research
 
-The interactive Security workspace combines Alpha Vantage's delayed quote and
-recent daily history with the SEC's official company-ticker master, submissions,
-and company-facts APIs. Reported annual revenue, operating income, net income,
-and diluted EPS are derived only from comparable US-GAAP 10-K facts; recent
-10-K, 10-Q, and 8-K metadata retain their accession numbers and official
-document URLs. All provider calls run on a coalescing background worker.
+The interactive Security workspace combines the selected market provider's
+quote and recent history with the SEC's official company-ticker master,
+submissions, and company-facts APIs. Reported annual revenue, operating income,
+net income, and diluted EPS are derived only from comparable US-GAAP 10-K
+facts; recent 10-K, 10-Q, and 8-K metadata retain their accession numbers and
+official document URLs. All provider calls run on a coalescing background
+worker.
 
 SEC EDGAR does not supply analyst estimates or a canonical peer set, and this
 adapter does not yet normalize institutional ownership filings. Those panels
@@ -126,7 +144,8 @@ Security header to invalidate the page cache and fetch again.
 ## Live alert observations
 
 Alert rules remain local and clearly marked as simulated delivery, but the
-interactive app evaluates them against real Alpha Vantage quote snapshots.
+interactive app evaluates them against real snapshots from the selected market
+provider.
 Create a rule with `ALERT IBM > 250` or `ALERT IBM MOVE < -2`, then press `R`
 or click the Alerts header to fetch a new observation. Evaluation IDs derive
 from provider, canonical instrument, observation time, price, and move, so
@@ -295,10 +314,11 @@ reconnect.
 
 HawaiianNinja pointed us to
 [`makeev/alphai-tui`](https://github.com/makeev/alphai-tui). Codex then
-integrated the selected MIT-licensed pieces we care about—currently indicator
-math and chart interaction ideas—into this project's bounded, provider-aware
-architecture. `alphai-tui` is Copyright (c) 2026 Mikhail Makeev and licensed
-under MIT. The copied-code provenance and complete upstream license text are in
+integrated the selected MIT-licensed pieces we care about—indicator math,
+chart interaction ideas, provider-selection patterns, and official Alpaca
+adapter behavior—into this project's bounded, provider-aware architecture.
+`alphai-tui` is Copyright (c) 2026 Mikhail Makeev and licensed under MIT. The
+copied-code provenance and complete upstream license text are in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Architecture

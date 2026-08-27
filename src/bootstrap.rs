@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
     app::{App, WorkspaceRegistry},
@@ -18,7 +18,7 @@ use crate::{
         watchlist::{WatchlistCatalog, WatchlistWorkspace},
     },
     infrastructure::{
-        AlphaVantageMarketData, CodexAppServerConfig, CodexAppServerGateway,
+        AlpacaMarketData, AlphaVantageMarketData, CodexAppServerConfig, CodexAppServerGateway,
         ConfiguredWatchlistCatalog, CsvPortfolioRepository, DemoAlertsReplay, DemoChartHistory,
         DemoChatGateway, DemoData, DemoInstrumentSearch, DemoMarketDataReplay,
         DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway, LiveAlertsQuery,
@@ -45,6 +45,7 @@ pub fn demo_app() -> App {
         security_query: Arc::new(DemoData),
         security_symbol: "AAPL US".to_owned(),
         alerts_query: Arc::new(DemoAlertsReplay::new()),
+        snapshot_refresh_interval: Duration::from_secs(60),
     })
 }
 
@@ -62,6 +63,7 @@ struct AppProviders {
     security_query: Arc<dyn SecurityQuery>,
     security_symbol: String,
     alerts_query: Arc<dyn AlertsQuery>,
+    snapshot_refresh_interval: Duration,
 }
 
 fn build_app(providers: AppProviders) -> App {
@@ -79,6 +81,7 @@ fn build_app(providers: AppProviders) -> App {
         security_query,
         security_symbol,
         alerts_query,
+        snapshot_refresh_interval,
     } = providers;
     let data = Arc::new(DemoData);
     let overview_query: Arc<dyn OverviewQuery> = data.clone();
@@ -111,7 +114,11 @@ fn build_app(providers: AppProviders) -> App {
             ],
         )),
         Box::new(InstrumentSearchWorkspace::new(instrument_search)),
-        Box::new(WatchlistWorkspace::new(market_data, watchlist_catalog)),
+        Box::new(WatchlistWorkspace::with_snapshot_refresh_interval(
+            market_data,
+            watchlist_catalog,
+            snapshot_refresh_interval,
+        )),
         Box::new(MarketsWorkspace::new(markets_query)),
         Box::new(ChartingWorkspace::with_primary(
             chart_history,
@@ -139,15 +146,13 @@ pub fn persistent_app() -> App {
     let portfolio_query: Arc<dyn PortfolioRepository> =
         Arc::new(CsvPortfolioRepository::from_env());
     let news_query: Arc<dyn NewsFeed> = Arc::new(LiveNewsFeed::from_env());
-    let alpha_vantage = Arc::new(AlphaVantageMarketData::from_env());
+    let live_market_data = configured_market_data();
     let security_query: Arc<dyn SecurityQuery> = Arc::new(LiveSecurityQuery::from_env(
-        alpha_vantage.clone(),
-        alpha_vantage.clone(),
+        live_market_data.market_data.clone(),
+        live_market_data.chart_history.clone(),
     ));
-    let alerts_query: Arc<dyn AlertsQuery> = Arc::new(LiveAlertsQuery::new(alpha_vantage.clone()));
-    let spreadsheet_market_data: Arc<dyn SpreadsheetMarketData> = alpha_vantage.clone();
-    let market_data: Arc<dyn MarketDataQuery> = alpha_vantage.clone();
-    let chart_history: Arc<dyn ChartHistoryQuery> = alpha_vantage;
+    let alerts_query: Arc<dyn AlertsQuery> =
+        Arc::new(LiveAlertsQuery::new(live_market_data.market_data.clone()));
     let watchlist_catalog: Arc<dyn WatchlistCatalog> =
         Arc::new(ConfiguredWatchlistCatalog::from_env());
     let initial_symbol = initial_chart_symbol();
@@ -156,17 +161,55 @@ pub fn persistent_app() -> App {
         portfolio_query,
         news_query,
         article_opener: Some(Arc::new(SystemNewsArticleOpener)),
-        spreadsheet_market_data,
-        market_data,
+        spreadsheet_market_data: live_market_data.spreadsheet,
+        market_data: live_market_data.market_data,
         watchlist_catalog,
         instrument_search: Arc::new(SecInstrumentSearch::from_env()),
-        chart_history,
+        chart_history: live_market_data.chart_history,
         chart_primary: ChartInstrument::from_terminal_subject(&initial_symbol),
         security_query,
         security_symbol: format!("{initial_symbol} US"),
         alerts_query,
+        snapshot_refresh_interval: quote_refresh_interval(),
     })
     .with_session_repository(repository)
+}
+
+struct LiveMarketDataProviders {
+    spreadsheet: Arc<dyn SpreadsheetMarketData>,
+    market_data: Arc<dyn MarketDataQuery>,
+    chart_history: Arc<dyn ChartHistoryQuery>,
+}
+
+fn configured_market_data() -> LiveMarketDataProviders {
+    let provider = std::env::var("MARKET_TERMINAL_MARKET_DATA_PROVIDER")
+        .unwrap_or_else(|_| "alpha-vantage".to_owned())
+        .trim()
+        .to_ascii_lowercase();
+    if provider == "alpaca" {
+        let adapter = Arc::new(AlpacaMarketData::from_env());
+        LiveMarketDataProviders {
+            spreadsheet: adapter.clone(),
+            market_data: adapter.clone(),
+            chart_history: adapter,
+        }
+    } else {
+        let adapter = Arc::new(AlphaVantageMarketData::from_env());
+        LiveMarketDataProviders {
+            spreadsheet: adapter.clone(),
+            market_data: adapter.clone(),
+            chart_history: adapter,
+        }
+    }
+}
+
+fn quote_refresh_interval() -> Duration {
+    let seconds = std::env::var("MARKET_TERMINAL_QUOTE_REFRESH_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(|seconds| seconds.clamp(5, 3_600))
+        .unwrap_or(60);
+    Duration::from_secs(seconds)
 }
 
 fn initial_chart_symbol() -> String {

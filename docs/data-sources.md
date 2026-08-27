@@ -31,6 +31,35 @@ retention constraints.
 - **Redistribution:** no redistribution right is assumed. Users are responsible
   for selecting an Alpha Vantage plan appropriate to their display and use.
 
+## Alpaca Market Data
+
+- **Surfaces:** optional replacement provider for interactive Monitor
+  snapshots, Chart/Security history, local Alert observations, and Spreadsheet
+  `PX_LAST` / `PX_CHANGE(..., "1D")` cells.
+- **Official documentation:** [Market Data API](https://docs.alpaca.markets/us/v1.1/docs/about-market-data-api),
+  [stock snapshots](https://docs.alpaca.markets/us/reference/stocksnapshots-1),
+  and [historical bars](https://docs.alpaca.markets/us/v1.4.2/reference/stockbars).
+- **Authentication:** set `MARKET_TERMINAL_MARKET_DATA_PROVIDER=alpaca`,
+  `APCA_API_KEY_ID`, and `APCA_API_SECRET_KEY`. Credentials are sent only in
+  Alpaca's documented request headers and are never rendered.
+- **Feed/entitlement:** `ALPACA_FEED=iex` is the default and represents the IEX
+  venue. `sip` must only be selected with an appropriate consolidated-feed
+  entitlement. The explicit feed prevents account-plan defaults from silently
+  changing application behavior.
+- **Freshness/provenance:** successful snapshots retain provider timestamp,
+  receive timestamp, IEX/SIP provider ID, cache status, bid/ask, last, daily
+  change, volume, and realtime quality. Chart series name the selected feed.
+- **Bounds/caching:** snapshot batches are limited to 200 symbols and cached
+  for five seconds. History requests keep at most the newest 10,000-bar page;
+  a pagination token becomes a typed range-too-wide error instead of an
+  unbounded fetch. Responses are capped at 8 MiB. Query-only providers refresh
+  Monitor snapshots on a configurable 5–3,600 second coalescing interval.
+- **Failure/entitlement:** HTTP 401/403/422 responses become typed permission
+  failures; rate limits retain retry timing; malformed or missing observations
+  remain unavailable. Existing Monitor rows remain visibly last-known-good.
+- **Redistribution:** no redistribution right is assumed. Users are responsible
+  for an Alpaca plan and display use consistent with Alpaca's agreements.
+
 ## RSS/Atom publishers
 
 - **Surfaces:** interactive News list and story metadata.

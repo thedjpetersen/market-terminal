@@ -1,4 +1,5 @@
 mod alerts_demo;
+mod alpaca;
 mod alpha_vantage;
 mod article_opener;
 mod charting_demo;
@@ -19,6 +20,7 @@ mod spreadsheet_demo;
 mod watchlist_config;
 
 pub use alerts_demo::DemoAlertsReplay;
+pub use alpaca::AlpacaMarketData;
 pub use alpha_vantage::AlphaVantageMarketData;
 pub use article_opener::SystemNewsArticleOpener;
 pub use charting_demo::DemoChartHistory;

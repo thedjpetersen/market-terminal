@@ -5,6 +5,7 @@ use std::{
         mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
         Arc,
     },
+    time::{Duration, Instant},
 };
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
@@ -33,6 +34,8 @@ use super::{
     MonitorColumn, SortDirection, SortField, WatchlistCatalog, WatchlistDefinition, WatchlistItem,
     ID,
 };
+
+const DEFAULT_SNAPSHOT_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColumnPreset {
@@ -81,6 +84,8 @@ pub struct WatchlistWorkspace {
     refresh_receiver: Receiver<QuoteRefreshResult>,
     next_refresh_generation: u64,
     applied_refresh_generation: u64,
+    snapshot_refresh_interval: Duration,
+    next_snapshot_refresh: Instant,
     catalog: Arc<dyn WatchlistCatalog>,
     definition: WatchlistDefinition,
     rows: Vec<MonitorRow>,
@@ -93,6 +98,18 @@ pub struct WatchlistWorkspace {
 
 impl WatchlistWorkspace {
     pub fn new(market_data: Arc<dyn MarketDataQuery>, catalog: Arc<dyn WatchlistCatalog>) -> Self {
+        Self::with_snapshot_refresh_interval(
+            market_data,
+            catalog,
+            DEFAULT_SNAPSHOT_REFRESH_INTERVAL,
+        )
+    }
+
+    pub fn with_snapshot_refresh_interval(
+        market_data: Arc<dyn MarketDataQuery>,
+        catalog: Arc<dyn WatchlistCatalog>,
+        snapshot_refresh_interval: Duration,
+    ) -> Self {
         let (refresh_sender, worker_receiver) = sync_channel::<QuoteRefresh>(1);
         let (worker_sender, refresh_receiver) = sync_channel::<QuoteRefreshResult>(1);
         let worker_market_data = market_data.clone();
@@ -122,6 +139,8 @@ impl WatchlistWorkspace {
             refresh_receiver,
             next_refresh_generation: 0,
             applied_refresh_generation: 0,
+            snapshot_refresh_interval: snapshot_refresh_interval.max(Duration::from_millis(1)),
+            next_snapshot_refresh: Instant::now(),
             catalog,
             definition,
             rows: Vec::new(),
@@ -152,6 +171,7 @@ impl WatchlistWorkspace {
     }
 
     fn refresh(&mut self) {
+        self.next_snapshot_refresh = Instant::now() + self.snapshot_refresh_interval;
         let ids = self
             .definition
             .items
@@ -408,7 +428,7 @@ impl Workspace for WatchlistWorkspace {
                     format!("C COLUMNS {}  ", self.column_preset.label()),
                     Some(KeyCode::Char('c')),
                 ),
-                ("R REPLAY".to_owned(), Some(KeyCode::Char('r'))),
+                ("R REFRESH".to_owned(), Some(KeyCode::Char('r'))),
             ];
             let mut x = areas[2].x;
             for (label, key) in controls {
@@ -430,6 +450,9 @@ impl Workspace for WatchlistWorkspace {
     fn poll_intents(&mut self) -> Vec<AppIntent> {
         self.poll_refresh();
         self.poll_subscription();
+        if self.subscription.is_none() && Instant::now() >= self.next_snapshot_refresh {
+            self.refresh();
+        }
         std::mem::take(&mut self.pending_intents)
     }
 
@@ -671,6 +694,8 @@ fn quality_counts(rows: &[MonitorRow]) -> (usize, usize, usize) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
     use super::*;
     use crate::features::market_data::{
         CacheStatus, CanonicalInstrumentId, DataProvenance, HistoryRequest, Percent, PriceBar,
@@ -756,6 +781,27 @@ mod tests {
         }
     }
 
+    struct CountingMarketData {
+        requests: Arc<AtomicUsize>,
+    }
+
+    impl MarketDataQuery for CountingMarketData {
+        fn quote_snapshots(
+            &self,
+            instruments: &[CanonicalInstrumentId],
+        ) -> Result<Vec<QuoteSnapshot>, MarketDataError> {
+            self.requests.fetch_add(1, AtomicOrdering::Relaxed);
+            StubMarketData.quote_snapshots(instruments)
+        }
+
+        fn price_history(
+            &self,
+            request: &HistoryRequest,
+        ) -> Result<Vec<PriceBar>, MarketDataError> {
+            StubMarketData.price_history(request)
+        }
+    }
+
     struct SlowMarketData;
 
     impl MarketDataQuery for SlowMarketData {
@@ -783,6 +829,32 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_millis(75));
         assert_eq!(workspace.rows.len(), 2);
         assert_eq!(workspace.status, "LOADING LIVE QUOTES…");
+    }
+
+    #[test]
+    fn query_only_providers_are_polled_on_a_bounded_interval() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let mut workspace = WatchlistWorkspace::with_snapshot_refresh_interval(
+            Arc::new(CountingMarketData {
+                requests: requests.clone(),
+            }),
+            Arc::new(StubCatalog),
+            Duration::from_millis(2),
+        );
+        let first_deadline = Instant::now() + Duration::from_secs(1);
+        while requests.load(AtomicOrdering::Relaxed) < 1 && Instant::now() < first_deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(requests.load(AtomicOrdering::Relaxed), 1);
+
+        std::thread::sleep(Duration::from_millis(3));
+        workspace.poll_intents();
+        let second_deadline = Instant::now() + Duration::from_secs(1);
+        while requests.load(AtomicOrdering::Relaxed) < 2 && Instant::now() < second_deadline {
+            workspace.poll_intents();
+            std::thread::yield_now();
+        }
+        assert_eq!(requests.load(AtomicOrdering::Relaxed), 2);
     }
 
     #[test]

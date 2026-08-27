@@ -5,7 +5,10 @@
 Selected chart indicator algorithms and interaction ideas were adapted from
 [`makeev/alphai-tui`](https://github.com/makeev/alphai-tui), commit
 `9143d2e1176d0a67a9f26960427cf370187fc2e6`. The directly adapted indicator
-implementation is identified in `src/features/charting/indicators.rs`.
+implementation is identified in `src/features/charting/indicators.rs`. The
+official Alpaca adapter in `src/infrastructure/alpaca.rs` also adapts the
+upstream response-shape, price-fallback, feed-selection, and bar-ordering work
+to this project's typed ports and bounded synchronous workers.
 
 MIT License
 
