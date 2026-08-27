@@ -412,6 +412,15 @@ impl Workspace for WatchlistWorkspace {
                 }
                 true
             }
+            KeyCode::Char('a') => {
+                if let Some(row) = self.rows.get(self.selected) {
+                    self.pending_intents.push(AppIntent::DispatchCommand {
+                        command: format!("SHEET INSERT {}", row.item.symbol),
+                        origin: ID,
+                    });
+                }
+                true
+            }
             _ => false,
         }
     }

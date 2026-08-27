@@ -184,6 +184,7 @@ pub struct ChartingWorkspace {
     desired_generation: u64,
     history: Option<Vec<HistorySeries>>,
     history_error: Option<HistoryError>,
+    pending_intents: Vec<AppIntent>,
 }
 
 impl ChartingWorkspace {
@@ -231,6 +232,7 @@ impl ChartingWorkspace {
             desired_generation: 0,
             history: None,
             history_error: None,
+            pending_intents: Vec::new(),
         };
         workspace.queue_history();
         workspace
@@ -830,6 +832,13 @@ impl Workspace for ChartingWorkspace {
                 self.status = format!("LINE MODE · {}", self.line_mode.label());
                 true
             }
+            KeyCode::Char('a') => {
+                self.pending_intents.push(AppIntent::DispatchCommand {
+                    command: format!("SHEET INSERT {}", self.specification.primary.symbol),
+                    origin: ID,
+                });
+                true
+            }
             KeyCode::Char('k') => {
                 self.toggle_display_mode();
                 true
@@ -926,7 +935,7 @@ impl Workspace for ChartingWorkspace {
 
     fn poll_intents(&mut self) -> Vec<AppIntent> {
         self.poll_history();
-        Vec::new()
+        std::mem::take(&mut self.pending_intents)
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {

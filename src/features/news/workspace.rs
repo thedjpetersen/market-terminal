@@ -316,6 +316,17 @@ impl Workspace for NewsWorkspace {
                     });
                 }
             }
+            KeyCode::Char('a') => {
+                if let Some(symbol) = self
+                    .selected_story(&workbench)
+                    .and_then(|story| story.related_symbols.first())
+                {
+                    self.pending_intents.push(AppIntent::DispatchCommand {
+                        command: format!("SHEET INSERT {symbol} US"),
+                        origin: ID,
+                    });
+                }
+            }
             _ => return false,
         }
         self.clamp_selection();

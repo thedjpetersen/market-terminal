@@ -150,18 +150,23 @@ endorsed by, or sponsored by Yahoo.
   returns, risk statistics, attribution, or movers from this point-in-time
   snapshot.
 
-## User workbook CSV
+## User workbook and CSV
 
-- **Surface:** interactive Spreadsheet active sheet.
+- **Surface:** interactive Spreadsheet workbook and active-sheet CSV exchange.
 - **Source/ownership:** a local UTF-8 CSV selected by the user; raw formulas are
   preserved as cell text and recalculated by the local workbook engine.
 - **Bounds:** imports are capped at 10 MB, 26 columns, and 100 rows. Export uses
   the active sheet's minimal populated range.
 - **Retention/writes:** no workbook CSV is uploaded. New exports refuse to
   replace an existing file; `SHEET EXPORT!` is the explicit replacement form
-  and uses a same-directory temporary file before rename.
-- **Market data:** resolved `PX_LAST`/`PX_CHANGE` values are overlays and are not
-  written into the raw CSV in place of formulas.
+  and uses a same-directory temporary file before rename. Complete workbooks
+  autosave as bounded, schema-versioned feature documents in the user's local
+  application state with atomic replacement and previous-generation recovery.
+- **Market data:** resolved financial values are overlays and are not written
+  into raw formulas. Live quote adapters currently cover `PX_LAST` and
+  `PX_CHANGE`; the deterministic gallery covers `HISTORY` and `FUNDAMENTAL` for
+  contract tests. Interactive adapters report those fields unavailable until a
+  properly licensed history/fundamental provider is configured.
 
 ## SEC EDGAR structured data
 

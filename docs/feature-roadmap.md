@@ -66,14 +66,19 @@ move to its own crate later without changing its public vocabulary.
 - **Complete:** toggleable AI drawer with immediate input focus, a warm reusable
   Codex app-server worker, and bounded, transient, on-demand News article
   reading with an explicit publisher-page fallback.
-- **In progress:** first financial-function slice with top-level
-  `PX_LAST(instrument)` and `PX_CHANGE(instrument, period)` cells, bounded
-  background resolution, formula-preserving recalculation, explicit loading,
-  stale, permission-denied, and unavailable states, and visible provider/as-of
-  provenance.
-- **Next:** nested/composable financial functions, `HISTORY` and `FUNDAMENTAL`,
-  feature-document workbook persistence, real licensed provider adapters, and
-  performance/golden-snapshot gates.
+- **Complete:** Stage 0 platform foundation for the modular-monolith baseline:
+  production-published kernel events, opt-in structured tracing, crash-safe
+  feature documents, deterministic semantic frame goldens at 80 x 24,
+  120 x 36, and 160 x 48, and a CI-enforced update latency budget.
+- **Complete:** Stage 1 research desktop and Spreadsheet MVP: 27 pure functions,
+  composable `PX_LAST`, `PX_CHANGE`, `HISTORY`, and `FUNDAMENTAL`, typed async
+  states and provenance, five-sheet/10,000-cell performance coverage, durable
+  workbook save/load/autosave, and intent-based selection exchange with FIND,
+  MON, SEC, CHART, and NEWS.
+- **Next:** licensed production adapters for history and fundamentals plus the
+  Stage 2 portfolio, risk, screening, and restart-safe alerts program. Provider
+  availability extends the deployment surface; deterministic fixtures remain
+  the Stage 1 acceptance baseline.
 
 ## Product principles
 
@@ -191,6 +196,10 @@ surface area.
 - A deterministic integration test can replay quotes and user keys to the same
   rendered buffer on every run.
 
+**Status: complete.** The current baseline enforces these criteria in CI through
+typed command/registry tests, bounded worker and replay tests, semantic terminal
+goldens, and the release-mode performance gate.
+
 ## Stage 1 — Research desktop and Spreadsheet
 
 **Outcome:** a coherent daily research loop built from reusable primitives,
@@ -275,6 +284,10 @@ SHEET -> create workbook -> enter/import instruments
 - Golden snapshots cover grid, formula editor, help, errors, loading, stale
   values, narrow terminals, and high-density layouts. No glow effects or
   browser assets are introduced.
+
+**Status: complete.** The supported MVP and formula grammar are documented in
+[`spreadsheet.md`](spreadsheet.md). Licensed live `HISTORY` and `FUNDAMENTAL`
+providers remain adapter work and do not change workbook or formula contracts.
 
 ## Stage 2 — Portfolio, risk, screening, and alerts
 

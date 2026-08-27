@@ -58,20 +58,23 @@ attribution, and mover data is rendered as unavailable rather than replaced by
 the gallery values.
 
 Spreadsheet financial formulas use the Spreadsheet-owned
-`SpreadsheetMarketData` batch port. The workspace parses top-level
-`PX_LAST`/`PX_CHANGE` requests, sends them through a capacity-bounded worker,
-and overlays returned values into a cloned evaluation snapshot so formulas and
-undo history remain provider-neutral and deterministic. External-cell state is
+`SpreadsheetMarketData` batch port. The workspace recursively extracts
+`PX_LAST`, `PX_CHANGE`, `HISTORY`, and `FUNDAMENTAL` requests, sends them through
+a capacity-bounded worker, and substitutes returned values into a cloned
+evaluation snapshot so nested formulas and undo history remain provider-neutral
+and deterministic. External-cell state is
 kept alongside the workbook and carries provider, observation/receive times,
-quality, entitlement failure, and availability. This first slice deliberately
-does not make arbitrary provider calls from the formula evaluator.
+quality, entitlement failure, and availability. The pure formula evaluator does
+not make arbitrary provider calls.
 
 The persistent Spreadsheet starts with an empty workbook and receives
 `LocalSpreadsheetFiles` through its feature-owned `SpreadsheetFileStore` port.
 CSV import/export is bounded, formula-preserving, active-sheet scoped, and
-explicit about overwrite intent. The gallery-only constructor retains the
-seeded IBM workbook for deterministic captures; `persistent_app` never wires
-that seed.
+explicit about overwrite intent. Complete workbook persistence is a separate
+versioned payload behind the Spreadsheet-owned `SpreadsheetWorkbookStore` port
+and the crash-safe feature-document adapter. The gallery-only constructor
+retains the seeded IBM workbook for deterministic captures; `persistent_app`
+never wires that seed.
 
 The interactive Monitor uses the same Alpha Vantage adapter through the
 Market-Data-owned `MarketDataQuery` port. `WatchlistWorkspace` submits snapshots

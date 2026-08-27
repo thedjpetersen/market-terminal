@@ -99,6 +99,15 @@ impl Workspace for InstrumentSearchWorkspace {
                 }
                 true
             }
+            KeyCode::Char('a') => {
+                if let Some(instrument) = self.results.get(self.selected) {
+                    self.pending_intents.push(AppIntent::DispatchCommand {
+                        command: format!("SHEET INSERT {}", instrument.terminal_subject()),
+                        origin: ID,
+                    });
+                }
+                true
+            }
             KeyCode::F(9) => {
                 self.query.request_refresh();
                 true
@@ -266,6 +275,19 @@ mod tests {
             workspace.poll_intents(),
             vec![AppIntent::DispatchCommand {
                 command: "SEC MSFT US".to_owned(),
+                origin: ID,
+            }]
+        );
+    }
+
+    #[test]
+    fn selected_search_result_can_be_inserted_into_spreadsheet() {
+        let mut workspace = InstrumentSearchWorkspace::new(Arc::new(StubSearch));
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)));
+        assert_eq!(
+            workspace.poll_intents(),
+            vec![AppIntent::DispatchCommand {
+                command: "SHEET INSERT AAPL US".to_owned(),
                 origin: ID,
             }]
         );

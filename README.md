@@ -25,9 +25,10 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 - News — asynchronously refreshed RSS/Atom stories, filters, unread/bookmarks,
   an on-demand in-terminal article reader, clickable publisher links, and
   linked securities
-- Spreadsheet — workbook-scoped recalculation, cross-sheet and mixed absolute
-  references, translated copy/fill, lookups, undo/redo, CSV, and asynchronously
-  resolved `PX_LAST`/`PX_CHANGE` cells with explicit data-quality state
+- Spreadsheet — durable multi-sheet workbooks, workbook-scoped recalculation,
+  cross-sheet and mixed absolute references, 27 pure functions, translated
+  copy/fill, undo/redo, CSV, and composable `PX_LAST`, `PX_CHANGE`, `HISTORY`,
+  and `FUNDAMENTAL` cells with explicit data-quality state
 - AI — ChatGPT-authenticated Codex analysis and natural-language workspace control,
   with an optional OpenRouter fallback
 - Find — canonical instrument identity and ranked symbol/company discovery
@@ -323,6 +324,34 @@ Export writes only the active sheet and refuses to replace an existing file.
 Use `SHEET EXPORT! <FILE.CSV>` when replacement is intentional; replacement is
 written through a same-directory temporary file. On Unix, newly created files
 use owner-only permissions.
+
+Persistent mode autosaves the complete workbook to the crash-safe local feature
+document store. Named workbook operations are separate from active-sheet CSV
+files:
+
+```text
+SHEET SAVE [workbook-id]
+SHEET LOAD [workbook-id]
+SHEET LIST
+SHEET DROP <workbook-id>
+```
+
+With a text instrument cell selected, `SHEET FIND`, `SHEET MON`, `SHEET SEC`,
+`SHEET CHART`, or `SHEET NEWS` sends that selection through a kernel intent.
+Press `A` on a selected result in Find, Monitor, Security, Chart, or News to
+insert it back into the selected sheet cell. Feature packages do not import one
+another for this exchange.
+
+The complete formula grammar, function catalog, async state model, limits, and
+performance contract are in [`docs/spreadsheet.md`](docs/spreadsheet.md).
+
+## Diagnostics and quality gates
+
+Set `RUST_LOG` to opt into newline-delimited JSON tracing without changing the
+normal terminal display, for example `RUST_LOG=market_terminal=debug cargo run`.
+CI rejects Clippy warnings, test failures, release-build failures, semantic frame
+changes at standard terminal sizes, and spreadsheet edit p95 above 50 ms with
+10,000 populated cells.
 
 ## Experience gallery
 

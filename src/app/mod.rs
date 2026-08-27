@@ -1104,6 +1104,39 @@ mod tests {
     }
 
     #[test]
+    fn spreadsheet_and_research_exchange_selection_through_intents() {
+        let mut app = bootstrap::demo_app();
+        app.command = "SHEET A2".to_owned();
+        app.execute_command();
+        app.command = "SHEET SEC".to_owned();
+        app.execute_command();
+        assert_ne!(app.active_workspace(), SECURITY);
+        app.advance_tick();
+        assert_eq!(app.active_workspace(), SECURITY);
+
+        app.command = "SHEET A20".to_owned();
+        app.execute_command();
+        app.command = "SEC MSFT US".to_owned();
+        app.execute_command();
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        app.advance_tick();
+        assert_eq!(app.active_workspace().as_str(), "spreadsheet");
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 36)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render(frame, &app))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("MSFT US"));
+    }
+
+    #[test]
     fn assistant_drawer_renders_over_the_current_workspace_and_closes_by_click() {
         let frame_area = Rect::new(0, 0, 160, 48);
         let mut app = bootstrap::demo_app();

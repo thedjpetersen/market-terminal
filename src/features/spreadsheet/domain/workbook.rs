@@ -1,5 +1,7 @@
 use std::{cmp::Ordering, collections::HashMap, fmt};
 
+use chrono::{Datelike, NaiveDate};
+
 use super::{
     parse_formula, AggregateFunction, BinaryOperator, CellAddress, CellError, CellValue, Expr,
     FormulaReference, UnaryOperator, Worksheet, WorksheetError,
@@ -433,6 +435,18 @@ impl Workbook {
                 }
                 finite_number(value.sqrt()).map(CellValue::Number)
             }
+            AggregateFunction::Date => {
+                expect_arity(arguments, 3, 3)?;
+                let year = self.evaluate_expression(&arguments[0], current_sheet, stack, cache)?;
+                let month = self.evaluate_expression(&arguments[1], current_sheet, stack, cache)?;
+                let day = self.evaluate_expression(&arguments[2], current_sheet, stack, cache)?;
+                date_value(number(year)?, number(month)?, number(day)?)
+            }
+            AggregateFunction::Year | AggregateFunction::Month | AggregateFunction::Day => {
+                expect_arity(arguments, 1, 1)?;
+                let value = self.evaluate_expression(&arguments[0], current_sheet, stack, cache)?;
+                date_part(function, value_as_text(value)?)
+            }
             AggregateFunction::XLookup => {
                 self.evaluate_xlookup(arguments, current_sheet, stack, cache)
             }
@@ -639,6 +653,37 @@ fn finite_number(value: f64) -> Result<f64, CellError> {
         .is_finite()
         .then_some(value)
         .ok_or(CellError::InvalidValue)
+}
+
+fn date_value(year: f64, month: f64, day: f64) -> Result<CellValue, CellError> {
+    let year = whole_number(year)?;
+    let month = u32::try_from(whole_number(month)?).map_err(|_| CellError::InvalidValue)?;
+    let day = u32::try_from(whole_number(day)?).map_err(|_| CellError::InvalidValue)?;
+    NaiveDate::from_ymd_opt(year, month, day)
+        .map(|date| CellValue::Text(date.format("%Y-%m-%d").to_string()))
+        .ok_or(CellError::InvalidValue)
+}
+
+fn date_part(function: AggregateFunction, value: String) -> Result<CellValue, CellError> {
+    let date =
+        NaiveDate::parse_from_str(&value, "%Y-%m-%d").map_err(|_| CellError::InvalidValue)?;
+    Ok(CellValue::Number(match function {
+        AggregateFunction::Year => f64::from(date.year()),
+        AggregateFunction::Month => f64::from(date.month()),
+        AggregateFunction::Day => f64::from(date.day()),
+        _ => unreachable!("date part was matched above"),
+    }))
+}
+
+fn whole_number(value: f64) -> Result<i32, CellError> {
+    if !value.is_finite()
+        || value.fract().abs() > f64::EPSILON
+        || value < f64::from(i32::MIN)
+        || value > f64::from(i32::MAX)
+    {
+        return Err(CellError::InvalidValue);
+    }
+    Ok(value as i32)
 }
 
 fn aggregate(function: AggregateFunction, numbers: &[f64]) -> Result<f64, CellError> {

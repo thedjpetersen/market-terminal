@@ -17,7 +17,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{CommandInvocation, Workspace, WorkspaceDescriptor},
+    app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
     ui::{
         components::terminal_block,
         is_primary_click, scroll_key,
@@ -108,6 +108,7 @@ pub struct SpreadsheetWorkspace {
     visible_rows: StateCell<u16>,
     edit: Option<EditSession>,
     clipboard: Option<(String, CellAddress)>,
+    pending_intents: Vec<AppIntent>,
     status: String,
 }
 
@@ -176,6 +177,7 @@ impl SpreadsheetWorkspace {
             visible_rows: StateCell::new(18),
             edit: None,
             clipboard: None,
+            pending_intents: Vec::new(),
             status: if seed_gallery {
                 String::new()
             } else {
@@ -292,6 +294,40 @@ impl SpreadsheetWorkspace {
     fn autosave(&mut self) {
         let id = self.workbook_id.clone();
         self.save_workbook(&id, true);
+    }
+
+    fn send_selected_instrument(&mut self, target: &str) {
+        let subject = self
+            .spreadsheet
+            .cell(&self.cursor.to_string())
+            .ok()
+            .map(|cell| cell.raw.trim().to_owned())
+            .filter(|raw| !raw.is_empty() && !raw.starts_with('='));
+        let Some(subject) = subject else {
+            self.status = format!("{target} REQUIRES A TEXT INSTRUMENT IN THE SELECTED CELL");
+            return;
+        };
+        self.pending_intents.push(AppIntent::DispatchCommand {
+            command: format!("{target} {subject}"),
+            origin: ID,
+        });
+        self.status = format!("SENT {subject} TO {target}");
+    }
+
+    fn insert_result(&mut self, value: &str) {
+        if value.trim().is_empty() {
+            self.status = "INSERT REQUIRES A VALUE".to_owned();
+            return;
+        }
+        let address = self.cursor.to_string();
+        match self.spreadsheet.set_cell(&address, value.trim()) {
+            Ok(_) => {
+                self.refresh_market_data();
+                self.autosave();
+                self.status = format!("INSERTED RESULT INTO {address}");
+            }
+            Err(error) => self.status = format!("INSERT ERROR · {error}"),
+        }
     }
 
     fn seed_demo_workbook(&mut self) {
@@ -1032,7 +1068,7 @@ impl SpreadsheetWorkspace {
                 ),
                 Span::styled(format!(" {status}   "), INK),
                 Span::styled(
-                    "F9 REFRESH  Y COPY  P PASTE  CTRL-D/R FILL  CTRL-Z/Y UNDO/REDO  ENTER EDIT",
+                    "F9 REFRESH  Y/P COPY/PASTE  CTRL-D/R FILL  CTRL-Z/Y UNDO/REDO  SHEET SEC|CHART|NEWS",
                     MUTED,
                 ),
             ]))
@@ -1170,6 +1206,8 @@ impl Workspace for SpreadsheetWorkspace {
             "LOAD" | "OPEN" => self.load_workbook(&name, false),
             "LIST" => self.list_workbooks(),
             "DROP" => self.delete_workbook(&name),
+            "INSERT" => self.insert_result(&name),
+            "FIND" | "MON" | "SEC" | "CHART" | "NEWS" => self.send_selected_instrument(&operation),
             "ADD" | "NEW" => self.add_sheet((!name.is_empty()).then_some(name)),
             "NEXT" => self.select_adjacent_sheet(true),
             "PREV" | "PREVIOUS" => self.select_adjacent_sheet(false),
@@ -1325,9 +1363,9 @@ impl Workspace for SpreadsheetWorkspace {
         true
     }
 
-    fn poll_intents(&mut self) -> Vec<crate::app::AppIntent> {
+    fn poll_intents(&mut self) -> Vec<AppIntent> {
         self.poll_market_data();
-        Vec::new()
+        std::mem::take(&mut self.pending_intents)
     }
 
     fn on_blur(&mut self) {
@@ -1819,6 +1857,39 @@ mod tests {
             args: vec!["Z100".to_owned()],
         });
         assert_eq!(workspace.cursor.to_string(), "Z100");
+    }
+
+    #[test]
+    fn selected_text_cells_dispatch_research_intents_without_feature_imports() {
+        let mut workspace = workspace();
+        workspace.cursor = "A2".parse().unwrap();
+        workspace.handle_command(&CommandInvocation {
+            function: "SHEET".to_owned(),
+            args: vec!["SEC".to_owned()],
+        });
+        assert_eq!(
+            workspace.poll_intents(),
+            vec![AppIntent::DispatchCommand {
+                command: "SEC IBM US Equity".to_owned(),
+                origin: ID,
+            }]
+        );
+    }
+
+    #[test]
+    fn insert_command_writes_a_research_result_to_the_selected_cell() {
+        let files = Arc::new(MemoryFileStore {
+            input: String::new(),
+            writes: Mutex::new(Vec::new()),
+        });
+        let mut workspace = SpreadsheetWorkspace::empty(Arc::new(StubMarketData), files);
+        workspace.cursor = "C4".parse().unwrap();
+        workspace.handle_command(&CommandInvocation {
+            function: "SHEET".to_owned(),
+            args: vec!["INSERT".to_owned(), "MSFT".to_owned(), "US".to_owned()],
+        });
+        assert_eq!(workspace.spreadsheet.cell("C4").unwrap().raw, "MSFT US");
+        assert!(workspace.status.contains("INSERTED RESULT INTO C4"));
     }
 
     #[test]

@@ -5,6 +5,8 @@ use std::{
     fmt,
 };
 
+use chrono::{Datelike, NaiveDate};
+
 use super::{
     parse_formula, AggregateFunction, BinaryOperator, Cell, CellAddress, CellError, CellValue,
     Expr, UnaryOperator,
@@ -405,6 +407,18 @@ impl Worksheet {
                 }
                 finite_number(value.sqrt()).map(CellValue::Number)
             }
+            AggregateFunction::Date => {
+                expect_arity(arguments, 3, 3)?;
+                let year = self.evaluate_expression(&arguments[0], stack, cache)?;
+                let month = self.evaluate_expression(&arguments[1], stack, cache)?;
+                let day = self.evaluate_expression(&arguments[2], stack, cache)?;
+                date_value(self.number(year)?, self.number(month)?, self.number(day)?)
+            }
+            AggregateFunction::Year | AggregateFunction::Month | AggregateFunction::Day => {
+                expect_arity(arguments, 1, 1)?;
+                let value = self.evaluate_expression(&arguments[0], stack, cache)?;
+                date_part(function, value_as_text(value)?)
+            }
             AggregateFunction::XLookup => self.evaluate_xlookup(arguments, stack, cache),
             AggregateFunction::PriceLast
             | AggregateFunction::PriceChange
@@ -619,6 +633,37 @@ fn finite_number(value: f64) -> Result<f64, CellError> {
         .ok_or(CellError::InvalidValue)
 }
 
+fn date_value(year: f64, month: f64, day: f64) -> Result<CellValue, CellError> {
+    let year = whole_number(year)?;
+    let month = u32::try_from(whole_number(month)?).map_err(|_| CellError::InvalidValue)?;
+    let day = u32::try_from(whole_number(day)?).map_err(|_| CellError::InvalidValue)?;
+    NaiveDate::from_ymd_opt(year, month, day)
+        .map(|date| CellValue::Text(date.format("%Y-%m-%d").to_string()))
+        .ok_or(CellError::InvalidValue)
+}
+
+fn date_part(function: AggregateFunction, value: String) -> Result<CellValue, CellError> {
+    let date =
+        NaiveDate::parse_from_str(&value, "%Y-%m-%d").map_err(|_| CellError::InvalidValue)?;
+    Ok(CellValue::Number(match function {
+        AggregateFunction::Year => f64::from(date.year()),
+        AggregateFunction::Month => f64::from(date.month()),
+        AggregateFunction::Day => f64::from(date.day()),
+        _ => unreachable!("date part was matched above"),
+    }))
+}
+
+fn whole_number(value: f64) -> Result<i32, CellError> {
+    if !value.is_finite()
+        || value.fract().abs() > f64::EPSILON
+        || value < f64::from(i32::MIN)
+        || value > f64::from(i32::MAX)
+    {
+        return Err(CellError::InvalidValue);
+    }
+    Ok(value as i32)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorksheetError {
     EmptyName,
@@ -792,6 +837,27 @@ mod tests {
         assert_eq!(sheet.value(address("B4")), CellValue::Number(265.0));
         assert_eq!(sheet.value(address("B5")), CellValue::Number(42.0));
         assert_eq!(sheet.value(address("B6")), CellValue::Number(7.0));
+    }
+
+    #[test]
+    fn evaluates_deterministic_date_construction_and_parts() {
+        let mut sheet = Worksheet::new("Model").unwrap();
+        sheet.set(address("A1"), "=DATE(2026, 8, 27)");
+        sheet.set(address("B1"), "=YEAR(A1)");
+        sheet.set(address("B2"), "=MONTH(A1)");
+        sheet.set(address("B3"), "=DAY(A1)");
+        sheet.set(address("B4"), "=DATE(2026, 2, 30)");
+        assert_eq!(
+            sheet.value(address("A1")),
+            CellValue::Text("2026-08-27".to_owned())
+        );
+        assert_eq!(sheet.value(address("B1")), CellValue::Number(2026.0));
+        assert_eq!(sheet.value(address("B2")), CellValue::Number(8.0));
+        assert_eq!(sheet.value(address("B3")), CellValue::Number(27.0));
+        assert_eq!(
+            sheet.value(address("B4")),
+            CellValue::Error(CellError::InvalidValue)
+        );
     }
 
     #[test]

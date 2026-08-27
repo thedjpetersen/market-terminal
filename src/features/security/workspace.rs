@@ -313,6 +313,10 @@ impl Workspace for SecurityWorkspace {
                 command: format!("CHART {}", self.symbol),
                 origin: ID,
             }),
+            KeyCode::Char('a') => self.pending_intents.push(AppIntent::DispatchCommand {
+                command: format!("SHEET INSERT {}", self.symbol),
+                origin: ID,
+            }),
             KeyCode::F(9) => self.refresh_live(),
             _ => return false,
         }
