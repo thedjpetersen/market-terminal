@@ -31,6 +31,7 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
   with an optional OpenRouter fallback
 - Find — canonical instrument identity and ranked symbol/company discovery
 - Monitor — configurable watchlists, bounded quote streams, sorting,
+  provider day ranges, bounded session sparklines, responsive columns,
   data-quality states, last-known-good fallback, and replay
 - Chart — comparative performance, zero baselines, inspection cursor, market
   profile statistics, volume histograms, SMA/EMA overlays, and Wilder RSI
@@ -147,6 +148,13 @@ and 3,600 seconds to change it. `R` refreshes immediately. Markets uses
 `MARKET_TERMINAL_MARKETS_SYMBOLS` when set and otherwise follows the watchlist.
 It does not fill rates, currencies, commodities, breadth, sector aggregation,
 or calendars with equity proxies or gallery values.
+
+Monitor's `DAY RANGE` is shown only when the selected provider reports the
+current session's low and high. `SESSION` sparklines contain at most 64 distinct
+observations received during this process; cached repeats are ignored, the
+trace is not persisted, and no historical points are synthesized. At narrow
+widths—including the Desk pane—the table removes whole secondary columns while
+retaining legible symbol, price, movement, trace, and quality fields.
 
 ## Live security research
 
@@ -361,11 +369,11 @@ reconnect.
 HawaiianNinja pointed us to
 [`makeev/alphai-tui`](https://github.com/makeev/alphai-tui). Codex then
 integrated the selected MIT-licensed pieces we care about—indicator math,
-chart interaction ideas, provider-selection patterns, official Alpaca adapter
-behavior, and the fast first-run/settings flow—into this project's bounded,
-provider-aware architecture. `alphai-tui` is Copyright (c) 2026 Mikhail Makeev
-and licensed under MIT. The copied-code provenance and complete upstream
-license text are in
+chart and watchlist-density ideas, the responsive split desk,
+provider-selection patterns, official Alpaca adapter behavior, and the fast
+first-run/settings flow—into this project's bounded, provider-aware
+architecture. `alphai-tui` is Copyright (c) 2026 Mikhail Makeev and licensed
+under MIT. The copied-code provenance and complete upstream license text are in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Architecture

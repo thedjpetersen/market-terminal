@@ -35,19 +35,30 @@ impl QuoteSubscriptionRequest {
             .into_iter()
             .filter(|instrument| seen.insert(instrument.clone()))
             .collect();
-        Ok(Self { instruments, capacity })
+        Ok(Self {
+            instruments,
+            capacity,
+        })
     }
 
-    pub fn instruments(&self) -> &[CanonicalInstrumentId] { &self.instruments }
-    pub const fn capacity(&self) -> usize { self.capacity }
+    pub fn instruments(&self) -> &[CanonicalInstrumentId] {
+        &self.instruments
+    }
+    pub const fn capacity(&self) -> usize {
+        self.capacity
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SubscriptionId(u64);
 
 impl SubscriptionId {
-    pub const fn new(value: u64) -> Self { Self(value) }
-    pub const fn value(self) -> u64 { self.0 }
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+    pub const fn value(self) -> u64 {
+        self.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,8 +79,12 @@ pub struct SubscriptionMetrics {
 pub struct CancellationToken(Arc<AtomicBool>);
 
 impl CancellationToken {
-    pub fn cancel(&self) { self.0.store(true, Ordering::Release); }
-    pub fn is_cancelled(&self) -> bool { self.0.load(Ordering::Acquire) }
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
 }
 
 /// Bounded latest-value queue. A fast producer can never grow memory without bound.
@@ -163,6 +178,8 @@ mod tests {
                 change: None,
                 bid: None,
                 ask: None,
+                day_low: None,
+                day_high: None,
                 volume: None,
                 as_of: timestamp.clone(),
                 quality: DataQuality::RealTime,
@@ -199,7 +216,13 @@ mod tests {
         buffer.push(update("nvda", 3));
 
         let drained = buffer.drain();
-        assert_eq!(drained.iter().map(|item| item.snapshot.symbol.as_str()).collect::<Vec<_>>(), vec!["msft", "nvda"]);
+        assert_eq!(
+            drained
+                .iter()
+                .map(|item| item.snapshot.symbol.as_str())
+                .collect::<Vec<_>>(),
+            vec!["msft", "nvda"]
+        );
         assert_eq!(buffer.metrics().dropped, 1);
     }
 

@@ -614,6 +614,18 @@ fn quote_snapshot(
             .and_then(|quote| quote.ask)
             .filter(|value| value.is_finite())
             .map(Price::new),
+        day_low: snapshot
+            .daily_bar
+            .as_ref()
+            .and_then(|bar| bar.low)
+            .filter(|value| value.is_finite())
+            .map(Price::new),
+        day_high: snapshot
+            .daily_bar
+            .as_ref()
+            .and_then(|bar| bar.high)
+            .filter(|value| value.is_finite())
+            .map(Price::new),
         volume: snapshot
             .daily_bar
             .as_ref()
@@ -787,6 +799,12 @@ mod tests {
         assert_eq!(quote.last.map(Price::value), Some(214.53));
         assert_eq!(quote.bid.map(Price::value), Some(214.5));
         assert_eq!(quote.ask.map(Price::value), Some(214.55));
+        assert_eq!(
+            quote
+                .day_range()
+                .map(|(low, high)| (low.value(), high.value())),
+            Some((211.5, 215.0))
+        );
         assert_eq!(quote.volume.map(Quantity::value), Some(5_000_000));
         assert!(quote
             .change

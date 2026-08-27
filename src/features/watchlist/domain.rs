@@ -9,6 +9,8 @@ pub enum MonitorColumn {
     Bid,
     Ask,
     Volume,
+    DayRange,
+    Sparkline,
     Quality,
     AsOf,
 }
@@ -23,6 +25,8 @@ impl MonitorColumn {
             Self::Bid => "BID",
             Self::Ask => "ASK",
             Self::Volume => "VOLUME",
+            Self::DayRange => "DAY RANGE",
+            Self::Sparkline => "SESSION",
             Self::Quality => "QUALITY",
             Self::AsOf => "AS OF",
         }
@@ -116,11 +120,7 @@ pub struct WatchlistDefinition {
 }
 
 impl WatchlistDefinition {
-    pub fn new(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        items: Vec<WatchlistItem>,
-    ) -> Self {
+    pub fn new(id: impl Into<String>, name: impl Into<String>, items: Vec<WatchlistItem>) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -134,7 +134,10 @@ impl WatchlistDefinition {
     }
 
     pub fn with_columns(mut self, columns: Vec<MonitorColumn>) -> Self {
-        assert!(columns.contains(&MonitorColumn::Symbol), "monitor must show SYMBOL");
+        assert!(
+            columns.contains(&MonitorColumn::Symbol),
+            "monitor must show SYMBOL"
+        );
         self.visible_columns = columns;
         self
     }
@@ -153,6 +156,8 @@ impl WatchlistDefinition {
             MonitorColumn::Bid,
             MonitorColumn::Ask,
             MonitorColumn::Volume,
+            MonitorColumn::DayRange,
+            MonitorColumn::Sparkline,
             MonitorColumn::Quality,
             MonitorColumn::AsOf,
         ]
@@ -162,7 +167,10 @@ impl WatchlistDefinition {
         vec![
             MonitorColumn::Symbol,
             MonitorColumn::Last,
+            MonitorColumn::Change,
             MonitorColumn::ChangePercent,
+            MonitorColumn::DayRange,
+            MonitorColumn::Sparkline,
             MonitorColumn::Bid,
             MonitorColumn::Ask,
             MonitorColumn::Volume,
@@ -174,6 +182,7 @@ impl WatchlistDefinition {
             MonitorColumn::Symbol,
             MonitorColumn::Last,
             MonitorColumn::ChangePercent,
+            MonitorColumn::Sparkline,
             MonitorColumn::Quality,
         ]
     }
@@ -185,9 +194,11 @@ mod tests {
 
     #[test]
     fn configurable_columns_always_retain_symbol_identity() {
-        let definition = WatchlistDefinition::new("core", "Core", Vec::new()).with_columns(
-            vec![MonitorColumn::Symbol, MonitorColumn::Last, MonitorColumn::Quality],
-        );
+        let definition = WatchlistDefinition::new("core", "Core", Vec::new()).with_columns(vec![
+            MonitorColumn::Symbol,
+            MonitorColumn::Last,
+            MonitorColumn::Quality,
+        ]);
 
         assert_eq!(definition.visible_columns.len(), 3);
         assert_eq!(definition.visible_columns[0], MonitorColumn::Symbol);

@@ -4,6 +4,10 @@ This register is part of the release boundary. A technically reachable URL is
 not treated as permission to erase attribution, freshness, entitlement, or
 retention constraints.
 
+Across snapshot providers, Monitor retains at most 64 distinct observations per
+instrument for an in-process session sparkline. Cached repeats do not add
+points, and the trace is neither persisted nor synthesized.
+
 ## Alpha Vantage
 
 - **Surfaces:** interactive Markets/Monitor snapshots, Chart daily/weekly
@@ -15,7 +19,7 @@ retention constraints.
 - **Freshness:** `GLOBAL_QUOTE` without a realtime/delayed premium entitlement
   is end-of-day data. The UI labels it delayed rather than executable/live.
 - **Attribution/provenance:** provider ID, source trading day, receive time,
-  field, and quality travel with every usable value.
+  field, current-day low/high, and quality travel with every usable value.
 - **History semantics:** 1M uses recent daily bars; 6M/YTD/1Y require sufficient
   full daily history; 5Y is aggregated into ordered weekly OHLCV bars. The 1D
   view reports permission denied until an entitled intraday adapter is wired.
@@ -48,7 +52,8 @@ retention constraints.
   changing application behavior.
 - **Freshness/provenance:** successful snapshots retain provider timestamp,
   receive timestamp, IEX/SIP provider ID, cache status, bid/ask, last, daily
-  change, volume, and realtime quality. Chart series name the selected feed.
+  low/high, change, volume, and realtime quality. Chart series name the selected
+  feed.
 - **Bounds/caching:** snapshot batches are limited to 200 symbols and cached
   for five seconds. History requests keep at most the newest 10,000-bar page;
   a pagination token becomes a typed range-too-wide error instead of an

@@ -1,6 +1,12 @@
+//! Responsive watchlist density and Unicode sparkline downsampling adapt the
+//! corresponding table behavior from `makeev/alphai-tui` commit
+//! `9143d2e1176d0a67a9f26960427cf370187fc2e6` (MIT, Copyright (c) 2026
+//! Mikhail Makeev). This implementation plots only observations received by
+//! Market Terminal's typed market-data ports; see `THIRD_PARTY_NOTICES.md`.
+
 use std::{
     cmp::Ordering,
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{
         mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
         Arc,
@@ -36,6 +42,7 @@ use super::{
 };
 
 const DEFAULT_SNAPSHOT_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+const SESSION_TRACE_CAPACITY: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColumnPreset {
@@ -66,6 +73,8 @@ impl ColumnPreset {
 struct MonitorRow {
     item: WatchlistItem,
     quote: Option<QuoteSnapshot>,
+    session_trace: VecDeque<f64>,
+    last_trace_observation: Option<(String, Option<u64>)>,
 }
 
 struct QuoteRefresh {
@@ -206,7 +215,12 @@ impl WatchlistWorkspace {
             .items
             .iter()
             .cloned()
-            .map(|item| MonitorRow { item, quote: None })
+            .map(|item| MonitorRow {
+                item,
+                quote: None,
+                session_trace: VecDeque::with_capacity(SESSION_TRACE_CAPACITY),
+                last_trace_observation: None,
+            })
             .collect();
     }
 
@@ -224,7 +238,7 @@ impl WatchlistWorkspace {
                         .collect::<HashMap<_, _>>();
                     for row in &mut self.rows {
                         if let Some(quote) = quotes.get(&row.item.instrument_id) {
-                            row.quote = Some(quote.clone());
+                            apply_quote(row, quote.clone());
                         }
                     }
                     self.sort_rows();
@@ -281,7 +295,7 @@ impl WatchlistWorkspace {
                     .collect::<HashMap<_, _>>();
                 for row in &mut self.rows {
                     if let Some(snapshot) = updates.get(&row.item.instrument_id) {
-                        row.quote = Some(snapshot.clone());
+                        apply_quote(row, snapshot.clone());
                     }
                 }
                 self.sort_rows();
@@ -333,12 +347,13 @@ impl WatchlistWorkspace {
         });
     }
 
-    fn visible_columns(&self) -> Vec<MonitorColumn> {
-        match self.column_preset {
+    fn visible_columns(&self, available_width: u16) -> Vec<MonitorColumn> {
+        let desired = match self.column_preset {
             ColumnPreset::Configured => self.definition.visible_columns.clone(),
             ColumnPreset::Trading => WatchlistDefinition::trading_columns(),
             ColumnPreset::Compact => WatchlistDefinition::compact_columns(),
-        }
+        };
+        responsive_columns(desired, available_width)
     }
 }
 
@@ -484,7 +499,7 @@ impl Workspace for WatchlistWorkspace {
             areas[0],
         );
 
-        let columns = self.visible_columns();
+        let columns = self.visible_columns(areas[1].width.saturating_sub(2));
         let widths = columns
             .iter()
             .map(|column| column_width(*column))
@@ -546,6 +561,23 @@ impl Drop for WatchlistWorkspace {
     }
 }
 
+fn apply_quote(row: &mut MonitorRow, quote: QuoteSnapshot) {
+    if let Some(last) = quote.last.filter(|_| quote.quality.is_usable()) {
+        let observation = (
+            quote.provenance.source_timestamp.as_str().to_owned(),
+            quote.provenance.sequence,
+        );
+        if row.last_trace_observation.as_ref() != Some(&observation) {
+            if row.session_trace.len() == SESSION_TRACE_CAPACITY {
+                row.session_trace.pop_front();
+            }
+            row.session_trace.push_back(last.value());
+            row.last_trace_observation = Some(observation);
+        }
+    }
+    row.quote = Some(quote);
+}
+
 fn stream_status(id: u64, metrics: SubscriptionMetrics) -> String {
     format!(
         "LIVE #{id} · RX {} COALESCED {} DROPPED {}",
@@ -595,6 +627,11 @@ fn render_cell(row: &MonitorRow, column: MonitorColumn, selected: bool) -> Cell<
         MonitorColumn::Bid => format_price(quote.and_then(|quote| quote.bid)),
         MonitorColumn::Ask => format_price(quote.and_then(|quote| quote.ask)),
         MonitorColumn::Volume => format_volume(quote.and_then(|quote| quote.volume)),
+        MonitorColumn::DayRange => quote
+            .and_then(QuoteSnapshot::day_range)
+            .map(|(low, high)| format!("{:.2}–{:.2}", low.value(), high.value()))
+            .unwrap_or_else(|| "--".to_owned()),
+        MonitorColumn::Sparkline => spark_line(&row.session_trace, 16),
         MonitorColumn::Quality => quote
             .map(|quote| quote.quality.label())
             .unwrap_or_else(|| "NO SNAPSHOT".to_owned()),
@@ -620,10 +657,25 @@ fn cell_style(quote: Option<&QuoteSnapshot>, column: MonitorColumn, value: &str)
             _ => Style::new().fg(RED),
         };
     }
-    if matches!(column, MonitorColumn::Change | MonitorColumn::ChangePercent) {
-        return if value.starts_with('+') {
-            Style::new().fg(GREEN)
+    if matches!(
+        column,
+        MonitorColumn::Change | MonitorColumn::ChangePercent | MonitorColumn::Sparkline
+    ) {
+        let direction = if column == MonitorColumn::Sparkline {
+            quote
+                .and_then(|quote| quote.change)
+                .map(|change| change.absolute.value())
+                .unwrap_or_default()
+        } else if value.starts_with('+') {
+            1.0
         } else if value.starts_with('-') {
+            -1.0
+        } else {
+            0.0
+        };
+        return if direction > 0.0 {
+            Style::new().fg(GREEN)
+        } else if direction < 0.0 {
             Style::new().fg(RED)
         } else {
             Style::new().fg(INK)
@@ -633,16 +685,79 @@ fn cell_style(quote: Option<&QuoteSnapshot>, column: MonitorColumn, value: &str)
 }
 
 fn column_width(column: MonitorColumn) -> Constraint {
+    Constraint::Length(column_width_value(column))
+}
+
+fn column_width_value(column: MonitorColumn) -> u16 {
     match column {
-        MonitorColumn::Symbol => Constraint::Length(12),
-        MonitorColumn::Last | MonitorColumn::Change | MonitorColumn::Bid | MonitorColumn::Ask => {
-            Constraint::Length(12)
-        }
-        MonitorColumn::ChangePercent => Constraint::Length(10),
-        MonitorColumn::Volume => Constraint::Length(12),
-        MonitorColumn::Quality => Constraint::Length(16),
-        MonitorColumn::AsOf => Constraint::Min(12),
+        MonitorColumn::Symbol => 12,
+        MonitorColumn::Last | MonitorColumn::Change | MonitorColumn::Bid | MonitorColumn::Ask => 12,
+        MonitorColumn::ChangePercent => 10,
+        MonitorColumn::Volume => 12,
+        MonitorColumn::DayRange => 22,
+        MonitorColumn::Sparkline => 16,
+        MonitorColumn::Quality => 16,
+        MonitorColumn::AsOf => 12,
     }
+}
+
+fn responsive_columns(mut columns: Vec<MonitorColumn>, available_width: u16) -> Vec<MonitorColumn> {
+    for expendable in [
+        MonitorColumn::AsOf,
+        MonitorColumn::Ask,
+        MonitorColumn::Bid,
+        MonitorColumn::Volume,
+        MonitorColumn::Change,
+        MonitorColumn::DayRange,
+        MonitorColumn::Quality,
+        MonitorColumn::Sparkline,
+        MonitorColumn::ChangePercent,
+    ] {
+        if columns_width(&columns) <= available_width {
+            break;
+        }
+        if let Some(index) = columns.iter().position(|column| *column == expendable) {
+            columns.remove(index);
+        }
+    }
+    columns
+}
+
+fn columns_width(columns: &[MonitorColumn]) -> u16 {
+    columns
+        .iter()
+        .copied()
+        .map(column_width_value)
+        .sum::<u16>()
+        .saturating_add(columns.len().saturating_sub(1) as u16)
+}
+
+/// Downsamples the bounded provider-observation trace into Unicode blocks.
+fn spark_line(values: &VecDeque<f64>, width: usize) -> String {
+    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    if values.is_empty() || width == 0 {
+        return "--".to_owned();
+    }
+    let chunk = (values.len() as f64 / width as f64).max(1.0);
+    let mut sampled = Vec::with_capacity(width);
+    let mut offset = 0.0;
+    while (offset as usize) < values.len() && sampled.len() < width {
+        let start = offset as usize;
+        let end = (((offset + chunk) as usize).max(start + 1)).min(values.len());
+        let average = values.range(start..end).sum::<f64>() / (end - start) as f64;
+        sampled.push(average);
+        offset += chunk;
+    }
+    let (low, high) = sampled
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), value| {
+            (low.min(*value), high.max(*value))
+        });
+    let span = (high - low).max(1e-9);
+    sampled
+        .iter()
+        .map(|value| BARS[(((value - low) / span) * 7.0).round() as usize])
+        .collect()
 }
 
 fn format_price(price: Option<Price>) -> String {
@@ -733,6 +848,8 @@ mod tests {
                     }),
                     bid: Some(Price::new(99.0)),
                     ask: Some(Price::new(101.0)),
+                    day_low: Some(Price::new(98.5)),
+                    day_high: Some(Price::new(102.5)),
                     volume: Some(Quantity::new(1_000 + index as u64)),
                     as_of: UtcTimestamp::new("2026-08-25T20:00:00Z"),
                     quality: DataQuality::RealTime,
@@ -916,5 +1033,59 @@ mod tests {
     fn formatting_keeps_terminal_values_dense() {
         assert_eq!(format_volume(Some(Quantity::new(41_820_000))), "41.82M");
         assert_eq!(short_time("2026-08-25T20:00:00Z"), "20:00:00");
+    }
+
+    #[test]
+    fn responsive_density_keeps_sparklines_without_squeezing_columns() {
+        let columns = responsive_columns(WatchlistDefinition::full_columns(), 70);
+
+        assert_eq!(
+            columns,
+            vec![
+                MonitorColumn::Symbol,
+                MonitorColumn::Last,
+                MonitorColumn::ChangePercent,
+                MonitorColumn::Sparkline,
+                MonitorColumn::Quality,
+            ]
+        );
+        assert_eq!(columns_width(&columns), 70);
+    }
+
+    #[test]
+    fn session_trace_records_each_provider_observation_once() {
+        let item = WatchlistItem::new(
+            CanonicalInstrumentId::new("us:listed:aapl"),
+            "AAPL",
+            "Apple",
+        );
+        let mut row = MonitorRow {
+            item: item.clone(),
+            quote: None,
+            session_trace: VecDeque::new(),
+            last_trace_observation: None,
+        };
+        let mut quote = StubMarketData
+            .quote_snapshots(std::slice::from_ref(&item.instrument_id))
+            .unwrap()
+            .remove(0);
+
+        apply_quote(&mut row, quote.clone());
+        apply_quote(&mut row, quote.clone());
+        quote.last = Some(Price::new(104.0));
+        quote.provenance.sequence = Some(2);
+        apply_quote(&mut row, quote);
+
+        assert_eq!(row.session_trace, VecDeque::from([100.0, 104.0]));
+        assert_eq!(spark_line(&row.session_trace, 16), "▁█");
+    }
+
+    #[test]
+    fn sparkline_downsamples_to_the_requested_width() {
+        let values = VecDeque::from([1.0, 2.0, 3.0, 4.0]);
+
+        assert_eq!(spark_line(&values, 4), "▁▃▆█");
+        assert_eq!(spark_line(&values, 2), "▁█");
+        assert_eq!(spark_line(&VecDeque::new(), 8), "--");
     }
 }

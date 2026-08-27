@@ -1,6 +1,6 @@
 use std::sync::{
-    Mutex,
     atomic::{AtomicU64, Ordering},
+    Mutex,
 };
 
 use crate::features::{
@@ -228,6 +228,8 @@ impl ReplayQuote {
                 }),
             bid: self.bid.map(Price::new),
             ask: self.ask.map(Price::new),
+            day_low: None,
+            day_high: None,
             volume: self.volume.map(Quantity::new),
             as_of: timestamp.clone(),
             quality: self.quality,
@@ -541,6 +543,8 @@ fn unavailable_quote(
         change: None,
         bid: None,
         ask: None,
+        day_low: None,
+        day_high: None,
         volume: None,
         as_of: timestamp.clone(),
         quality: DataQuality::Unavailable,
@@ -585,6 +589,8 @@ fn macro_watchlist() -> WatchlistDefinition {
         MonitorColumn::Last,
         MonitorColumn::Change,
         MonitorColumn::ChangePercent,
+        MonitorColumn::DayRange,
+        MonitorColumn::Sparkline,
         MonitorColumn::Bid,
         MonitorColumn::Ask,
         MonitorColumn::Quality,

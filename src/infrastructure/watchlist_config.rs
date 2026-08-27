@@ -67,6 +67,8 @@ impl WatchlistCatalog for ConfiguredWatchlistCatalog {
                 MonitorColumn::Change,
                 MonitorColumn::ChangePercent,
                 MonitorColumn::Volume,
+                MonitorColumn::DayRange,
+                MonitorColumn::Sparkline,
                 MonitorColumn::Quality,
                 MonitorColumn::AsOf,
             ]),

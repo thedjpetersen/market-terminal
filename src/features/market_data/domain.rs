@@ -6,24 +6,36 @@ pub use crate::foundation::InstrumentId as CanonicalInstrumentId;
 pub struct Price(f64);
 
 impl Price {
-    pub const fn new(value: f64) -> Self { Self(value) }
-    pub const fn value(self) -> f64 { self.0 }
+    pub const fn new(value: f64) -> Self {
+        Self(value)
+    }
+    pub const fn value(self) -> f64 {
+        self.0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Quantity(u64);
 
 impl Quantity {
-    pub const fn new(value: u64) -> Self { Self(value) }
-    pub const fn value(self) -> u64 { self.0 }
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+    pub const fn value(self) -> u64 {
+        self.0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct Percent(f64);
 
 impl Percent {
-    pub const fn new(value: f64) -> Self { Self(value) }
-    pub const fn value(self) -> f64 { self.0 }
+    pub const fn new(value: f64) -> Self {
+        Self(value)
+    }
+    pub const fn value(self) -> f64 {
+        self.0
+    }
 }
 
 /// An ISO-8601 UTC timestamp supplied by an adapter.
@@ -40,7 +52,9 @@ impl UtcTimestamp {
         Self(value)
     }
 
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Stable adapter identity carried with every observation.
@@ -54,7 +68,9 @@ impl ProviderId {
         Self(value)
     }
 
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +151,10 @@ pub struct QuoteSnapshot {
     pub change: Option<PriceChange>,
     pub bid: Option<Price>,
     pub ask: Option<Price>,
+    /// Provider-reported low for the current trading day, when available.
+    pub day_low: Option<Price>,
+    /// Provider-reported high for the current trading day, when available.
+    pub day_high: Option<Price>,
     pub volume: Option<Quantity>,
     pub as_of: UtcTimestamp,
     pub quality: DataQuality,
@@ -144,6 +164,12 @@ pub struct QuoteSnapshot {
 impl QuoteSnapshot {
     pub fn spread(&self) -> Option<Price> {
         Some(Price::new(self.ask?.value() - self.bid?.value()))
+    }
+
+    pub fn day_range(&self) -> Option<(Price, Price)> {
+        let low = self.day_low?;
+        let high = self.day_high?;
+        (low.value() <= high.value()).then_some((low, high))
     }
 }
 
@@ -181,7 +207,9 @@ pub struct PriceBar {
 pub enum MarketDataError {
     InvalidRequest(String),
     TemporarilyUnavailable(String),
-    RateLimited { retry_after_ms: u64 },
+    RateLimited {
+        retry_after_ms: u64,
+    },
     PermissionDenied(String),
     Cancelled,
     Unsupported(String),
@@ -228,20 +256,33 @@ impl MarketDataError {
 impl fmt::Display for MarketDataError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidRequest(message) => write!(formatter, "invalid market data request: {message}"),
+            Self::InvalidRequest(message) => {
+                write!(formatter, "invalid market data request: {message}")
+            }
             Self::TemporarilyUnavailable(message) => {
                 write!(formatter, "market data temporarily unavailable: {message}")
             }
             Self::RateLimited { retry_after_ms } => {
-                write!(formatter, "market data rate limited; retry after {retry_after_ms}ms")
+                write!(
+                    formatter,
+                    "market data rate limited; retry after {retry_after_ms}ms"
+                )
             }
             Self::PermissionDenied(message) => {
                 write!(formatter, "market data permission denied: {message}")
             }
             Self::Cancelled => formatter.write_str("market data subscription cancelled"),
-            Self::Unsupported(message) => write!(formatter, "unsupported market data operation: {message}"),
-            Self::Provider { provider, message, .. } => {
-                write!(formatter, "market data provider {} failed: {message}", provider.as_str())
+            Self::Unsupported(message) => {
+                write!(formatter, "unsupported market data operation: {message}")
+            }
+            Self::Provider {
+                provider, message, ..
+            } => {
+                write!(
+                    formatter,
+                    "market data provider {} failed: {message}",
+                    provider.as_str()
+                )
             }
         }
     }
@@ -273,7 +314,12 @@ impl RetryPolicy {
                 "retry delay bounds and multiplier are invalid".to_owned(),
             ));
         }
-        Ok(Self { max_attempts, initial_delay_ms, max_delay_ms, multiplier })
+        Ok(Self {
+            max_attempts,
+            initial_delay_ms,
+            max_delay_ms,
+            multiplier,
+        })
     }
 
     /// `failed_attempt` is one-based: the delay after the first failed attempt is the initial delay.
@@ -283,7 +329,11 @@ impl RetryPolicy {
         }
         let exponent = u32::from(failed_attempt - 1);
         let factor = u64::from(self.multiplier).saturating_pow(exponent);
-        Some(self.initial_delay_ms.saturating_mul(factor).min(self.max_delay_ms))
+        Some(
+            self.initial_delay_ms
+                .saturating_mul(factor)
+                .min(self.max_delay_ms),
+        )
     }
 }
 
@@ -301,7 +351,11 @@ impl RateLimitPolicy {
                 "rate limit values must be non-zero".to_owned(),
             ));
         }
-        Ok(Self { requests, window_ms, burst })
+        Ok(Self {
+            requests,
+            window_ms,
+            burst,
+        })
     }
 }
 
@@ -324,6 +378,8 @@ mod tests {
             }),
             bid: Some(Price::new(205.28)),
             ask: Some(Price::new(205.32)),
+            day_low: Some(Price::new(202.72)),
+            day_high: Some(Price::new(205.64)),
             volume: Some(Quantity::new(41_820_000)),
             as_of: UtcTimestamp::new("2026-08-25T20:00:00Z"),
             quality: DataQuality::RealTime,
@@ -357,7 +413,9 @@ mod tests {
 
     #[test]
     fn typed_errors_expose_retry_classification() {
-        let error = MarketDataError::RateLimited { retry_after_ms: 250 };
+        let error = MarketDataError::RateLimited {
+            retry_after_ms: 250,
+        };
         assert_eq!(error.kind(), MarketDataErrorKind::RateLimited);
         assert!(error.is_retriable());
         assert!(!MarketDataError::PermissionDenied("quotes".to_owned()).is_retriable());

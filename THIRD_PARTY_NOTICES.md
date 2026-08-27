@@ -13,7 +13,10 @@ first-run/effective-settings overlay is based on the upstream settings-flow
 idea, with new state and rendering written for this application's shell. The
 responsive Monitor/Chart/News split-desk composition also adapts the upstream
 split-view behavior to this application's generic `Workspace` contract; its
-implementation is identified in `src/app/desk.rs`.
+implementation is identified in `src/app/desk.rs`. Responsive watchlist column
+selection and Unicode sparkline downsampling adapt the upstream table behavior;
+the implementation and its provider-observation boundary are identified in
+`src/features/watchlist/workspace.rs`.
 
 MIT License
 

@@ -128,6 +128,8 @@ impl AlphaVantageMarketData {
             .ok_or_else(|| provider_payload_error(&payload))?;
         let quote = ProviderQuote {
             symbol: required_string(quote, "01. symbol")?,
+            day_high: required_number(quote, "03. high")?,
+            day_low: required_number(quote, "04. low")?,
             price: required_number(quote, "05. price")?,
             volume: optional_u64(quote, "06. volume"),
             trading_day: required_string(quote, "07. latest trading day")?,
@@ -427,6 +429,8 @@ impl SpreadsheetMarketData for AlphaVantageMarketData {
 #[derive(Debug, Clone)]
 struct ProviderQuote {
     symbol: String,
+    day_high: f64,
+    day_low: f64,
     price: f64,
     volume: Option<u64>,
     trading_day: String,
@@ -509,6 +513,8 @@ fn quote_snapshot(instrument_id: CanonicalInstrumentId, quote: ProviderQuote) ->
         }),
         bid: None,
         ask: None,
+        day_low: Some(Price::new(quote.day_low)),
+        day_high: Some(Price::new(quote.day_high)),
         volume: quote.volume.map(Quantity::new),
         as_of: source_time.clone(),
         quality: DataQuality::Delayed { minutes: 1_440 },

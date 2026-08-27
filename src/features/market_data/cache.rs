@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use super::{
-    CacheStatus, CanonicalInstrumentId, DataQuality, MarketDataError, QuoteSnapshot,
-};
+use super::{CacheStatus, CanonicalInstrumentId, DataQuality, MarketDataError, QuoteSnapshot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QuoteCachePolicy {
@@ -11,16 +9,16 @@ pub struct QuoteCachePolicy {
 }
 
 impl QuoteCachePolicy {
-    pub fn new(
-        fresh_for_ms: u64,
-        last_known_good_for_ms: u64,
-    ) -> Result<Self, MarketDataError> {
+    pub fn new(fresh_for_ms: u64, last_known_good_for_ms: u64) -> Result<Self, MarketDataError> {
         if last_known_good_for_ms < fresh_for_ms {
             return Err(MarketDataError::InvalidRequest(
                 "last-known-good window must include the freshness window".to_owned(),
             ));
         }
-        Ok(Self { fresh_for_ms, last_known_good_for_ms })
+        Ok(Self {
+            fresh_for_ms,
+            last_known_good_for_ms,
+        })
     }
 }
 
@@ -47,7 +45,10 @@ pub struct QuoteCache {
 
 impl QuoteCache {
     pub fn new(policy: QuoteCachePolicy) -> Self {
-        Self { policy, entries: HashMap::new() }
+        Self {
+            policy,
+            entries: HashMap::new(),
+        }
     }
 
     /// Unusable entitlement/error placeholders never replace a usable observation.
@@ -57,12 +58,19 @@ impl QuoteCache {
         }
         self.entries.insert(
             snapshot.instrument_id.clone(),
-            CacheEntry { snapshot, stored_at_ms },
+            CacheEntry {
+                snapshot,
+                stored_at_ms,
+            },
         );
         true
     }
 
-    pub fn lookup(&mut self, instrument_id: &CanonicalInstrumentId, now_ms: u64) -> QuoteCacheLookup {
+    pub fn lookup(
+        &mut self,
+        instrument_id: &CanonicalInstrumentId,
+        now_ms: u64,
+    ) -> QuoteCacheLookup {
         let Some(entry) = self.entries.get(instrument_id) else {
             return QuoteCacheLookup::Miss;
         };
@@ -74,7 +82,9 @@ impl QuoteCache {
         }
         if age_ms <= self.policy.last_known_good_for_ms {
             let mut snapshot = entry.snapshot.clone();
-            snapshot.quality = DataQuality::Stale { age_seconds: age_ms / 1_000 };
+            snapshot.quality = DataQuality::Stale {
+                age_seconds: age_ms / 1_000,
+            };
             snapshot.provenance.cache_status = CacheStatus::LastKnownGood;
             return QuoteCacheLookup::LastKnownGood(snapshot);
         }
@@ -82,8 +92,12 @@ impl QuoteCache {
         QuoteCacheLookup::Miss
     }
 
-    pub fn len(&self) -> usize { self.entries.len() }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -106,6 +120,8 @@ mod tests {
             }),
             bid: None,
             ask: None,
+            day_low: None,
+            day_high: None,
             volume: None,
             as_of: timestamp.clone(),
             quality,

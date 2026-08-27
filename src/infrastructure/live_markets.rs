@@ -230,6 +230,8 @@ mod tests {
                     }),
                     bid: None,
                     ask: None,
+                    day_low: Some(Price::new(120.25)),
+                    day_high: Some(Price::new(124.10)),
                     volume: None,
                     as_of: UtcTimestamp::new("2026-08-26T19:00:00Z"),
                     quality: DataQuality::RealTime,
