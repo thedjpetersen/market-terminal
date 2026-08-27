@@ -65,8 +65,21 @@ FUNDAMENTAL(instrument, field, period)
 Financial calls can be nested inside arithmetic, conditional, text, and lookup
 formulas. The worker deduplicates requests, resolves them in a bounded batch,
 and recalculates from a substituted AST without overwriting raw formula source.
-Deterministic gallery fixtures cover all four contracts. A live adapter may
-return unavailable or permission denied when a field is not licensed.
+Deterministic gallery fixtures cover all four contracts. In the interactive
+app, `FUNDAMENTAL` always routes to official SEC Company Facts while quote and
+history calls route to the selected market-data provider. Set
+`MARKET_TERMINAL_MARKET_DATA_PROVIDER=alpha-vantage` for official daily
+`HISTORY`; `ALPHA_VANTAGE_API_KEY` selects the operator's entitlement and the
+documented demo access remains IBM-only.
+
+`HISTORY` is a scalar function: it returns the latest daily observation inside
+the inclusive `start` / `end` interval. Alpha Vantage supports `PX_OPEN`,
+`PX_HIGH`, `PX_LOW`, `PX_LAST`, and `VOLUME`, with ISO `YYYY-MM-DD` dates.
+`FUNDAMENTAL` supports SEC-reported `REVENUE`, `OPERATING_INCOME`, `NET_INCOME`,
+and `DILUTED_EPS` for `FY####` or `FY####A`; currency facts remain raw USD and
+EPS remains USD/share. Missing observations are unavailable rather than
+forward-filled or synthesized. Other live adapters may return unavailable or
+permission denied when a field is not licensed.
 
 Every external input retains instrument, field, provider, observation time,
 receive time, and quality. Cells distinguish loading, stale, unavailable, and

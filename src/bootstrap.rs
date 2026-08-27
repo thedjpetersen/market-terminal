@@ -23,8 +23,8 @@ use crate::{
         DemoChatGateway, DemoData, DemoInstrumentSearch, DemoMarketDataReplay,
         DemoSpreadsheetMarketData, DemoWatchlistCatalog, FinnhubMarketData, IrcChatGateway,
         LiveAlertsQuery, LiveMarketsQuery, LiveNewsFeed, LiveOverviewQuery, LiveSecurityQuery,
-        LocalPersistence, LocalSpreadsheetFiles, OpenRouterConfig, OpenRouterGateway,
-        SecInstrumentSearch, SystemNewsArticleOpener, YahooMarketData,
+        LiveSpreadsheetMarketData, LocalPersistence, LocalSpreadsheetFiles, OpenRouterConfig,
+        OpenRouterGateway, SecInstrumentSearch, SystemNewsArticleOpener, YahooMarketData,
     },
 };
 
@@ -201,10 +201,14 @@ pub fn persistent_app() -> App {
         Arc::new(CsvPortfolioRepository::from_env());
     let news_query: Arc<dyn NewsFeed> = Arc::new(LiveNewsFeed::from_env());
     let live_market_data = configured_market_data();
-    let security_query: Arc<dyn SecurityQuery> = Arc::new(LiveSecurityQuery::from_env(
+    let live_security = Arc::new(LiveSecurityQuery::from_env(
         live_market_data.market_data.clone(),
         live_market_data.chart_history.clone(),
     ));
+    let security_query: Arc<dyn SecurityQuery> = live_security.clone();
+    let spreadsheet_market_data: Arc<dyn SpreadsheetMarketData> = Arc::new(
+        LiveSpreadsheetMarketData::new(live_market_data.spreadsheet.clone(), live_security),
+    );
     let alerts_query: Arc<dyn AlertsQuery> =
         Arc::new(LiveAlertsQuery::new(live_market_data.market_data.clone()));
     let watchlist_catalog: Arc<dyn WatchlistCatalog> =
@@ -229,7 +233,7 @@ pub fn persistent_app() -> App {
         portfolio_query,
         news_query,
         article_opener: Some(Arc::new(SystemNewsArticleOpener)),
-        spreadsheet_market_data: live_market_data.spreadsheet,
+        spreadsheet_market_data,
         spreadsheet_workbook_store: Some(repository.clone()),
         market_data: live_market_data.market_data,
         watchlist_catalog,

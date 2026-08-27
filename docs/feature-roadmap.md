@@ -75,10 +75,14 @@ move to its own crate later without changing its public vocabulary.
   states and provenance, five-sheet/10,000-cell performance coverage, durable
   workbook save/load/autosave, and intent-based selection exchange with FIND,
   MON, SEC, CHART, and NEWS.
-- **Next:** licensed production adapters for history and fundamentals plus the
-  Stage 2 portfolio, risk, screening, and restart-safe alerts program. Provider
-  availability extends the deployment surface; deterministic fixtures remain
-  the Stage 1 acceptance baseline.
+- **Complete:** official production Spreadsheet adapters for scalar Alpha
+  Vantage daily history and SEC EDGAR annual Company Facts, composed behind the
+  Spreadsheet-owned batch port with explicit provenance, delay, unavailable,
+  and entitlement states.
+- **Next:** the Stage 2 portfolio, risk, screening, and restart-safe alerts
+  program. Provider availability extends the deployment surface; deterministic
+  fixtures remain the Stage 1 acceptance baseline and opt-in live contracts
+  verify real provider behavior.
 
 ## Product principles
 
@@ -286,8 +290,10 @@ SHEET -> create workbook -> enter/import instruments
   browser assets are introduced.
 
 **Status: complete.** The supported MVP and formula grammar are documented in
-[`spreadsheet.md`](spreadsheet.md). Licensed live `HISTORY` and `FUNDAMENTAL`
-providers remain adapter work and do not change workbook or formula contracts.
+[`spreadsheet.md`](spreadsheet.md). Official Alpha Vantage daily `HISTORY` and
+SEC EDGAR annual `FUNDAMENTAL` adapters now implement those unchanged workbook
+and formula contracts; other providers retain explicit entitlement or
+unavailable outcomes.
 
 ## Stage 2 — Portfolio, risk, screening, and alerts
 

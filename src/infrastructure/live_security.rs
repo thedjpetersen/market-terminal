@@ -17,6 +17,10 @@ use crate::features::{
         Filing, FinancialPeriod, InsiderTransaction, SecurityError, SecurityIdentity, SecurityPage,
         SecurityQuery, SecurityResearch, SecuritySnapshot,
     },
+    spreadsheet::{
+        MarketDataPoint, MarketDataProvenance, MarketDataQuality, MarketDataRequest,
+        MarketDataState, SpreadsheetMarketData,
+    },
 };
 
 const DEFAULT_TICKERS_URL: &str = "https://www.sec.gov/files/company_tickers.json";
@@ -26,11 +30,21 @@ const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_FORM4_BYTES: usize = 1024 * 1024;
 const MAX_FORM4_FILINGS: usize = 6;
 const MAX_INSIDER_TRANSACTIONS: usize = 40;
+const MAX_FACTS_CACHE_ENTRIES: usize = 32;
+const MAX_FACTS_CACHE_BYTES: usize = 64 * 1024 * 1024;
 const CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 
 type TickerCache = Arc<Mutex<Option<(Instant, HashMap<String, SecCompany>)>>>;
 type PageCache = Arc<Mutex<HashMap<String, (Instant, SecurityPage)>>>;
+type FactsCache = Arc<Mutex<HashMap<String, CachedFacts>>>;
 type AnnualFacts = BTreeMap<String, (String, f64)>;
+
+#[derive(Clone)]
+struct CachedFacts {
+    stored_at: Instant,
+    payload: Value,
+    bytes: usize,
+}
 
 #[derive(Clone)]
 pub struct LiveSecurityConfig {
@@ -83,6 +97,7 @@ pub struct LiveSecurityQuery {
     chart_history: Arc<dyn ChartHistoryQuery>,
     ticker_cache: TickerCache,
     page_cache: PageCache,
+    facts_cache: FactsCache,
 }
 
 impl LiveSecurityQuery {
@@ -110,6 +125,7 @@ impl LiveSecurityQuery {
             chart_history,
             ticker_cache: Arc::new(Mutex::new(None)),
             page_cache: Arc::new(Mutex::new(HashMap::new())),
+            facts_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -122,13 +138,8 @@ impl LiveSecurityQuery {
             .data_base_url
             .join(&format!("submissions/CIK{cik}.json"))
             .map_err(|_| SecurityError::Unavailable("invalid SEC submissions URL".to_owned()))?;
-        let facts_url = self
-            .config
-            .data_base_url
-            .join(&format!("api/xbrl/companyfacts/CIK{cik}.json"))
-            .map_err(|_| SecurityError::Unavailable("invalid SEC company-facts URL".to_owned()))?;
         let submissions = self.request_json(submissions_url)?;
-        let facts = self.request_json(facts_url)?;
+        let facts = self.load_company_facts_for_company(&ticker, company.cik)?;
         let name = submissions
             .get("name")
             .and_then(Value::as_str)
@@ -269,7 +280,70 @@ impl LiveSecurityQuery {
         result
     }
 
+    fn load_company_facts(&self, ticker: &str) -> Result<Value, SecurityError> {
+        let ticker = normalize_ticker(ticker)?;
+        let company = self.resolve_company(&ticker)?;
+        self.load_company_facts_for_company(&ticker, company.cik)
+    }
+
+    fn load_company_facts_for_company(
+        &self,
+        ticker: &str,
+        cik: u64,
+    ) -> Result<Value, SecurityError> {
+        {
+            let cache = self
+                .facts_cache
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if let Some(entry) = cache.get(ticker) {
+                if entry.stored_at.elapsed() <= CACHE_TTL {
+                    return Ok(entry.payload.clone());
+                }
+            }
+        }
+        let cik = format!("{cik:010}");
+        let facts_url = self
+            .config
+            .data_base_url
+            .join(&format!("api/xbrl/companyfacts/CIK{cik}.json"))
+            .map_err(|_| SecurityError::Unavailable("invalid SEC company-facts URL".to_owned()))?;
+        let (payload, payload_bytes) = self.request_json_with_size(facts_url)?;
+        let mut cache = self
+            .facts_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        cache.retain(|_, entry| entry.stored_at.elapsed() <= CACHE_TTL);
+        cache.remove(ticker);
+        while !cache.is_empty()
+            && (cache.len() >= MAX_FACTS_CACHE_ENTRIES
+                || cache.values().map(|entry| entry.bytes).sum::<usize>() + payload_bytes
+                    > MAX_FACTS_CACHE_BYTES)
+        {
+            if let Some(oldest) = cache
+                .iter()
+                .min_by_key(|(_, entry)| entry.stored_at)
+                .map(|(ticker, _)| ticker.clone())
+            {
+                cache.remove(&oldest);
+            }
+        }
+        cache.insert(
+            ticker.to_owned(),
+            CachedFacts {
+                stored_at: Instant::now(),
+                payload: payload.clone(),
+                bytes: payload_bytes,
+            },
+        );
+        Ok(payload)
+    }
+
     fn request_json(&self, url: Url) -> Result<Value, SecurityError> {
+        self.request_json_with_size(url).map(|(payload, _)| payload)
+    }
+
+    fn request_json_with_size(&self, url: Url) -> Result<(Value, usize), SecurityError> {
         let response = self
             .client
             .get(url)
@@ -295,7 +369,9 @@ impl LiveSecurityQuery {
                 "SEC response exceeded 8 MiB limit".to_owned(),
             ));
         }
+        let size = bytes.len();
         serde_json::from_slice(&bytes)
+            .map(|payload| (payload, size))
             .map_err(|_| SecurityError::Unavailable("invalid SEC JSON response".to_owned()))
     }
 
@@ -363,6 +439,56 @@ impl LiveSecurityQuery {
     }
 }
 
+impl SpreadsheetMarketData for LiveSecurityQuery {
+    fn load_batch(&self, requests: &[MarketDataRequest]) -> Vec<MarketDataPoint> {
+        let parsed = requests
+            .iter()
+            .map(|request| parse_fundamental_field(&request.field))
+            .collect::<Vec<_>>();
+        let mut facts = HashMap::<String, Result<Value, SecurityError>>::new();
+        for (request, field) in requests.iter().zip(&parsed) {
+            if !matches!(field, FundamentalRequest::Supported { .. }) {
+                continue;
+            }
+            let Ok(ticker) = normalize_ticker(&request.security) else {
+                continue;
+            };
+            facts
+                .entry(ticker.clone())
+                .or_insert_with(|| self.load_company_facts(&ticker));
+        }
+        let received_at = chrono::Utc::now().to_rfc3339();
+        requests
+            .iter()
+            .zip(parsed)
+            .map(|(request, field)| {
+                let state = match field {
+                    FundamentalRequest::Supported { field, fiscal_year } => {
+                        match normalize_ticker(&request.security) {
+                            Ok(ticker) => fundamental_spreadsheet_state(
+                                facts.get(&ticker),
+                                field,
+                                fiscal_year,
+                                &received_at,
+                            ),
+                            Err(error) => MarketDataState::Unavailable {
+                                reason: error.to_string(),
+                            },
+                        }
+                    }
+                    FundamentalRequest::Unsupported(reason) => {
+                        MarketDataState::Unavailable { reason }
+                    }
+                };
+                MarketDataPoint {
+                    request: request.clone(),
+                    state,
+                }
+            })
+            .collect()
+    }
+}
+
 impl SecurityQuery for LiveSecurityQuery {
     fn load_security(&self, symbol: &str) -> Result<SecurityPage, SecurityError> {
         let ticker = normalize_ticker(symbol)?;
@@ -391,8 +517,137 @@ impl SecurityQuery for LiveSecurityQuery {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .remove(&ticker);
+            self.facts_cache
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .remove(&ticker);
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FundamentalField {
+    Revenue,
+    OperatingIncome,
+    NetIncome,
+    DilutedEps,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FundamentalRequest {
+    Supported {
+        field: FundamentalField,
+        fiscal_year: i32,
+    },
+    Unsupported(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ReportedFact {
+    observed_at: String,
+    value: f64,
+}
+
+fn parse_fundamental_field(field: &str) -> FundamentalRequest {
+    let parts = field.split('|').collect::<Vec<_>>();
+    if parts.first() != Some(&"FUNDAMENTAL") {
+        return FundamentalRequest::Unsupported(format!("unsupported field {field}"));
+    }
+    if parts.len() != 3 {
+        return FundamentalRequest::Unsupported(
+            "FUNDAMENTAL requires field and fiscal period".to_owned(),
+        );
+    }
+    let field = match parts[1] {
+        "REVENUE" => FundamentalField::Revenue,
+        "OPERATING_INCOME" => FundamentalField::OperatingIncome,
+        "NET_INCOME" => FundamentalField::NetIncome,
+        "DILUTED_EPS" => FundamentalField::DilutedEps,
+        unsupported => {
+            return FundamentalRequest::Unsupported(format!(
+                "unsupported FUNDAMENTAL field {unsupported}"
+            ));
+        }
+    };
+    let period = parts[2].strip_suffix('A').unwrap_or(parts[2]);
+    let Some(year) = period.strip_prefix("FY") else {
+        return FundamentalRequest::Unsupported(
+            "FUNDAMENTAL period must be FY followed by a four-digit year".to_owned(),
+        );
+    };
+    let Ok(fiscal_year) = year.parse::<i32>() else {
+        return FundamentalRequest::Unsupported(
+            "FUNDAMENTAL period must be FY followed by a four-digit year".to_owned(),
+        );
+    };
+    if year.len() != 4 || !(1900..=2200).contains(&fiscal_year) {
+        return FundamentalRequest::Unsupported(
+            "FUNDAMENTAL period must be FY followed by a four-digit year".to_owned(),
+        );
+    }
+    FundamentalRequest::Supported { field, fiscal_year }
+}
+
+fn fundamental_spreadsheet_state(
+    result: Option<&Result<Value, SecurityError>>,
+    field: FundamentalField,
+    fiscal_year: i32,
+    received_at: &str,
+) -> MarketDataState {
+    match result {
+        Some(Ok(payload)) => resolve_reported_fact(payload, field, fiscal_year).map_or_else(
+            || MarketDataState::Unavailable {
+                reason: format!("SEC Company Facts has no supported FY{fiscal_year} observation"),
+            },
+            |fact| MarketDataState::Ready {
+                value: fact.value,
+                provenance: MarketDataProvenance {
+                    provider: "SEC EDGAR · COMPANYFACTS".to_owned(),
+                    observed_at: fact.observed_at,
+                    received_at: received_at.to_owned(),
+                    quality: MarketDataQuality::Delayed,
+                },
+            },
+        ),
+        Some(Err(SecurityError::PermissionDenied(_))) => MarketDataState::PermissionDenied {
+            provider: "SEC EDGAR".to_owned(),
+        },
+        Some(Err(error)) => MarketDataState::Unavailable {
+            reason: error.to_string(),
+        },
+        None => MarketDataState::Unavailable {
+            reason: "SEC Company Facts request was not issued".to_owned(),
+        },
+    }
+}
+
+fn resolve_reported_fact(
+    payload: &Value,
+    field: FundamentalField,
+    fiscal_year: i32,
+) -> Option<ReportedFact> {
+    let (tags, unit): (&[&str], &str) = match field {
+        FundamentalField::Revenue => (
+            &[
+                "Revenues",
+                "RevenueFromContractWithCustomerExcludingAssessedTax",
+                "SalesRevenueNet",
+            ],
+            "USD",
+        ),
+        FundamentalField::OperatingIncome => (&["OperatingIncomeLoss"], "USD"),
+        FundamentalField::NetIncome => (&["NetIncomeLoss", "ProfitLoss"], "USD"),
+        FundamentalField::DilutedEps => (&["EarningsPerShareDiluted"], "USD/shares"),
+    };
+    tags.iter().find_map(|tag| {
+        annual_facts(payload, tag, unit)
+            .into_iter()
+            .rev()
+            .find(|(end, _)| {
+                end.get(..4).and_then(|year| year.parse::<i32>().ok()) == Some(fiscal_year)
+            })
+            .map(|(observed_at, (_, value))| ReportedFact { observed_at, value })
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -989,6 +1244,32 @@ mod tests {
         assert_eq!(financials.len(), 1);
         assert_eq!(financials[0].period, "FY24A");
         assert_eq!(financials[0].revenue_billions, "11.0");
+    }
+
+    #[test]
+    fn spreadsheet_fundamental_retains_raw_latest_filed_value_and_period_end() {
+        let payload = json!({
+            "facts": {"us-gaap": {"Revenues": {"units": {"USD": [
+                {"start":"2024-01-01","end":"2024-12-31","val":10_000_000_000.0,"form":"10-K","fp":"FY","filed":"2025-02-01"},
+                {"start":"2024-01-01","end":"2024-12-31","val":11_000_000_000.0,"form":"10-K","fp":"FY","filed":"2026-02-01"}
+            ]}}}}
+        });
+
+        let fact = resolve_reported_fact(&payload, FundamentalField::Revenue, 2024).unwrap();
+
+        assert_eq!(fact.value, 11_000_000_000.0);
+        assert_eq!(fact.observed_at, "2024-12-31");
+        assert_eq!(
+            parse_fundamental_field("FUNDAMENTAL|REVENUE|FY2024A"),
+            FundamentalRequest::Supported {
+                field: FundamentalField::Revenue,
+                fiscal_year: 2024,
+            }
+        );
+        assert!(matches!(
+            parse_fundamental_field("FUNDAMENTAL|EBITDA|FY2024"),
+            FundamentalRequest::Unsupported(reason) if reason.contains("EBITDA")
+        ));
     }
 
     #[test]

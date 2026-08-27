@@ -66,7 +66,7 @@ endorsed by, or sponsored by Yahoo.
 
 - **Surfaces:** interactive Markets/Monitor snapshots, Chart daily/weekly
   history, local Alert rule observations, and Spreadsheet `PX_LAST` /
-  `PX_CHANGE(..., "1D")` cells.
+  `PX_CHANGE(..., "1D")` / `HISTORY(...)` cells.
 - **Official documentation:** <https://www.alphavantage.co/documentation/>
 - **Authentication:** `ALPHA_VANTAGE_API_KEY`; when absent, the documented
   `demo` key is used and the adapter restricts quote/history requests to IBM.
@@ -77,6 +77,10 @@ endorsed by, or sponsored by Yahoo.
 - **History semantics:** 1M uses recent daily bars; 6M/YTD/1Y require sufficient
   full daily history; 5Y is aggregated into ordered weekly OHLCV bars. The 1D
   view reports permission denied until an entitled intraday adapter is wired.
+  Spreadsheet `HISTORY` returns the latest official daily observation in the
+  requested inclusive ISO-date interval. Supported scalar fields are `PX_OPEN`,
+  `PX_HIGH`, `PX_LOW`, `PX_LAST`, and `VOLUME`; an empty interval remains
+  unavailable instead of being forward-filled.
 - **Caching:** successful quotes are retained in process for 60 seconds and
   history for 15 minutes to coalesce identical screen requests. No licensed
   quote/history is written to the repo, workbook, test fixture, screenshot
@@ -163,16 +167,19 @@ endorsed by, or sponsored by Yahoo.
   autosave as bounded, schema-versioned feature documents in the user's local
   application state with atomic replacement and previous-generation recovery.
 - **Market data:** resolved financial values are overlays and are not written
-  into raw formulas. Live quote adapters currently cover `PX_LAST` and
-  `PX_CHANGE`; the deterministic gallery covers `HISTORY` and `FUNDAMENTAL` for
-  contract tests. Interactive adapters report those fields unavailable until a
-  properly licensed history/fundamental provider is configured.
+  into raw formulas. Live quote adapters cover `PX_LAST` and `PX_CHANGE`.
+  Selecting Alpha Vantage also resolves daily `HISTORY`; reported annual
+  `FUNDAMENTAL` values route independently to SEC Company Facts. Unsupported
+  fields and provider entitlement failures remain typed, visible states. The
+  deterministic gallery remains presentation input, never an interactive-data
+  fallback.
 
 ## SEC EDGAR structured data
 
-- **Surfaces:** interactive Find instrument master and Security identity,
-  reported financials, issuer reference fields, recent filing metadata, and
-  recent Form 4/4-A non-derivative insider transactions.
+- **Surfaces:** interactive Find instrument master; Security identity, reported
+  financials, issuer reference fields, recent filing metadata, and recent Form
+  4/4-A non-derivative insider transactions; and Spreadsheet `FUNDAMENTAL`
+  cells.
 - **Official source:** <https://www.sec.gov/files/company_tickers.json> and the
   SEC's [submissions and company-facts APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces),
   documented through its [developer resources](https://www.sec.gov/about/developer-resources).
@@ -183,10 +190,11 @@ endorsed by, or sponsored by Yahoo.
 - **Fair access:** requests use an application/contact user agent. Forks should
   set `MARKET_TERMINAL_SEC_USER_AGENT` to their own contact as described by the
   SEC's [EDGAR access guidance](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data).
-- **Caching and revision:** the company master and successful Security pages are
-  retained in process for 15 minutes. Find and Security use bounded background
-  workers. Security `F9` invalidates its page cache before fetching; Find `F9`
-  requests a coalesced master refresh.
+- **Caching and revision:** the company master, successful Security pages, and
+  at most 32 / 64 MiB of successful Company Facts payloads are retained in
+  process for 15 minutes. Find and Security use bounded background workers.
+  Security `F9` invalidates its page and Company Facts entries before fetching;
+  Find `F9` requests a coalesced master refresh.
 - **Form 4 methodology:** Security examines at most six recent Form 4/4-A
   entries from submissions metadata, fetches each raw ownership XML document
   with a 1 MiB bound, and retains at most 40 non-derivative transactions. The UI
@@ -202,7 +210,10 @@ endorsed by, or sponsored by Yahoo.
 - **Failure behavior:** loading and transport/HTTP/shape failures are visible
   in the Find header. No demo identity is inserted into the interactive app.
 - **Fundamental methodology:** annual values use latest-filed comparable
-  US-GAAP facts from 10-K fiscal-year durations. Values retain neither analyst
+  US-GAAP facts from 10-K fiscal-year durations. Spreadsheet supports
+  `REVENUE`, `OPERATING_INCOME`, `NET_INCOME`, and `DILUTED_EPS` for `FY####`
+  (or `FY####A`) periods and retains raw USD or USD/share values with fiscal
+  period-end provenance. Values retain neither analyst
   estimates nor invented gap filling. SEC does not define peer sets; ownership
   beyond the current Form 4 transaction slice remains visibly unavailable.
 - **Content boundary:** SEC data is issuer reference, reported facts, and filing

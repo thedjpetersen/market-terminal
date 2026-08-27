@@ -67,6 +67,13 @@ kept alongside the workbook and carries provider, observation/receive times,
 quality, entitlement failure, and availability. The pure formula evaluator does
 not make arbitrary provider calls.
 
+At the persistent-app composition root, `LiveSpreadsheetMarketData` routes
+quote/history requests to the operator-selected market adapter and annual
+fundamental requests to the existing SEC adapter. Alpha Vantage resolves scalar
+daily `HISTORY`; SEC Company Facts resolves reported `FUNDAMENTAL`. This
+infrastructure-only composition preserves request order and keeps provider
+types out of Spreadsheet, Security, and the kernel.
+
 The persistent Spreadsheet starts with an empty workbook and receives
 `LocalSpreadsheetFiles` through its feature-owned `SpreadsheetFileStore` port.
 CSV import/export is bounded, formula-preserving, active-sheet scoped, and

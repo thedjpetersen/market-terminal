@@ -362,60 +362,52 @@ impl ChartHistoryQuery for AlphaVantageMarketData {
 impl SpreadsheetMarketData for AlphaVantageMarketData {
     fn load_batch(&self, requests: &[MarketDataRequest]) -> Vec<MarketDataPoint> {
         let mut quotes = HashMap::<String, Result<ProviderQuote, MarketDataError>>::new();
-        for request in requests {
-            let symbol = request
-                .security
-                .split_whitespace()
-                .next()
-                .unwrap_or_default()
-                .to_ascii_uppercase();
-            if !quotes.contains_key(&symbol) {
-                quotes.insert(symbol.clone(), self.global_quote(&symbol));
+        let mut histories =
+            HashMap::<(String, bool), Result<Vec<ProviderBar>, MarketDataError>>::new();
+        let parsed = requests
+            .iter()
+            .map(|request| parse_spreadsheet_field(&request.field))
+            .collect::<Vec<_>>();
+        for (request, field) in requests.iter().zip(&parsed) {
+            let symbol = spreadsheet_symbol(&request.security);
+            match field {
+                SpreadsheetField::Quote(_) => {
+                    quotes
+                        .entry(symbol.clone())
+                        .or_insert_with(|| self.global_quote(&symbol));
+                }
+                SpreadsheetField::History { start, end, .. } => {
+                    let full = history_needs_full_output(*start, *end);
+                    histories
+                        .entry((symbol.clone(), full))
+                        .or_insert_with(|| self.daily_history(&symbol, full));
+                }
+                SpreadsheetField::Unsupported(_) => {}
             }
         }
         let received_at = Utc::now().to_rfc3339();
         requests
             .iter()
-            .map(|request| {
-                let symbol = request
-                    .security
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or_default()
-                    .to_ascii_uppercase();
-                let state = match quotes.get(&symbol) {
-                    Some(Ok(quote)) => {
-                        let value = match request.field.as_str() {
-                            "PX_LAST" => Some(quote.price),
-                            "CHG_PCT_1D" => Some(quote.change_percent),
-                            _ => None,
-                        };
-                        value.map_or_else(
-                            || MarketDataState::Unavailable {
-                                reason: format!("unsupported field {}", request.field),
-                            },
-                            |value| MarketDataState::Ready {
-                                value,
-                                provenance: MarketDataProvenance {
-                                    provider: "ALPHA VANTAGE · GLOBAL_QUOTE".to_owned(),
-                                    observed_at: quote.trading_day.clone(),
-                                    received_at: received_at.clone(),
-                                    quality: MarketDataQuality::Delayed,
-                                },
-                            },
+            .zip(parsed)
+            .map(|(request, field)| {
+                let symbol = spreadsheet_symbol(&request.security);
+                let state = match field {
+                    SpreadsheetField::Quote(field) => {
+                        quote_spreadsheet_state(quotes.get(&symbol), field, &received_at)
+                    }
+                    SpreadsheetField::History { field, start, end } => {
+                        let full = history_needs_full_output(start, end);
+                        history_spreadsheet_state(
+                            histories.get(&(symbol, full)),
+                            field,
+                            start,
+                            end,
+                            &received_at,
                         )
                     }
-                    Some(Err(MarketDataError::PermissionDenied(_))) => {
-                        MarketDataState::PermissionDenied {
-                            provider: "ALPHA VANTAGE".to_owned(),
-                        }
+                    SpreadsheetField::Unsupported(reason) => {
+                        MarketDataState::Unavailable { reason }
                     }
-                    Some(Err(error)) => MarketDataState::Unavailable {
-                        reason: error.to_string(),
-                    },
-                    None => MarketDataState::Unavailable {
-                        reason: "quote request was not issued".to_owned(),
-                    },
                 };
                 MarketDataPoint {
                     request: request.clone(),
@@ -446,6 +438,171 @@ struct ProviderBar {
     low: f64,
     close: f64,
     volume: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpreadsheetQuoteField {
+    Last,
+    ChangePercentOneDay,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpreadsheetHistoryField {
+    Open,
+    High,
+    Low,
+    Last,
+    Volume,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SpreadsheetField {
+    Quote(SpreadsheetQuoteField),
+    History {
+        field: SpreadsheetHistoryField,
+        start: NaiveDate,
+        end: NaiveDate,
+    },
+    Unsupported(String),
+}
+
+fn spreadsheet_symbol(security: &str) -> String {
+    security
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase()
+}
+
+fn parse_spreadsheet_field(field: &str) -> SpreadsheetField {
+    match field {
+        "PX_LAST" => SpreadsheetField::Quote(SpreadsheetQuoteField::Last),
+        "CHG_PCT_1D" => SpreadsheetField::Quote(SpreadsheetQuoteField::ChangePercentOneDay),
+        _ => {
+            let parts = field.split('|').collect::<Vec<_>>();
+            if parts.first() != Some(&"HISTORY") {
+                return SpreadsheetField::Unsupported(format!("unsupported field {field}"));
+            }
+            if parts.len() != 4 {
+                return SpreadsheetField::Unsupported(
+                    "HISTORY requires field, start, and end".to_owned(),
+                );
+            }
+            let history_field = match parts[1] {
+                "PX_OPEN" => SpreadsheetHistoryField::Open,
+                "PX_HIGH" => SpreadsheetHistoryField::High,
+                "PX_LOW" => SpreadsheetHistoryField::Low,
+                "PX_LAST" => SpreadsheetHistoryField::Last,
+                "VOLUME" => SpreadsheetHistoryField::Volume,
+                unsupported => {
+                    return SpreadsheetField::Unsupported(format!(
+                        "unsupported HISTORY field {unsupported}"
+                    ));
+                }
+            };
+            let Ok(start) = NaiveDate::parse_from_str(parts[2], "%Y-%m-%d") else {
+                return SpreadsheetField::Unsupported(
+                    "HISTORY start must be an ISO YYYY-MM-DD date".to_owned(),
+                );
+            };
+            let Ok(end) = NaiveDate::parse_from_str(parts[3], "%Y-%m-%d") else {
+                return SpreadsheetField::Unsupported(
+                    "HISTORY end must be an ISO YYYY-MM-DD date".to_owned(),
+                );
+            };
+            if start > end {
+                return SpreadsheetField::Unsupported(
+                    "HISTORY start must not be after end".to_owned(),
+                );
+            }
+            SpreadsheetField::History {
+                field: history_field,
+                start,
+                end,
+            }
+        }
+    }
+}
+
+fn history_needs_full_output(start: NaiveDate, end: NaiveDate) -> bool {
+    (end - start).num_days() > 140 || (Utc::now().date_naive() - start).num_days() > 140
+}
+
+fn quote_spreadsheet_state(
+    result: Option<&Result<ProviderQuote, MarketDataError>>,
+    field: SpreadsheetQuoteField,
+    received_at: &str,
+) -> MarketDataState {
+    match result {
+        Some(Ok(quote)) => MarketDataState::Ready {
+            value: match field {
+                SpreadsheetQuoteField::Last => quote.price,
+                SpreadsheetQuoteField::ChangePercentOneDay => quote.change_percent,
+            },
+            provenance: MarketDataProvenance {
+                provider: "ALPHA VANTAGE · GLOBAL_QUOTE".to_owned(),
+                observed_at: quote.trading_day.clone(),
+                received_at: received_at.to_owned(),
+                quality: MarketDataQuality::Delayed,
+            },
+        },
+        Some(Err(MarketDataError::PermissionDenied(_))) => MarketDataState::PermissionDenied {
+            provider: "ALPHA VANTAGE".to_owned(),
+        },
+        Some(Err(error)) => MarketDataState::Unavailable {
+            reason: error.to_string(),
+        },
+        None => MarketDataState::Unavailable {
+            reason: "quote request was not issued".to_owned(),
+        },
+    }
+}
+
+fn history_spreadsheet_state(
+    result: Option<&Result<Vec<ProviderBar>, MarketDataError>>,
+    field: SpreadsheetHistoryField,
+    start: NaiveDate,
+    end: NaiveDate,
+    received_at: &str,
+) -> MarketDataState {
+    match result {
+        Some(Ok(bars)) => {
+            let Some(bar) = bars
+                .iter()
+                .rev()
+                .find(|bar| bar.date >= start && bar.date <= end)
+            else {
+                return MarketDataState::Unavailable {
+                    reason: format!("no daily observation between {start} and {end}"),
+                };
+            };
+            let value = match field {
+                SpreadsheetHistoryField::Open => bar.open,
+                SpreadsheetHistoryField::High => bar.high,
+                SpreadsheetHistoryField::Low => bar.low,
+                SpreadsheetHistoryField::Last => bar.close,
+                SpreadsheetHistoryField::Volume => bar.volume as f64,
+            };
+            MarketDataState::Ready {
+                value,
+                provenance: MarketDataProvenance {
+                    provider: "ALPHA VANTAGE · TIME_SERIES_DAILY".to_owned(),
+                    observed_at: bar.date.format("%Y-%m-%d").to_string(),
+                    received_at: received_at.to_owned(),
+                    quality: MarketDataQuality::Delayed,
+                },
+            }
+        }
+        Some(Err(MarketDataError::PermissionDenied(_))) => MarketDataState::PermissionDenied {
+            provider: "ALPHA VANTAGE".to_owned(),
+        },
+        Some(Err(error)) => MarketDataState::Unavailable {
+            reason: error.to_string(),
+        },
+        None => MarketDataState::Unavailable {
+            reason: "history request was not issued".to_owned(),
+        },
+    }
 }
 
 fn aggregate_weekly(bars: Vec<ProviderBar>) -> Vec<ProviderBar> {
@@ -670,6 +827,54 @@ mod tests {
         assert_eq!(weekly[0].low, 9.0);
         assert_eq!(weekly[0].close, 12.5);
         assert_eq!(weekly[0].volume, 300);
+    }
+
+    #[test]
+    fn spreadsheet_history_parser_validates_dates_fields_and_order() {
+        assert!(matches!(
+            parse_spreadsheet_field("HISTORY|PX_LAST|2026-08-01|2026-08-27"),
+            SpreadsheetField::History {
+                field: SpreadsheetHistoryField::Last,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse_spreadsheet_field("HISTORY|PX_LAST|2026-08-28|2026-08-27"),
+            SpreadsheetField::Unsupported(reason) if reason.contains("after end")
+        ));
+        assert!(matches!(
+            parse_spreadsheet_field("HISTORY|VWAP|2026-08-01|2026-08-27"),
+            SpreadsheetField::Unsupported(reason) if reason.contains("VWAP")
+        ));
+    }
+
+    #[test]
+    fn spreadsheet_history_returns_latest_observation_in_inclusive_interval() {
+        let bar = |day, close| ProviderBar {
+            date: NaiveDate::from_ymd_opt(2026, 8, day).unwrap(),
+            open: close - 1.0,
+            high: close + 1.0,
+            low: close - 2.0,
+            close,
+            volume: day as u64 * 1_000,
+        };
+        let bars = Ok(vec![bar(24, 10.0), bar(25, 11.0), bar(27, 12.0)]);
+
+        let state = history_spreadsheet_state(
+            Some(&bars),
+            SpreadsheetHistoryField::Last,
+            NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
+            "2026-08-27T12:00:00Z",
+        );
+
+        let MarketDataState::Ready { value, provenance } = state else {
+            panic!("history was not ready");
+        };
+        assert_eq!(value, 11.0);
+        assert_eq!(provenance.observed_at, "2026-08-25");
+        assert_eq!(provenance.provider, "ALPHA VANTAGE · TIME_SERIES_DAILY");
+        assert_eq!(provenance.quality, MarketDataQuality::Delayed);
     }
 
     #[test]

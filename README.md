@@ -171,6 +171,13 @@ MARKET_TERMINAL_MARKET_DATA_PROVIDER="alpha-vantage"
 ALPHA_VANTAGE_API_KEY="your-key-or-demo"
 ```
 
+That selection also enables Spreadsheet `HISTORY` over official daily bars.
+Spreadsheet `FUNDAMENTAL` is independent of the quote selection and uses SEC
+EDGAR Company Facts with the same fair-access user agent as Security Research.
+Neither path falls back to the gallery workbook or generated values. See the
+[Spreadsheet contract](docs/spreadsheet.md) for supported fields and scalar
+date/period semantics.
+
 Finnhub is also available for real-time US quote snapshots with an API key.
 Its stock-candle endpoint is premium, so this adapter does not fake provider
 history: charts show only bounded, flat OHLC marks accumulated from quotes
@@ -341,6 +348,19 @@ With a text instrument cell selected, `SHEET FIND`, `SHEET MON`, `SHEET SEC`,
 Press `A` on a selected result in Find, Monitor, Security, Chart, or News to
 insert it back into the selected sheet cell. Feature packages do not import one
 another for this exchange.
+
+For live financial formulas, select Alpha Vantage for official daily history;
+reported annual fundamentals always use official SEC Company Facts:
+
+```text
+=HISTORY(A1, "PX_LAST", "2026-01-01", "2026-08-27")
+=FUNDAMENTAL(A1, "REVENUE", "FY2025")
+```
+
+The first formula returns the latest daily close in the inclusive interval.
+The second retains the raw reported USD value and fiscal period-end provenance.
+Missing data and entitlements stay visible instead of being filled with demo
+values.
 
 The complete formula grammar, function catalog, async state model, limits, and
 performance contract are in [`docs/spreadsheet.md`](docs/spreadsheet.md).
