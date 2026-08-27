@@ -1,3 +1,4 @@
+mod alert_state;
 mod alerts_demo;
 mod alpaca;
 mod alpha_vantage;

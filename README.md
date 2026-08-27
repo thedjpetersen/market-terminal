@@ -263,6 +263,16 @@ from provider, canonical instrument, observation time, price, and move, so
 refreshing the same delayed record is idempotent and cannot satisfy debounce by
 accident. Provider entitlement and availability failures are shown directly.
 
+The interactive app persists the complete local rule register—not just rule
+definitions—in a private crash-safe feature document. Enabled/disabled state,
+pending debounce confirmations, trigger/acknowledgement state, bounded audit
+history, and recent processed evaluation IDs are restored on launch. Writes run
+on a coalescing background worker and the latest state is flushed during clean
+shutdown, so terminal input does not wait on disk I/O. The register is bounded
+to 256 rules, 256 audit entries per rule, and 1,024 recent evaluation IDs per
+rule. Delivery is still explicitly `SIMULATED · LOCAL ONLY`; persistence does
+not send an external notification or place an order.
+
 ## Live instrument master
 
 The interactive Find workspace loads the SEC EDGAR company-ticker master on a

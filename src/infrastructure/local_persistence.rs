@@ -10,6 +10,8 @@ use std::{
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
+use super::alert_state::{decode_alert_rules, encode_alert_rules};
+use crate::features::alerts::{AlertRulesState, AlertStateError, AlertStateStore};
 use crate::features::persistence::{
     DocumentId, FeatureDocument, FeatureDocumentRepository, FeatureKey, PersistenceError,
     SessionState, SessionStateRepository, MAX_DOCUMENT_BYTES,
@@ -198,6 +200,28 @@ impl PortfolioImportStateStore for LocalPersistence {
     }
 }
 
+impl AlertStateStore for LocalPersistence {
+    fn load_alert_rules(&self) -> Result<Option<AlertRulesState>, AlertStateError> {
+        let feature = alerts_feature_key()?;
+        let id = alerts_rules_document_id()?;
+        FeatureDocumentRepository::load(self, &feature, &id)
+            .map_err(alerts_persistence_error)?
+            .map(|document| decode_alert_rules(document.revision(), document.payload()))
+            .transpose()
+    }
+
+    fn save_alert_rules(&self, state: &AlertRulesState) -> Result<(), AlertStateError> {
+        let document = FeatureDocument::new(
+            alerts_feature_key()?,
+            alerts_rules_document_id()?,
+            state.revision,
+            encode_alert_rules(state)?,
+        )
+        .map_err(|error| AlertStateError::Corrupt(error.to_string()))?;
+        FeatureDocumentRepository::save(self, &document).map_err(alerts_persistence_error)
+    }
+}
+
 fn spreadsheet_feature_key() -> Result<FeatureKey, SpreadsheetFileError> {
     FeatureKey::new("spreadsheet")
         .map_err(|error| SpreadsheetFileError::InvalidLocation(error.to_string()))
@@ -222,6 +246,24 @@ fn portfolio_import_document_id() -> Result<DocumentId, PortfolioError> {
 
 fn portfolio_persistence_error(error: PersistenceError) -> PortfolioError {
     PortfolioError::Io(error.to_string())
+}
+
+fn alerts_feature_key() -> Result<FeatureKey, AlertStateError> {
+    FeatureKey::new("alerts").map_err(|error| AlertStateError::Corrupt(error.to_string()))
+}
+
+fn alerts_rules_document_id() -> Result<DocumentId, AlertStateError> {
+    DocumentId::new("rule_register").map_err(|error| AlertStateError::Corrupt(error.to_string()))
+}
+
+fn alerts_persistence_error(error: PersistenceError) -> AlertStateError {
+    match error {
+        PersistenceError::Corrupt(message) => AlertStateError::Corrupt(message),
+        PersistenceError::UnsupportedVersion { schema, version } => {
+            AlertStateError::Unsupported(format!("{schema} version {version}"))
+        }
+        error => AlertStateError::Io(error.to_string()),
+    }
 }
 
 impl SessionStateRepository for LocalPersistence {
@@ -699,6 +741,58 @@ mod tests {
             .join("documents")
             .join("portfolio")
             .join("active_import.json");
+        assert!(document.is_file());
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(document).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn alert_rule_runtime_state_round_trips_through_private_feature_document() {
+        use crate::features::alerts::{
+            AlertCondition, AlertEvaluation, AlertObservation, AlertRule, AlertRuleId,
+            DebouncePolicy, InstrumentRef,
+        };
+
+        let directory = TestDirectory::new("alert-state");
+        let repository = LocalPersistence::new(&directory.0);
+        let mut rule = AlertRule::new(
+            AlertRuleId::new("local:ibm:1"),
+            InstrumentRef::new("us:listed:ibm", "IBM"),
+            AlertCondition::price_above(100.0),
+            DebouncePolicy::consecutive(1),
+        );
+        let observation = AlertObservation::new(
+            "alpha-vantage:ibm:2026-08-27",
+            "us:listed:ibm",
+            250.0,
+            1.0,
+            "2026-08-27T20:00:00Z",
+        );
+        assert!(matches!(
+            rule.evaluate(&observation),
+            AlertEvaluation::Triggered(_)
+        ));
+        rule.acknowledge("2026-08-27T20:01:00Z");
+        let state = AlertRulesState::new(3, vec![rule]).unwrap();
+
+        AlertStateStore::save_alert_rules(&repository, &state).unwrap();
+        let restored = AlertStateStore::load_alert_rules(&repository)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(restored, state);
+        assert_eq!(
+            restored.rules[0].clone().evaluate(&observation),
+            AlertEvaluation::Duplicate
+        );
+        let document = directory
+            .0
+            .join("documents")
+            .join("alerts")
+            .join("rule_register.json");
         assert!(document.is_file());
         #[cfg(unix)]
         assert_eq!(

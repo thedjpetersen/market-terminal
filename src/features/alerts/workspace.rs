@@ -1,7 +1,8 @@
 use std::sync::{
-    mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
+    mpsc::{channel, sync_channel, Receiver, SyncSender, TrySendError},
     Arc,
 };
+use std::thread::JoinHandle;
 
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::{
@@ -22,8 +23,9 @@ use crate::{
 };
 
 use super::{
-    AlertCondition, AlertEvaluation, AlertLifecycle, AlertRule, AlertRuleId, AlertSnapshot,
-    AlertStatus, AlertsError, AlertsQuery, DebouncePolicy, InstrumentRef, ID,
+    AlertCondition, AlertEvaluation, AlertLifecycle, AlertRule, AlertRuleId, AlertRulesState,
+    AlertSnapshot, AlertStateError, AlertStateStore, AlertStatus, AlertsError, AlertsQuery,
+    DebouncePolicy, InstrumentRef, ID, MAX_ALERT_RULES,
 };
 
 struct AlertsRefresh {
@@ -34,6 +36,11 @@ struct AlertsRefresh {
 struct AlertsRefreshResult {
     generation: u64,
     result: Result<AlertSnapshot, AlertsError>,
+}
+
+struct AlertPersistResult {
+    revision: u64,
+    result: Result<(), AlertStateError>,
 }
 
 pub struct AlertsWorkspace {
@@ -47,10 +54,50 @@ pub struct AlertsWorkspace {
     refresh_receiver: Receiver<AlertsRefreshResult>,
     pending_refresh: Option<AlertsRefresh>,
     desired_generation: u64,
+    state_revision: u64,
+    persisted_revision: u64,
+    persistence_status: String,
+    persist_sender: Option<SyncSender<AlertRulesState>>,
+    persist_receiver: Option<Receiver<AlertPersistResult>>,
+    pending_persist: Option<AlertRulesState>,
+    persist_worker: Option<JoinHandle<()>>,
 }
 
 impl AlertsWorkspace {
     pub fn new(query: Arc<dyn AlertsQuery>) -> Self {
+        Self::configured(query, None)
+    }
+
+    pub fn persistent(query: Arc<dyn AlertsQuery>, state_store: Arc<dyn AlertStateStore>) -> Self {
+        Self::configured(query, Some(state_store))
+    }
+
+    fn configured(
+        query: Arc<dyn AlertsQuery>,
+        state_store: Option<Arc<dyn AlertStateStore>>,
+    ) -> Self {
+        let (rules, state_revision, persisted_revision, persistence_status) =
+            match state_store.as_ref().map(|store| store.load_alert_rules()) {
+                None => (Vec::new(), 0, 0, "PROCESS-LOCAL STATE".to_owned()),
+                Some(Ok(Some(state))) => {
+                    let revision = state.revision;
+                    let count = state.rules.len();
+                    (
+                        state.rules,
+                        revision,
+                        revision,
+                        format!("DURABLE R{revision} · RESTORED {count} RULE(S)"),
+                    )
+                }
+                Some(Ok(None)) => (Vec::new(), 0, 0, "DURABLE STATE READY".to_owned()),
+                Some(Err(error)) => (
+                    Vec::new(),
+                    0,
+                    0,
+                    format!("DURABLE STATE LOAD ERROR · {error}"),
+                ),
+            };
+        let local_rule_sequence = next_local_rule_sequence(&rules);
         let (refresh_sender, worker_receiver) = sync_channel::<AlertsRefresh>(1);
         let (worker_sender, refresh_receiver) = sync_channel::<AlertsRefreshResult>(1);
         std::thread::Builder::new()
@@ -73,17 +120,53 @@ impl AlertsWorkspace {
                 }
             })
             .expect("alert observation worker should start");
+        let (persist_sender, persist_receiver, persist_worker) = if let Some(store) = state_store {
+            let (persist_sender, worker_receiver) = sync_channel::<AlertRulesState>(1);
+            let (worker_sender, persist_receiver) = channel::<AlertPersistResult>();
+            let persist_worker = std::thread::Builder::new()
+                .name("alert-state-writer".to_owned())
+                .spawn(move || {
+                    while let Ok(mut state) = worker_receiver.recv() {
+                        while let Ok(newer) = worker_receiver.try_recv() {
+                            state = newer;
+                        }
+                        let revision = state.revision;
+                        let result = store.save_alert_rules(&state);
+                        if worker_sender
+                            .send(AlertPersistResult { revision, result })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                })
+                .expect("alert state writer should start");
+            (
+                Some(persist_sender),
+                Some(persist_receiver),
+                Some(persist_worker),
+            )
+        } else {
+            (None, None, None)
+        };
         let mut workspace = Self {
-            rules: Vec::new(),
+            rules,
             selected: 0,
             status: "LOADING LOCAL ALERTS".to_owned(),
             snapshot_as_of: "--".to_owned(),
             snapshot_source: "SIMULATED LOCAL".to_owned(),
-            local_rule_sequence: 0,
+            local_rule_sequence,
             refresh_sender,
             refresh_receiver,
             pending_refresh: None,
             desired_generation: 0,
+            state_revision,
+            persisted_revision,
+            persistence_status,
+            persist_sender,
+            persist_receiver,
+            pending_persist: None,
+            persist_worker,
         };
         workspace.refresh();
         workspace
@@ -139,12 +222,23 @@ impl AlertsWorkspace {
     }
 
     fn apply_snapshot(&mut self, snapshot: AlertSnapshot) {
+        let mut state_changed = false;
         if self.rules.is_empty() {
-            self.rules = snapshot.rules;
+            let available = MAX_ALERT_RULES.saturating_sub(self.rules.len());
+            let additions = snapshot
+                .rules
+                .into_iter()
+                .take(available)
+                .collect::<Vec<_>>();
+            state_changed |= !additions.is_empty();
+            self.rules = additions;
         } else {
             for rule in snapshot.rules {
-                if !self.rules.iter().any(|existing| existing.id == rule.id) {
+                if self.rules.len() < MAX_ALERT_RULES
+                    && !self.rules.iter().any(|existing| existing.id == rule.id)
+                {
                     self.rules.push(rule);
+                    state_changed = true;
                 }
             }
         }
@@ -156,9 +250,13 @@ impl AlertsWorkspace {
                 match rule.evaluate(observation) {
                     AlertEvaluation::Triggered(_) => triggered += 1,
                     AlertEvaluation::Duplicate => duplicates += 1,
-                    _ => {}
+                    AlertEvaluation::NotApplicable => {}
+                    _ => state_changed = true,
                 }
             }
+        }
+        if state_changed {
+            self.queue_persist();
         }
         self.selected = self.selected.min(self.rules.len().saturating_sub(1));
         self.snapshot_as_of = snapshot.as_of;
@@ -194,18 +292,24 @@ impl AlertsWorkspace {
             return;
         };
         rule.toggle(self.snapshot_as_of.clone());
-        self.status = format!("{} {}", rule.instrument.symbol, rule.lifecycle.label());
+        let status = format!("{} {}", rule.instrument.symbol, rule.lifecycle.label());
+        self.status = status;
+        self.queue_persist();
     }
 
     fn acknowledge_selected(&mut self) {
         let Some(rule) = self.rules.get_mut(self.selected) else {
             return;
         };
-        self.status = if rule.acknowledge(self.snapshot_as_of.clone()) {
+        let changed = rule.acknowledge(self.snapshot_as_of.clone());
+        self.status = if changed {
             format!("{} ACKNOWLEDGED LOCALLY", rule.instrument.symbol)
         } else {
             format!("{} HAS NO UNACKNOWLEDGED TRIGGER", rule.instrument.symbol)
         };
+        if changed {
+            self.queue_persist();
+        }
     }
 
     fn handle_alert_command(&mut self, invocation: &CommandInvocation) {
@@ -217,11 +321,21 @@ impl AlertsWorkspace {
 
         if let Some(condition) = parse_condition(&invocation.args) {
             let symbol = invocation.args[0].trim().to_ascii_uppercase();
+            if !valid_alert_symbol(&symbol) {
+                self.status =
+                    "INVALID ALERT SYMBOL · USE 1-32 LETTERS, DIGITS, . - / ^ OR _".to_owned();
+                return;
+            }
             if let Some(index) = self.rules.iter().position(|rule| {
                 rule.instrument.symbol.eq_ignore_ascii_case(&symbol) && rule.condition == condition
             }) {
                 self.selected = index;
                 self.status = format!("EXISTING {symbol} RULE SELECTED");
+                return;
+            }
+
+            if self.rules.len() >= MAX_ALERT_RULES {
+                self.status = format!("ALERT RULE LIMIT REACHED · MAXIMUM {MAX_ALERT_RULES}");
                 return;
             }
 
@@ -256,6 +370,56 @@ impl AlertsWorkspace {
                 "INVALID ALERT · EXAMPLES: ALERT AAPL > 206 · ALERT NVDA MOVE < -3".to_owned();
         }
     }
+
+    fn queue_persist(&mut self) {
+        if self.persist_sender.is_none() {
+            return;
+        }
+        self.state_revision = self.state_revision.saturating_add(1);
+        match AlertRulesState::new(self.state_revision, self.rules.clone()) {
+            Ok(state) => {
+                self.pending_persist = Some(state);
+                self.dispatch_pending_persist();
+            }
+            Err(error) => {
+                self.persistence_status = format!("DURABLE STATE ERROR · {error}");
+            }
+        }
+    }
+
+    fn dispatch_pending_persist(&mut self) {
+        let Some(state) = self.pending_persist.take() else {
+            return;
+        };
+        let Some(sender) = &self.persist_sender else {
+            return;
+        };
+        match sender.try_send(state) {
+            Ok(()) => {}
+            Err(TrySendError::Full(state)) => self.pending_persist = Some(state),
+            Err(TrySendError::Disconnected(_)) => {
+                self.persistence_status = "DURABLE STATE WRITER STOPPED".to_owned();
+            }
+        }
+    }
+
+    fn poll_persistence(&mut self) {
+        if let Some(receiver) = &self.persist_receiver {
+            while let Ok(result) = receiver.try_recv() {
+                match result.result {
+                    Ok(()) => {
+                        self.persisted_revision = self.persisted_revision.max(result.revision);
+                        self.persistence_status =
+                            format!("DURABLE R{} · SAVED", self.persisted_revision);
+                    }
+                    Err(error) => {
+                        self.persistence_status = format!("DURABLE STATE SAVE ERROR · {error}");
+                    }
+                }
+            }
+        }
+        self.dispatch_pending_persist();
+    }
 }
 
 impl Workspace for AlertsWorkspace {
@@ -277,6 +441,7 @@ impl Workspace for AlertsWorkspace {
             let rule_count = self.rules.len();
             self.handle_alert_command(invocation);
             if self.rules.len() > rule_count {
+                self.queue_persist();
                 self.refresh();
             }
         } else {
@@ -356,6 +521,7 @@ impl Workspace for AlertsWorkspace {
 
     fn poll_intents(&mut self) -> Vec<AppIntent> {
         self.poll_refresh();
+        self.poll_persistence();
         Vec::new()
     }
 
@@ -447,6 +613,7 @@ impl Workspace for AlertsWorkspace {
                 self.selected,
                 &self.snapshot_as_of,
                 &self.snapshot_source,
+                &self.persistence_status,
             ))
             .wrap(Wrap { trim: true })
             .block(terminal_block("AUDIT", "SELECTED RULE")),
@@ -467,6 +634,18 @@ impl Workspace for AlertsWorkspace {
             ])),
             areas[3],
         );
+    }
+}
+
+impl Drop for AlertsWorkspace {
+    fn drop(&mut self) {
+        if let (Some(sender), Some(state)) = (&self.persist_sender, self.pending_persist.take()) {
+            let _ = sender.send(state);
+        }
+        self.persist_sender.take();
+        if let Some(worker) = self.persist_worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -507,6 +686,35 @@ fn canonical_id_for_symbol(symbol: &str) -> String {
         "SPX" => "index:spx".to_owned(),
         _ => format!("us:listed:{}", symbol.to_ascii_lowercase()),
     }
+}
+
+fn valid_alert_symbol(symbol: &str) -> bool {
+    !symbol.is_empty()
+        && symbol.len() <= 32
+        && symbol
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphanumeric() || character == '^')
+        && !symbol.contains("..")
+        && symbol.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '/' | '^' | '_')
+        })
+}
+
+fn next_local_rule_sequence(rules: &[AlertRule]) -> u64 {
+    rules
+        .iter()
+        .filter_map(|rule| {
+            rule.id
+                .as_str()
+                .strip_prefix("local:")?
+                .rsplit(':')
+                .next()?
+                .parse::<u64>()
+                .ok()
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 fn debounce_label(rule: &AlertRule) -> String {
@@ -565,6 +773,7 @@ fn selected_detail(
     selected: usize,
     snapshot_as_of: &str,
     snapshot_source: &str,
+    persistence_status: &str,
 ) -> Vec<Line<'static>> {
     let Some(rule) = rules.get(selected) else {
         return vec![Line::styled("NO ALERT RULES", MUTED)];
@@ -593,6 +802,7 @@ fn selected_detail(
             MUTED,
         ),
         Line::styled(audit, INK),
+        Line::styled(persistence_status.to_owned(), CYAN),
         Line::styled("ACKNOWLEDGEMENT CHANGES LOCAL DISPLAY STATE ONLY.", YELLOW),
     ]
 }
@@ -608,6 +818,26 @@ mod tests {
 
     struct StubAlerts {
         snapshots: Mutex<VecDeque<AlertSnapshot>>,
+    }
+
+    #[derive(Default)]
+    struct MemoryAlertState {
+        state: Mutex<Option<AlertRulesState>>,
+    }
+
+    impl AlertStateStore for MemoryAlertState {
+        fn load_alert_rules(&self) -> Result<Option<AlertRulesState>, AlertStateError> {
+            Ok(self
+                .state
+                .lock()
+                .expect("memory alert state poisoned")
+                .clone())
+        }
+
+        fn save_alert_rules(&self, state: &AlertRulesState) -> Result<(), AlertStateError> {
+            *self.state.lock().expect("memory alert state poisoned") = Some(state.clone());
+            Ok(())
+        }
     }
 
     impl AlertsQuery for StubAlerts {
@@ -718,6 +948,120 @@ mod tests {
             workspace.rules[2].delivery.label(),
             "SIMULATED · LOCAL ONLY"
         );
+
+        let rule_count = workspace.rules.len();
+        workspace.handle_command(&CommandInvocation {
+            function: "ALERT".to_owned(),
+            args: vec!["../IBM".to_owned(), ">".to_owned(), "1".to_owned()],
+        });
+        assert_eq!(workspace.rules.len(), rule_count);
+        assert!(workspace.status.contains("INVALID ALERT SYMBOL"));
+    }
+
+    #[test]
+    fn complete_rule_state_and_sequence_survive_workspace_restart() {
+        let observation = AlertObservation::new(
+            "provider:aapl:one",
+            "us:xnas:aapl",
+            206.0,
+            0.5,
+            "2026-08-25T20:00:00Z",
+        );
+        let mut rule = AlertRule::new(
+            AlertRuleId::new("local:aapl:7"),
+            InstrumentRef::new("us:xnas:aapl", "AAPL"),
+            AlertCondition::price_above(205.0),
+            DebouncePolicy::consecutive(2),
+        );
+        assert_eq!(
+            rule.evaluate(&observation),
+            AlertEvaluation::Pending {
+                matched: 1,
+                required: 2
+            }
+        );
+        let store = Arc::new(MemoryAlertState {
+            state: Mutex::new(Some(AlertRulesState::new(4, vec![rule]).unwrap())),
+        });
+        let query = Arc::new(StubAlerts {
+            snapshots: Mutex::new(VecDeque::from([AlertSnapshot::new(
+                1,
+                "2026-08-25T20:00:00Z",
+                Vec::new(),
+                vec![observation],
+                "REAL-SHAPED PROVIDER SNAPSHOT",
+            )])),
+        });
+        let mut workspace = AlertsWorkspace::persistent(query, store.clone());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while !workspace.status.contains("IDEMPOTENT") && std::time::Instant::now() < deadline {
+            workspace.poll_refresh();
+            std::thread::yield_now();
+        }
+
+        assert!(matches!(
+            workspace.rules[0].status,
+            AlertStatus::Pending {
+                matched: 1,
+                required: 2
+            }
+        ));
+        assert!(workspace.rules[0].audit.is_empty());
+        workspace.handle_command(&CommandInvocation {
+            function: "ALERT".to_owned(),
+            args: vec!["MSFT".to_owned(), ">".to_owned(), "500".to_owned()],
+        });
+        drop(workspace);
+
+        let saved = store.load_alert_rules().unwrap().unwrap();
+        assert_eq!(saved.rules.len(), 2);
+        assert!(saved.revision > 4);
+        assert_eq!(saved.rules[1].id.as_str(), "local:msft:8");
+        assert_eq!(
+            saved.rules[0].clone().evaluate(&AlertObservation::new(
+                "provider:aapl:one",
+                "us:xnas:aapl",
+                206.0,
+                0.5,
+                "2026-08-25T20:00:00Z",
+            )),
+            AlertEvaluation::Duplicate
+        );
+    }
+
+    #[test]
+    fn slow_durable_writes_do_not_block_alert_commands() {
+        struct SlowAlertState;
+
+        impl AlertStateStore for SlowAlertState {
+            fn load_alert_rules(&self) -> Result<Option<AlertRulesState>, AlertStateError> {
+                Ok(None)
+            }
+
+            fn save_alert_rules(&self, _state: &AlertRulesState) -> Result<(), AlertStateError> {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                Ok(())
+            }
+        }
+
+        let query = Arc::new(StubAlerts {
+            snapshots: Mutex::new(VecDeque::from([AlertSnapshot::new(
+                0,
+                "2026-08-25T20:00:00Z",
+                Vec::new(),
+                Vec::new(),
+                "TEST",
+            )])),
+        });
+        let mut workspace = AlertsWorkspace::persistent(query, Arc::new(SlowAlertState));
+        let started = std::time::Instant::now();
+        workspace.handle_command(&CommandInvocation {
+            function: "ALERT".to_owned(),
+            args: vec!["IBM".to_owned(), ">".to_owned(), "250".to_owned()],
+        });
+
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+        assert_eq!(workspace.rules.len(), 1);
     }
 
     #[test]

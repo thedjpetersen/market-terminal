@@ -141,8 +141,10 @@ fn bounded_failures(failures: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{CommandInvocation, Workspace};
+    use crate::features::alerts::{AlertEvaluation, AlertStateStore, AlertStatus, AlertsWorkspace};
     use crate::features::market_data::MarketDataError;
-    use crate::infrastructure::AlphaVantageMarketData;
+    use crate::infrastructure::{AlphaVantageMarketData, LocalPersistence};
 
     #[test]
     #[ignore = "live Alpha Vantage alert-observation contract test"]
@@ -164,6 +166,77 @@ mod tests {
         );
         assert!(first.source.contains("ALPHA-VANTAGE"));
         assert!(first.source.contains("DELAYED"));
+    }
+
+    #[test]
+    #[ignore = "live Alpha Vantage + durable alert-state restart contract test"]
+    fn live_ibm_evaluation_remains_idempotent_after_durable_restart() {
+        let _ = dotenvy::dotenv();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("market-terminal-live-alerts-{unique}"));
+        let store = Arc::new(LocalPersistence::new(&root));
+        let query: Arc<dyn AlertsQuery> = Arc::new(LiveAlertsQuery::new(Arc::new(
+            AlphaVantageMarketData::from_env(),
+        )));
+        let mut workspace = AlertsWorkspace::persistent(query, store.clone());
+        workspace.handle_command(&CommandInvocation {
+            function: "ALERT".to_owned(),
+            args: vec!["IBM".to_owned(), ">".to_owned(), "0".to_owned()],
+        });
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while workspace
+            .rules()
+            .first()
+            .and_then(|rule| rule.last_observation.as_ref())
+            .is_none()
+            && std::time::Instant::now() < deadline
+        {
+            workspace.poll_intents();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let first_observation = workspace.rules()[0]
+            .last_observation
+            .clone()
+            .expect("live IBM observation should arrive");
+        assert!(first_observation.price > 0.0);
+        assert!(matches!(
+            workspace.rules()[0].status,
+            AlertStatus::Pending {
+                matched: 1,
+                required: 2
+            }
+        ));
+        drop(workspace);
+
+        let restored = store
+            .load_alert_rules()
+            .unwrap()
+            .expect("workspace drop should flush durable alert state");
+        assert_eq!(restored.rules.len(), 1);
+        assert!(restored.revision > 0);
+        assert!(restored.rules[0]
+            .runtime_state()
+            .processed_evaluation_ids
+            .contains(&first_observation.evaluation_id));
+
+        let live_after_restart = LiveAlertsQuery::new(Arc::new(AlphaVantageMarketData::from_env()))
+            .load_snapshot(&[InstrumentRef::new("us:listed:ibm", "IBM")])
+            .unwrap();
+        assert_eq!(
+            live_after_restart.observations[0].evaluation_id,
+            first_observation.evaluation_id
+        );
+        assert_eq!(
+            restored.rules[0]
+                .clone()
+                .evaluate(&live_after_restart.observations[0]),
+            AlertEvaluation::Duplicate
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

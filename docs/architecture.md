@@ -161,6 +161,15 @@ tokens; API-provider credentials are read from the process environment. No
 credential is stored in feature state, conversation history, logs, or model
 context.
 
+Alerts own a separate `AlertStateStore` port. The interactive composition root
+wires it to the crash-safe feature-document repository, while the workspace
+coalesces complete rule-register snapshots through a bounded background writer.
+The persisted state includes lifecycle, debounce, last observation, processed
+evaluation IDs, trigger/acknowledgement state, and bounded audit history; the
+live quote adapter remains an independent read boundary. This keeps restart
+idempotency inside Alerts without coupling the context to filesystem or market
+data formats.
+
 ## Growth path
 
 The next structural steps are intentionally additive:
@@ -173,7 +182,7 @@ The next structural steps are intentionally additive:
   decorators around feature ports;
 - move bounded contexts into workspace crates when build times or team
   ownership justify a Cargo workspace;
-- migrate individual saved watchlists, workbooks, charts, and alert rules onto
+- migrate individual saved watchlists, workbooks, and charts onto
   the opaque feature-document repository as their domain contracts stabilize.
 
 The current boundary is deliberately a modular monolith. It gives strong

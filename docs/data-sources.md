@@ -89,7 +89,9 @@ endorsed by, or sponsored by Yahoo.
   demo-key restrictions become typed unavailable or permission-denied states.
 - **Alert boundary:** quote observations are live provider inputs, while alert
   delivery remains simulated/local. Stable evaluation IDs prevent a cached or
-  repeated provider observation from counting twice toward debounce.
+  repeated provider observation from counting twice toward debounce. Complete
+  bounded rule runtime state is persisted locally so this idempotency,
+  debounce, acknowledgement, and audit state survive application restart.
 - **Redistribution:** no redistribution right is assumed. Users are responsible
   for selecting an Alpha Vantage plan appropriate to their display and use.
 

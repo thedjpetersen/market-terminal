@@ -83,10 +83,13 @@ move to its own crate later without changing its public vocabulary.
   fixed-scale quantities, anonymized account separation, honest per-currency
   reconciliation, retained unpriced positions, deterministic input versions,
   methodology/disclosures, and crash-safe import-path restoration.
-- **Next:** the Stage 2 portfolio, risk, screening, and restart-safe alerts
-  program. Provider availability extends the deployment surface; deterministic
-  fixtures remain the Stage 1 acceptance baseline and opt-in live contracts
-  verify real provider behavior.
+- **Complete:** restart-safe local Alert register with bounded rule and audit
+  retention, full lifecycle/debounce/acknowledgement persistence, asynchronous
+  crash-safe writes, and live-provider idempotency verification across restart.
+- **Next:** the remaining Stage 2 portfolio/performance, risk, screening, and
+  expanded alert-rule families. Provider availability extends the deployment
+  surface; deterministic fixtures remain the Stage 1 acceptance baseline and
+  opt-in live contracts verify real provider behavior.
 
 ## Product principles
 
@@ -342,8 +345,9 @@ ALERT core.drawdown > 8% -> preview -> enable
 **Status: in progress.** Position-snapshot ingestion now supplies the versioned
 Portfolio boundary that downstream Risk can consume without storage access.
 Transaction/cash ledgers, splits, dividends, performance, contribution, and
-attribution remain the next Portfolio work; screening and durable alert state
-remain separate Stage 2 slices.
+attribution remain the next Portfolio work; screening and the additional
+news/topic, portfolio-threshold, calendar, and spreadsheet-expression alert
+rule families remain separate Stage 2 slices.
 
 ## Stage 3 — Advanced analytics and paper workflows
 
