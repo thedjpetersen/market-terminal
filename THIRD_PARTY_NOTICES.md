@@ -51,6 +51,12 @@ dark-before-light cycle order in `src/ui/theme.rs` adapt the upstream preset
 table. Market Terminal maps those colors into its own semantic shell slots and
 adds session persistence, command handling, and clickable settings controls.
 
+The semantic action table, key grammar, normalization, reserved-key handling,
+collision resolution, and effective-label rendering in `src/app/keymap.rs`
+adapt the upstream keymap design. Market Terminal uses an environment format
+and a smaller shell/navigation action vocabulary while keeping its command-mode
+Vim/Emacs editor and tmux prefix contract fixed.
+
 MIT License
 
 Copyright (c) 2026 Mikhail Makeev

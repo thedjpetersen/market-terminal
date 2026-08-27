@@ -88,6 +88,25 @@ Latte, Dracula, Gruvbox Dark/Light, and Nord. The selection is persisted with
 the shell session. `MARKET_TERMINAL_THEME=catppuccin-mocha` supplies the initial
 theme before a saved interactive selection exists.
 
+Shell and shared navigation keys can be remapped without changing feature
+code. Set `MARKET_TERMINAL_KEYBINDINGS` to semicolon-separated actions whose
+values are comma-separated keys; a listed action replaces its defaults while
+unlisted actions keep theirs:
+
+```dotenv
+MARKET_TERMINAL_KEYBINDINGS="help=ctrl-h;next_panel=alt-l;previous_panel=alt-h;up=w,k;down=s,j"
+```
+
+Key names use `[ctrl-][alt-][shift-]key`, where `key` is a character, `F1`–
+`F12`, `enter`, `tab`, `backtab`, an arrow, `home`, `end`, `pgup`, `pgdn`,
+`backspace`, `delete`, or `insert`. Available actions are `quit`, `command`,
+`next_panel`, `previous_panel`, `settings`, `help`, `next_theme`,
+`previous_theme`, `refresh`, `up`, `down`, `left`, `right`, `page_up`,
+`page_down`, and `open`. Invalid, duplicate, reserved, and conflicting entries
+fall back safely and are counted in Settings. `Esc`, `Ctrl+C`, `Ctrl+B`, direct
+workspace hotkeys, the tmux post-prefix keys, and command-mode Vim/Emacs editing
+remain fixed escape routes.
+
 ## Live news
 
 The interactive app fetches real RSS/Atom feeds on a background thread; network
@@ -412,8 +431,8 @@ HawaiianNinja pointed us to
 integrated the selected MIT-licensed pieces we care about—indicator math,
 chart and watchlist-density ideas, the responsive split desk,
 provider-selection patterns, Yahoo/Finnhub/Alpaca adapter behavior, the fast
-first-run/settings flow, named theme presets, and the Form 4 insider
-workflow—into this project's bounded, provider-aware
+first-run/settings flow, named theme presets, semantic keymap parsing, and the
+Form 4 insider workflow—into this project's bounded, provider-aware
 architecture. `alphai-tui` is Copyright (c) 2026 Mikhail Makeev and licensed
 under MIT. The copied-code provenance and complete upstream license text are in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

@@ -1,6 +1,7 @@
 mod desk;
 mod events;
 mod input;
+mod keymap;
 mod settings;
 mod workspace;
 
@@ -17,6 +18,7 @@ use crate::{
 pub use desk::{DeskWorkspace, DESK_ID};
 pub use events::{EventBus, EventEnvelope, EventTopic, SubscriptionId, SubscriptionMetrics};
 pub use input::{CommandEditMode, InputMode};
+pub(crate) use keymap::{Keymap, ShellAction};
 pub use settings::RuntimeSettingsSummary;
 pub use workspace::{
     AppIntent, CommandArgument, CommandInvocation, CommandParseError, ShellChrome, ShellContext,
@@ -35,6 +37,7 @@ pub struct App {
     pub(crate) settings_visible: bool,
     pub(crate) settings_first_run: bool,
     runtime_settings: RuntimeSettingsSummary,
+    keymap: Keymap,
     pub(crate) tmux_prefix_pending: bool,
     assistant_workspace: Option<WorkspaceId>,
     assistant_drawer_visible: bool,
@@ -65,6 +68,7 @@ impl App {
             settings_visible: false,
             settings_first_run: false,
             runtime_settings: RuntimeSettingsSummary::demo(),
+            keymap: Keymap::default(),
             tmux_prefix_pending: false,
             assistant_workspace,
             assistant_drawer_visible: false,
@@ -167,6 +171,15 @@ impl App {
         self
     }
 
+    pub(crate) fn with_keymap(mut self, keymap: Keymap) -> Self {
+        self.keymap = keymap;
+        self
+    }
+
+    pub(crate) fn key_labels(&self, actions: &[ShellAction]) -> String {
+        self.keymap.labels(actions)
+    }
+
     pub fn tmux_prefix_pending(&self) -> bool {
         self.tmux_prefix_pending
     }
@@ -223,29 +236,43 @@ impl App {
             return;
         }
 
-        if key.code == KeyCode::F(3) {
-            let direction = if key.modifiers.contains(KeyModifiers::SHIFT) {
-                -1
-            } else {
-                1
-            };
-            self.cycle_theme(direction);
-            self.persist_session();
-            return;
-        }
-
         if self.settings_visible {
-            match key.code {
-                KeyCode::Esc | KeyCode::F(2) | KeyCode::Char('q' | 'Q') => {
-                    self.close_settings();
-                }
-                KeyCode::F(1) => {
+            if key.code == KeyCode::Esc {
+                self.close_settings();
+                return;
+            }
+            match self.keymap.resolve(key) {
+                keymap::BindingMatch::Action {
+                    action: ShellAction::Quit | ShellAction::Settings,
+                    ..
+                } => self.close_settings(),
+                keymap::BindingMatch::Action {
+                    action: ShellAction::Help,
+                    ..
+                } => {
                     self.close_settings();
                     self.help_visible = true;
                 }
-                KeyCode::Char('/' | ':') => {
+                keymap::BindingMatch::Action {
+                    action: ShellAction::OpenCommand,
+                    ..
+                } => {
                     self.close_settings();
                     self.open_command();
+                }
+                keymap::BindingMatch::Action {
+                    action: ShellAction::NextTheme,
+                    ..
+                } => {
+                    self.cycle_theme(1);
+                    self.persist_session();
+                }
+                keymap::BindingMatch::Action {
+                    action: ShellAction::PreviousTheme,
+                    ..
+                } => {
+                    self.cycle_theme(-1);
+                    self.persist_session();
                 }
                 _ => {}
             }
@@ -253,17 +280,42 @@ impl App {
         }
 
         if self.help_visible {
-            match key.code {
-                KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('q' | 'Q') => {
-                    self.help_visible = false;
-                }
-                KeyCode::Char('/' | ':') => {
+            if key.code == KeyCode::Esc {
+                self.help_visible = false;
+                return;
+            }
+            match self.keymap.resolve(key) {
+                keymap::BindingMatch::Action {
+                    action: ShellAction::Quit | ShellAction::Help,
+                    ..
+                } => self.help_visible = false,
+                keymap::BindingMatch::Action {
+                    action: ShellAction::OpenCommand,
+                    ..
+                } => {
                     self.help_visible = false;
                     self.open_command();
                 }
-                KeyCode::F(2) => {
+                keymap::BindingMatch::Action {
+                    action: ShellAction::Settings,
+                    ..
+                } => {
                     self.help_visible = false;
                     self.open_settings();
+                }
+                keymap::BindingMatch::Action {
+                    action: ShellAction::NextTheme,
+                    ..
+                } => {
+                    self.cycle_theme(1);
+                    self.persist_session();
+                }
+                keymap::BindingMatch::Action {
+                    action: ShellAction::PreviousTheme,
+                    ..
+                } => {
+                    self.cycle_theme(-1);
+                    self.persist_session();
                 }
                 _ => {}
             }
@@ -298,19 +350,29 @@ impl App {
             return;
         }
 
-        if key.code == KeyCode::F(1) {
-            self.help_visible = true;
-            return;
-        }
-        if key.code == KeyCode::F(2) {
-            self.open_settings();
-            return;
-        }
+        let default_action = match self.keymap.resolve(key) {
+            keymap::BindingMatch::Action {
+                action,
+                customized: true,
+            } => {
+                self.handle_bound_action(action);
+                return;
+            }
+            keymap::BindingMatch::Disabled => return,
+            keymap::BindingMatch::Action {
+                action,
+                customized: false,
+            } => Some(action),
+            keymap::BindingMatch::Unmapped => None,
+        };
 
-        // The active feature owns navigation-mode input first. This is essential
-        // for editors and other modal workspaces whose keystrokes may overlap
-        // application navigation and command-palette bindings.
+        // Unmapped input remains feature-owned. This preserves modal editors,
+        // workspace-specific Vim aliases, and direct navigation hotkeys.
         if self.workspaces.handle_key(self.active_workspace, key) {
+            return;
+        }
+        if let Some(action) = default_action {
+            self.handle_bound_action(action);
             return;
         }
 
@@ -329,6 +391,45 @@ impl App {
                 }
             }
             input::NavigationAction::Delegate => {}
+        }
+    }
+
+    fn handle_bound_action(&mut self, action: ShellAction) {
+        match action {
+            ShellAction::Quit => self.should_quit = true,
+            ShellAction::OpenCommand => self.open_command(),
+            ShellAction::NextPanel => self.switch_relative_workspace(true),
+            ShellAction::PreviousPanel => self.switch_relative_workspace(false),
+            ShellAction::Settings => self.open_settings(),
+            ShellAction::Help => self.help_visible = true,
+            ShellAction::NextTheme => {
+                self.cycle_theme(1);
+                self.persist_session();
+            }
+            ShellAction::PreviousTheme => {
+                self.cycle_theme(-1);
+                self.persist_session();
+            }
+            action => {
+                let code = match action {
+                    ShellAction::Refresh => KeyCode::F(9),
+                    ShellAction::Up => KeyCode::Up,
+                    ShellAction::Down => KeyCode::Down,
+                    ShellAction::Left => KeyCode::Left,
+                    ShellAction::Right => KeyCode::Right,
+                    ShellAction::PageUp => KeyCode::PageUp,
+                    ShellAction::PageDown => KeyCode::PageDown,
+                    ShellAction::Open => KeyCode::Enter,
+                    _ => unreachable!("shell actions are handled above"),
+                };
+                let target = if self.assistant_drawer_visible {
+                    self.assistant_workspace.unwrap_or(self.active_workspace)
+                } else {
+                    self.active_workspace
+                };
+                self.workspaces
+                    .handle_key(target, KeyEvent::new(code, KeyModifiers::NONE));
+            }
         }
     }
 
@@ -1291,6 +1392,27 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
         assert!(!app.settings_visible());
         assert!(app.help_visible());
+    }
+
+    #[test]
+    fn configured_shell_bindings_replace_defaults_and_switch_panels() {
+        let (keymap, warnings) =
+            Keymap::from_spec("help=ctrl-h;next_panel=alt-l;previous_panel=alt-h");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let mut app = bootstrap::demo_app().with_keymap(keymap);
+        let first = app.active_workspace();
+        let second = app.workspaces.navigation_items().nth(1).unwrap().id;
+
+        app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        assert!(!app.help_visible());
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+        assert!(app.help_visible());
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
+        assert_eq!(app.active_workspace(), first);
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::ALT));
+        assert_eq!(app.active_workspace(), second);
     }
 
     #[test]

@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, CommandEditMode, InputMode, WorkspaceNavigationItem},
+    app::{App, CommandEditMode, InputMode, ShellAction, WorkspaceNavigationItem},
     ui::theme::{AMBER, BG, CYAN, FOOTER_BG, GREEN, INK, MUTED, NAV_BG},
 };
 
@@ -167,11 +167,20 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     if app.settings_visible() {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" ESC/Q/F2 ", AMBER),
+                Span::styled(
+                    format!(
+                        " ESC/{} ",
+                        app.key_labels(&[ShellAction::Quit, ShellAction::Settings])
+                    ),
+                    AMBER,
+                ),
                 Span::raw("CLOSE SETTINGS   "),
-                Span::styled("/ ", AMBER),
+                Span::styled(
+                    format!("{} ", app.key_labels(&[ShellAction::OpenCommand])),
+                    AMBER,
+                ),
                 Span::raw("COMMAND   "),
-                Span::styled("F1 ", AMBER),
+                Span::styled(format!("{} ", app.key_labels(&[ShellAction::Help])), AMBER),
                 Span::raw("HELP"),
             ]))
             .style(Style::new().bg(FOOTER_BG.into())),
@@ -182,9 +191,18 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     if app.help_visible() {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" ESC/Q/F1 ", AMBER),
+                Span::styled(
+                    format!(
+                        " ESC/{} ",
+                        app.key_labels(&[ShellAction::Quit, ShellAction::Help])
+                    ),
+                    AMBER,
+                ),
                 Span::raw("CLOSE HELP   "),
-                Span::styled("/ ", AMBER),
+                Span::styled(
+                    format!("{} ", app.key_labels(&[ShellAction::OpenCommand])),
+                    AMBER,
+                ),
                 Span::raw("COMMAND   "),
                 Span::styled("CLICK ", AMBER),
                 Span::raw("WORKSPACE TAB TO LEAVE"),
@@ -270,19 +288,40 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(" Q/ESC ", AMBER),
+            Span::styled(
+                format!(" {}/ESC ", app.key_labels(&[ShellAction::Quit])),
+                AMBER,
+            ),
             Span::raw("QUIT   "),
             Span::styled("[KEY] ", AMBER),
             Span::raw("FAVORITES   "),
-            Span::styled("/ ", AMBER),
+            Span::styled(
+                format!("{} ", app.key_labels(&[ShellAction::OpenCommand])),
+                AMBER,
+            ),
             Span::raw("COMMAND   "),
-            Span::styled("F1 ", AMBER),
+            Span::styled(format!("{} ", app.key_labels(&[ShellAction::Help])), AMBER),
             Span::raw("HELP   "),
-            Span::styled("F2 ", AMBER),
+            Span::styled(
+                format!("{} ", app.key_labels(&[ShellAction::Settings])),
+                AMBER,
+            ),
             Span::raw("SETUP   "),
-            Span::styled("^B ", AMBER),
+            Span::styled(
+                format!(
+                    "{}/^B ",
+                    app.key_labels(&[ShellAction::PreviousPanel, ShellAction::NextPanel])
+                ),
+                AMBER,
+            ),
             Span::raw("PANELS   "),
-            Span::styled("↑↓/JK ", AMBER),
+            Span::styled(
+                format!(
+                    "{}/JK ",
+                    app.key_labels(&[ShellAction::Up, ShellAction::Down])
+                ),
+                AMBER,
+            ),
             Span::raw("MOVE"),
             Span::styled(format!("   {provenance}"), MUTED),
         ]))

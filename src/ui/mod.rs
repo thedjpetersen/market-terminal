@@ -11,7 +11,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, InputMode, ShellChrome, WorkspaceId};
+use crate::app::{App, InputMode, ShellAction, ShellChrome, WorkspaceId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ShellLayout {
@@ -439,17 +439,37 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled("OPEN AND NAVIGATE", theme::AMBER),
-            Line::raw("/ or :     Open command bar"),
-            Line::raw("Enter      Run command / open input"),
+            Line::raw(format!(
+                "{:<11} Open command bar",
+                app.key_labels(&[ShellAction::OpenCommand])
+            )),
+            Line::raw(format!(
+                "Enter command / {} open focused row",
+                app.key_labels(&[ShellAction::Open])
+            )),
             Line::raw("[KEY]      Open labeled workspace"),
             Line::raw("A          Toggle AI drawer; Esc closes"),
-            Line::raw("F2         Effective settings / setup"),
-            Line::raw("F3/Shift+F3  Next / previous color theme"),
+            Line::raw(format!(
+                "{:<11} Effective settings / setup",
+                app.key_labels(&[ShellAction::Settings])
+            )),
+            Line::raw(format!(
+                "{:<11} Next / previous color theme",
+                app.key_labels(&[ShellAction::NextTheme, ShellAction::PreviousTheme])
+            )),
             Line::raw("Ctrl+B     tmux-style panel prefix"),
             Line::raw("  ←/→ N/P  Previous / next panel"),
             Line::raw("  1–9/0    Select numbered panel"),
             Line::raw("  ?        Open this guide"),
-            Line::raw("Arrows/JK  Move in lists and tables"),
+            Line::raw(format!(
+                "{} + JK  Move in lists and tables",
+                app.key_labels(&[
+                    ShellAction::Up,
+                    ShellAction::Down,
+                    ShellAction::Left,
+                    ShellAction::Right
+                ])
+            )),
             Line::raw("Mouse      Click controls, rows, and tabs"),
             Line::raw("Wheel      Scroll navigable areas"),
             Line::raw(""),
@@ -488,7 +508,10 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                " ESC / Q / F1 ",
+                format!(
+                    " ESC / {} ",
+                    app.key_labels(&[ShellAction::Quit, ShellAction::Help])
+                ),
                 Style::new()
                     .bg(theme::AMBER.into())
                     .fg(theme::BG.into())
@@ -594,6 +617,7 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
             setting_line("CHART SYMBOL", &settings.chart_symbol, theme::INK),
             setting_line("AI", &settings.ai_provider, theme::CYAN),
             setting_line("THEME", app.theme_name(), theme::CYAN),
+            setting_line("KEYS", &settings.keybindings, theme::CYAN),
             setting_line("PORTFOLIO", &settings.portfolio_import, theme::INK),
             setting_line("NEWS", &settings.news_sources, theme::INK),
             setting_line("IRC", &settings.irc, theme::INK),
@@ -614,12 +638,19 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw(""),
             Line::styled("USE NOW", theme::AMBER),
             Line::raw("PORT IMPORT \"~/Downloads/positions.csv\""),
-            Line::raw("THEME NORD  ·  F3 cycle  ·  Shift+F3 reverse"),
+            Line::raw(format!(
+                "THEME NORD  ·  {} cycle themes",
+                app.key_labels(&[ShellAction::NextTheme, ShellAction::PreviousTheme])
+            )),
+            Line::raw("KEYS  MARKET_TERMINAL_KEYBINDINGS in .env"),
             Line::raw(format!(
                 "PRESETS  {}",
                 theme::preset_names().collect::<Vec<_>>().join(" · ")
             )),
-            Line::raw("HELP  ·  F1 command and interaction guide"),
+            Line::raw(format!(
+                "HELP  ·  {} command and interaction guide",
+                app.key_labels(&[ShellAction::Help])
+            )),
             Line::raw(""),
             Line::styled(
                 "Secrets are never displayed. CONFIGURED/MISSING is the only credential state shown.",
@@ -633,14 +664,21 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                " ESC / Q / F2 ",
+                format!(
+                    " ESC / {} ",
+                    app.key_labels(&[ShellAction::Quit, ShellAction::Settings])
+                ),
                 Style::new()
                     .bg(theme::AMBER.into())
                     .fg(theme::BG.into())
                     .bold(),
             ),
             Span::styled(
-                " CLOSE SETTINGS   ·   / COMMAND   ·   F1 HELP",
+                format!(
+                    " CLOSE SETTINGS   ·   {} COMMAND   ·   {} HELP",
+                    app.key_labels(&[ShellAction::OpenCommand]),
+                    app.key_labels(&[ShellAction::Help])
+                ),
                 theme::MUTED,
             ),
         ])),

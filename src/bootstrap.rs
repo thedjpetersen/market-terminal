@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
-    app::{App, DeskWorkspace, RuntimeSettingsSummary, WorkspaceRegistry},
+    app::{App, DeskWorkspace, Keymap, RuntimeSettingsSummary, WorkspaceRegistry},
     features::{
         alerts::{AlertsQuery, AlertsWorkspace},
         assistant::{AssistantGateway, AssistantWorkspace},
@@ -186,6 +186,7 @@ pub fn persistent_app() -> App {
         crate::ui::theme::set_theme("default").expect("built-in default theme");
     }
     let repository = Arc::new(LocalPersistence::new(default_state_directory()));
+    let (keymap, keymap_warnings) = Keymap::from_env();
     let portfolio_query: Arc<dyn PortfolioRepository> =
         Arc::new(CsvPortfolioRepository::from_env());
     let news_query: Arc<dyn NewsFeed> = Arc::new(LiveNewsFeed::from_env());
@@ -200,7 +201,8 @@ pub fn persistent_app() -> App {
         Arc::new(ConfiguredWatchlistCatalog::from_env());
     let initial_symbol = initial_chart_symbol();
     let snapshot_refresh_interval = quote_refresh_interval();
-    let runtime_settings = runtime_settings_summary(snapshot_refresh_interval, &initial_symbol);
+    let mut runtime_settings = runtime_settings_summary(snapshot_refresh_interval, &initial_symbol);
+    runtime_settings.keybindings = keymap.status(keymap_warnings.len());
     let overview_query: Arc<dyn OverviewQuery> = Arc::new(LiveOverviewQuery::new(
         portfolio_query.clone(),
         news_query.clone(),
@@ -230,6 +232,7 @@ pub fn persistent_app() -> App {
         snapshot_refresh_interval,
         runtime_settings,
     })
+    .with_keymap(keymap)
     .with_session_repository(repository)
 }
 
@@ -381,6 +384,7 @@ fn runtime_settings_summary(
         ),
         chart_symbol: chart_symbol.to_owned(),
         ai_provider,
+        keybindings: "DEFAULT · VIM + TMUX FIXED".to_owned(),
         portfolio_import: if env_present("MARKET_TERMINAL_PORTFOLIO_CSV") {
             "CSV PATH CONFIGURED"
         } else {
