@@ -252,7 +252,7 @@ fn refresh_feeds(client: &Client, feeds: &[String], state: &RwLock<FeedState>) {
         return;
     }
 
-    stories.sort_by(|left, right| right.0.cmp(&left.0));
+    stories.sort_by_key(|story| std::cmp::Reverse(story.0));
     let mut seen = HashSet::new();
     let mut stories = stories
         .into_iter()
