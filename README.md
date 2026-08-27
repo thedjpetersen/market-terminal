@@ -34,7 +34,8 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
   provider day ranges, bounded session sparklines, responsive columns,
   data-quality states, last-known-good fallback, and replay
 - Chart — comparative performance, zero baselines, inspection cursor, market
-  profile statistics, volume histograms, SMA/EMA overlays, and Wilder RSI
+  profile statistics, half-block OHLC candlesticks, volume histograms, SMA/EMA
+  overlays, and Wilder RSI
 - Chat — TLS-capable IRC market rooms with bounded queues, background reconnect,
   participant presence, notices, actions, and an inline composer
 - Alerts — idempotent, debounced local rules with acknowledgement and audit state
@@ -121,12 +122,17 @@ generated prices or replayed bars. Press `F9` or click the Chart header to
 refresh. See [the data-source register](docs/data-sources.md) for freshness,
 attribution, caching, and retention details.
 
-Charts start with SMA 20/100, Wilder RSI 14, and volume. Press `M` to show or
-hide both moving averages, `E` to switch them between SMA and EMA, `I` to
-toggle RSI, and `B` or `V` to toggle volume. `T`/`Shift+T` and `]`/`[` cycle
-periods; `Home` returns the inspection cursor to the latest observation. The
-same studies can be requested from the command bar, for example
-`CHART AAPL 1Y EMA20 RSI14`.
+Charts start with OHLC candlesticks, SMA 20/100, Wilder RSI 14, and volume.
+Candles aggregate complete OHLC buckets when history is wider than the terminal;
+the right margin and price tag identify the latest history bar, not a fabricated
+live tick. Press `K` to switch between candles and line display. Comparisons and
+normalized performance automatically use lines because one candle scale cannot
+truthfully represent multiple normalized instruments. Press `M` to show or hide
+both moving averages, `E` to switch them between SMA and EMA, `I` to toggle RSI,
+and `B` or `V` to toggle volume. `T`/`Shift+T` and `]`/`[` cycle periods; `Home`
+returns the inspection cursor to the latest observation. The same options can
+be requested from the command bar, for example `CHART AAPL 1Y STYLE CANDLES
+EMA20 RSI14`.
 
 To use Alpaca's official Market Data API instead, create Alpaca data keys and
 select the provider explicitly:

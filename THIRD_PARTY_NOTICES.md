@@ -18,6 +18,11 @@ selection and Unicode sparkline downsampling adapt the upstream table behavior;
 the implementation and its provider-observation boundary are identified in
 `src/features/watchlist/workspace.rs`.
 
+The half-block candlestick renderer, width-aware OHLC aggregation, reserved
+right margin, last-bar price marker, and Braille moving-average overlay adapt
+the upstream chart implementation; the integrated code is identified in
+`src/features/charting/workspace.rs`.
+
 MIT License
 
 Copyright (c) 2026 Mikhail Makeev

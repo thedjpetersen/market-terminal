@@ -29,8 +29,9 @@ move to its own crate later without changing its public vocabulary.
 - **Complete:** first Market Data/Watchlist slice with typed quote/history
   contracts, explicit quality and entitlement states, configurable monitor
   columns and sorting, security drill-through, and deterministic replay.
-- **Complete:** first Charting slice with price/volume series, periods,
-  normalization, comparisons, moving averages, and deterministic history.
+- **Complete:** Charting slice with price/volume series, width-aware OHLC
+  candlesticks, line comparisons, periods, normalization, SMA/EMA, Wilder RSI,
+  inspection, and deterministic provider history.
 - **Complete:** Spreadsheet multi-sheet management, atomic undo/redo, multi-cell
   edits, and deterministic formula-preserving CSV import/export.
 - **Complete:** first Alerts slice with price/move rules, deterministic replay,

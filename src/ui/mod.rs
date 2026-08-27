@@ -423,6 +423,8 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw("PORT RELOAD          Reload positions"),
             Line::raw("SHEET IMPORT <CSV>   Replace active sheet"),
             Line::raw("SHEET EXPORT <CSV>   Export active sheet"),
+            Line::raw("CHART <SYMBOL>       Provider OHLC history"),
+            Line::raw("  K                   Candles / line"),
             Line::raw("NEWS                 Live headlines"),
             Line::raw("  O/Enter/Click       Open publisher article"),
             Line::raw("  R                   Mark story read/unread"),

@@ -1,8 +1,16 @@
+//! The half-block candlestick renderer, width-aware OHLC aggregation, right
+//! margin, last-bar marker, and Braille study overlay adapt chart behavior from
+//! `makeev/alphai-tui` commit `9143d2e1176d0a67a9f26960427cf370187fc2e6`
+//! (MIT, Copyright (c) 2026 Mikhail Makeev). They are integrated with this
+//! workspace's provider-neutral history model; see `THIRD_PARTY_NOTICES.md`.
+
+use std::ops::Range;
 use std::sync::{
     mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
     Arc,
 };
 
+use chrono::{DateTime, Local};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
@@ -30,6 +38,29 @@ use super::{
 };
 
 const SERIES_COLORS: [Color; 4] = [CYAN, YELLOW, GREEN, RED];
+const CANDLE_RIGHT_MARGIN_PERCENT: u16 = 18;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChartDisplayMode {
+    Candlesticks,
+    Line,
+}
+
+impl ChartDisplayMode {
+    const fn toggled(self) -> Self {
+        match self {
+            Self::Candlesticks => Self::Line,
+            Self::Line => Self::Candlesticks,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Candlesticks => "CANDLES",
+            Self::Line => "LINE",
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ChartLineMode {
@@ -71,6 +102,7 @@ struct PreparedChart {
     rsi_lines: Vec<PreparedLine>,
     primary_values: Vec<f64>,
     primary_closes: Vec<f64>,
+    primary_bars: Vec<super::PriceBar>,
     volume_bars: Vec<u64>,
     x_max: f64,
     y_bounds: [f64; 2],
@@ -144,6 +176,7 @@ pub struct ChartingWorkspace {
     specification: ChartSpecification,
     status: String,
     cursor_offset: usize,
+    display_mode: ChartDisplayMode,
     line_mode: ChartLineMode,
     refresh_sender: SyncSender<ChartRefresh>,
     refresh_receiver: Receiver<ChartRefreshResult>,
@@ -187,8 +220,10 @@ impl ChartingWorkspace {
             .expect("chart history worker should start");
         let mut workspace = Self {
             specification: ChartSpecification::new(primary),
-            status: "READY · [/] PERIOD · M MA · E SMA/EMA · I RSI · V VOLUME".to_owned(),
+            status: "READY · K CANDLES/LINE · [/] PERIOD · M MA · E SMA/EMA · I RSI · V VOLUME"
+                .to_owned(),
             cursor_offset: 0,
+            display_mode: ChartDisplayMode::Candlesticks,
             line_mode: ChartLineMode::Smooth,
             refresh_sender,
             refresh_receiver,
@@ -357,6 +392,22 @@ impl ChartingWorkspace {
         prepare_chart(&self.specification, series)
     }
 
+    fn effective_display_mode(&self) -> ChartDisplayMode {
+        if self.display_mode == ChartDisplayMode::Candlesticks
+            && self.specification.normalization == Normalization::Price
+            && self.specification.comparisons.is_empty()
+        {
+            ChartDisplayMode::Candlesticks
+        } else {
+            ChartDisplayMode::Line
+        }
+    }
+
+    fn toggle_display_mode(&mut self) {
+        self.display_mode = self.display_mode.toggled();
+        self.status = format!("CHART STYLE · {}", self.display_mode.label());
+    }
+
     fn render_header(&self, frame: &mut Frame, area: Rect, chart: &PreparedChart) {
         let change_style = if chart.change_percent >= 0.0 {
             GREEN
@@ -397,10 +448,13 @@ impl ChartingWorkspace {
                 Span::styled(format!("{:+.2}%  ", chart.change_percent), change_style),
                 Span::styled(
                     format!(
-                        "{} · {} · {} LINES  |  COMPARE {}  |  {}  |  {} · {}",
+                        "{} · {} · {}  |  COMPARE {}  |  {}  |  {} · {}",
                         self.specification.period.label(),
                         self.specification.normalization.label(),
-                        self.line_mode.label(),
+                        match self.effective_display_mode() {
+                            ChartDisplayMode::Candlesticks => "CANDLES + OHLC",
+                            ChartDisplayMode::Line => self.line_mode.label(),
+                        },
                         comparisons,
                         studies,
                         chart.quality,
@@ -425,72 +479,76 @@ impl ChartingWorkspace {
             self.cursor_offset
                 .min(chart.primary_values.len().saturating_sub(1)),
         );
-        let selected_x = selected_index as f64;
-        let cursor = [
-            (selected_x, chart.y_bounds[0]),
-            (selected_x, chart.y_bounds[1]),
-        ];
-        let zero_baseline = [(0.0, 0.0), (chart.x_max, 0.0)];
-        let mut datasets = chart
-            .lines
-            .iter()
-            .map(|line| {
-                Dataset::default()
-                    .name(line.name.clone())
-                    .marker(self.line_mode.marker())
-                    .graph_type(GraphType::Line)
-                    .style(line.color)
-                    .data(&line.points)
-            })
-            .collect::<Vec<_>>();
-        if self.specification.normalization == Normalization::PercentChange {
+        if self.effective_display_mode() == ChartDisplayMode::Candlesticks {
+            render_candlesticks(frame, columns[0], chart, selected_index);
+        } else {
+            let selected_x = selected_index as f64;
+            let cursor = [
+                (selected_x, chart.y_bounds[0]),
+                (selected_x, chart.y_bounds[1]),
+            ];
+            let zero_baseline = [(0.0, 0.0), (chart.x_max, 0.0)];
+            let mut datasets = chart
+                .lines
+                .iter()
+                .map(|line| {
+                    Dataset::default()
+                        .name(line.name.clone())
+                        .marker(self.line_mode.marker())
+                        .graph_type(GraphType::Line)
+                        .style(line.color)
+                        .data(&line.points)
+                })
+                .collect::<Vec<_>>();
+            if self.specification.normalization == Normalization::PercentChange {
+                datasets.push(
+                    Dataset::default()
+                        .name("0% BASE")
+                        .marker(symbols::Marker::Dot)
+                        .graph_type(GraphType::Line)
+                        .style(MUTED)
+                        .data(&zero_baseline),
+                );
+            }
             datasets.push(
                 Dataset::default()
-                    .name("0% BASE")
+                    .name("INSPECT")
                     .marker(symbols::Marker::Dot)
                     .graph_type(GraphType::Line)
-                    .style(MUTED)
-                    .data(&zero_baseline),
+                    .style(AMBER)
+                    .data(&cursor),
             );
+            let middle = (chart.y_bounds[0] + chart.y_bounds[1]) / 2.0;
+            let lower_middle = (chart.y_bounds[0] + middle) / 2.0;
+            let upper_middle = (middle + chart.y_bounds[1]) / 2.0;
+            let y_labels = [
+                format!("{:.2}", chart.y_bounds[0]),
+                format!("{lower_middle:.2}"),
+                format!("{middle:.2}"),
+                format!("{upper_middle:.2}"),
+                format!("{:.2}", chart.y_bounds[1]),
+            ];
+            let axis_title = match self.specification.normalization {
+                Normalization::Price => "PRICE",
+                Normalization::PercentChange => "% CHANGE",
+            };
+            let price_chart = Chart::new(datasets)
+                .block(terminal_block("GRAPH", "PRICE AND COMPARISON"))
+                .x_axis(
+                    Axis::default()
+                        .bounds([0.0, chart.x_max])
+                        .labels(["START", self.specification.period.label(), "LATEST"])
+                        .style(MUTED),
+                )
+                .y_axis(
+                    Axis::default()
+                        .title(axis_title)
+                        .bounds(chart.y_bounds)
+                        .labels(y_labels)
+                        .style(AMBER),
+                );
+            frame.render_widget(price_chart, columns[0]);
         }
-        datasets.push(
-            Dataset::default()
-                .name("INSPECT")
-                .marker(symbols::Marker::Dot)
-                .graph_type(GraphType::Line)
-                .style(AMBER)
-                .data(&cursor),
-        );
-        let middle = (chart.y_bounds[0] + chart.y_bounds[1]) / 2.0;
-        let lower_middle = (chart.y_bounds[0] + middle) / 2.0;
-        let upper_middle = (middle + chart.y_bounds[1]) / 2.0;
-        let y_labels = [
-            format!("{:.2}", chart.y_bounds[0]),
-            format!("{lower_middle:.2}"),
-            format!("{middle:.2}"),
-            format!("{upper_middle:.2}"),
-            format!("{:.2}", chart.y_bounds[1]),
-        ];
-        let axis_title = match self.specification.normalization {
-            Normalization::Price => "PRICE",
-            Normalization::PercentChange => "% CHANGE",
-        };
-        let price_chart = Chart::new(datasets)
-            .block(terminal_block("GRAPH", "PRICE AND COMPARISON"))
-            .x_axis(
-                Axis::default()
-                    .bounds([0.0, chart.x_max])
-                    .labels(["START", self.specification.period.label(), "LATEST"])
-                    .style(MUTED),
-            )
-            .y_axis(
-                Axis::default()
-                    .title(axis_title)
-                    .bounds(chart.y_bounds)
-                    .labels(y_labels)
-                    .style(AMBER),
-            );
-        frame.render_widget(price_chart, columns[0]);
 
         if columns[1].width > 0 {
             self.render_statistics(frame, columns[1], chart, selected_index);
@@ -687,7 +745,12 @@ impl Workspace for ChartingWorkspace {
         let previous_primary = self.specification.primary.clone();
         let previous_period = self.specification.period;
         let previous_comparisons = self.specification.comparisons.clone();
-        apply_chart_command(&mut self.specification, &invocation.args, &mut self.status);
+        apply_chart_command(
+            &mut self.specification,
+            &mut self.display_mode,
+            &invocation.args,
+            &mut self.status,
+        );
         self.cursor_offset = 0;
         if self.specification.primary != previous_primary
             || self.specification.period != previous_period
@@ -767,6 +830,10 @@ impl Workspace for ChartingWorkspace {
                 self.status = format!("LINE MODE · {}", self.line_mode.label());
                 true
             }
+            KeyCode::Char('k') => {
+                self.toggle_display_mode();
+                true
+            }
             KeyCode::F(9) => {
                 self.queue_history();
                 true
@@ -807,6 +874,7 @@ impl Workspace for ChartingWorkspace {
                 (" C COMPARE SPY  ", KeyCode::Char('c')),
                 (" ,/. INSPECT  ", KeyCode::Char(',')),
                 (" HOME LATEST  ", KeyCode::Home),
+                (" K CANDLES/LINE  ", KeyCode::Char('k')),
                 (" L LINE MODE", KeyCode::Char('l')),
             ];
             let mut x = sections[2].x;
@@ -921,6 +989,8 @@ impl Workspace for ChartingWorkspace {
                 Span::styled("INSPECT  ", MUTED),
                 Span::styled(" HOME ", AMBER),
                 Span::styled("LATEST  ", MUTED),
+                Span::styled(" K ", AMBER),
+                Span::styled("CANDLES/LINE  ", MUTED),
                 Span::styled(" L ", AMBER),
                 Span::styled("LINE MODE  ", MUTED),
                 Span::styled(" F9/CLICK HEADER ", AMBER),
@@ -963,6 +1033,7 @@ fn prepare_chart(
         .map(|bar| bar.volume)
         .collect::<Vec<_>>();
     let primary_closes = primary.bars.iter().map(|bar| bar.close).collect::<Vec<_>>();
+    let primary_bars = primary.bars.clone();
 
     let mut lines = series
         .iter()
@@ -1092,6 +1163,7 @@ fn prepare_chart(
         rsi_lines,
         primary_values,
         primary_closes,
+        primary_bars,
         volume_bars,
         x_max,
         y_bounds,
@@ -1104,6 +1176,369 @@ fn prepare_chart(
         quality: primary.quality.label(),
         source: primary.source.clone(),
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Candle {
+    timestamp: i64,
+    open: f64,
+    high: f64,
+    low: f64,
+    close: f64,
+}
+
+fn render_candlesticks(
+    frame: &mut Frame,
+    area: Rect,
+    chart: &PreparedChart,
+    selected_index: usize,
+) {
+    let block = terminal_block("OHLC", "CANDLESTICKS · LAST BAR MARKER");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if chart.primary_bars.is_empty() || inner.width < 12 || inner.height < 4 {
+        return;
+    }
+
+    let candles = chart
+        .primary_bars
+        .iter()
+        .map(|bar| Candle {
+            timestamp: bar.timestamp,
+            open: bar.open,
+            high: bar.high,
+            low: bar.low,
+            close: bar.close,
+        })
+        .collect::<Vec<_>>();
+    let (low, high) = candles
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), candle| {
+            (low.min(candle.low), high.max(candle.high))
+        });
+    let padding = ((high - low) * 0.05).max(high.abs() * 0.0005).max(1e-9);
+    let (y_low, y_high) = (low - padding, high + padding);
+    let y_labels = [
+        format!("{y_high:.2}"),
+        format!("{:.2}", (y_low + y_high) / 2.0),
+        format!("{y_low:.2}"),
+    ];
+    let gutter = y_labels
+        .iter()
+        .map(|label| label.chars().count())
+        .max()
+        .unwrap_or_default() as u16
+        + 1;
+    if inner.width <= gutter + 2 || inner.height <= 2 {
+        return;
+    }
+    let plot = Rect::new(
+        inner.x + gutter,
+        inner.y,
+        inner.width - gutter,
+        inner.height - 1,
+    );
+    let margin = candle_margin_columns(plot.width, CANDLE_RIGHT_MARGIN_PERCENT);
+    let usable = plot.width - margin;
+    let max_candles = (usize::from(usable) / 2).max(1);
+    let ranges = candle_bucket_ranges(candles.len(), max_candles);
+    let display = ranges
+        .iter()
+        .map(|range| aggregate_candles(&candles[range.clone()]))
+        .collect::<Vec<_>>();
+    let sample_indices = ranges
+        .iter()
+        .map(|range| range.end.saturating_sub(1))
+        .collect::<Vec<_>>();
+    let count = display.len();
+    if count == 0 {
+        return;
+    }
+    let slot = (usize::from(usable) / count).clamp(2, 4) as u16;
+    let body_width = slot - 1;
+    let slot_x =
+        |index: usize| plot.x + usable - (count.saturating_sub(index) as u16).saturating_mul(slot);
+    let candle_center = |index: usize| slot_x(index) + slot - body_width + body_width / 2;
+    let selected_display = ranges
+        .iter()
+        .position(|range| range.contains(&selected_index))
+        .unwrap_or(count - 1);
+
+    let buffer = frame.buffer_mut();
+    let cursor_x = candle_center(selected_display);
+    for row in plot.y..plot.y + plot.height {
+        if let Some(cell) = buffer.cell_mut((cursor_x, row)) {
+            cell.set_char('┊').set_fg(AMBER);
+        }
+    }
+
+    for (index, candle) in display.iter().enumerate() {
+        let previous_close = index.checked_sub(1).map(|previous| display[previous].close);
+        let color = candle_color(candle, previous_close);
+        let body_x = slot_x(index) + slot - body_width;
+        let wick_x = body_x + body_width / 2;
+        for (row, glyph) in candle_column(candle, y_low, y_high, plot.height) {
+            for column in body_x..body_x + body_width {
+                let glyph = if column == wick_x {
+                    glyph
+                } else {
+                    candle_body_only(glyph)
+                };
+                if glyph == ' ' {
+                    continue;
+                }
+                if let Some(cell) = buffer.cell_mut((column, plot.y + row)) {
+                    cell.set_char(glyph).set_fg(color);
+                }
+            }
+        }
+    }
+
+    let mut overlay = BrailleOverlay::new(plot.width, plot.height);
+    for line in chart.lines.iter().skip(1) {
+        let mut previous = None;
+        for (display_index, sample_index) in sample_indices.iter().copied().enumerate() {
+            let point = line
+                .points
+                .iter()
+                .find(|point| point.0 as usize == sample_index)
+                .filter(|point| (y_low..=y_high).contains(&point.1))
+                .map(|point| {
+                    let center = candle_center(display_index);
+                    (
+                        i32::from(center.saturating_sub(plot.x)) * 2,
+                        candle_scale(point.1, y_low, y_high, usize::from(plot.height) * 4) as i32,
+                    )
+                });
+            match (previous, point) {
+                (Some(start), Some(end)) => overlay.line(start, end, line.color),
+                (None, Some(point)) => overlay.dot(point.0, point.1, line.color),
+                _ => {}
+            }
+            previous = point;
+        }
+    }
+    overlay.blit(buffer, plot);
+
+    if margin > 0 {
+        let row = plot.y
+            + (candle_scale(chart.last, y_low, y_high, usize::from(plot.height) * 2) / 2) as u16;
+        for column in plot.x + usable..plot.x + plot.width {
+            if let Some(cell) = buffer.cell_mut((column, row)) {
+                cell.set_char('─').set_fg(CYAN);
+            }
+        }
+        let tag = format!("{:.2}", chart.last);
+        let tag_width = tag.chars().count() as u16;
+        if margin >= tag_width {
+            buffer.set_string(
+                plot.x + plot.width - tag_width,
+                row,
+                tag,
+                Style::new().fg(CYAN).bold(),
+            );
+        }
+    }
+
+    let label_rows = [plot.y, plot.y + plot.height / 2, plot.y + plot.height - 1];
+    for (label, row) in y_labels.iter().zip(label_rows) {
+        buffer.set_string(plot.x - 1 - label.chars().count() as u16, row, label, MUTED);
+    }
+    let axis_row = plot.y + plot.height;
+    let first_timestamp = candles[0].timestamp;
+    let last_timestamp = candles[candles.len() - 1].timestamp;
+    let first = candle_time_label(first_timestamp, last_timestamp);
+    let last = candle_time_label(last_timestamp, first_timestamp);
+    buffer.set_string(plot.x, axis_row, &first, MUTED);
+    let last_x = plot.x + plot.width.saturating_sub(last.chars().count() as u16);
+    buffer.set_string(last_x, axis_row, &last, MUTED);
+    if plot.width >= 34 {
+        let middle = candle_time_label(
+            candles[sample_indices[count / 2]].timestamp,
+            first_timestamp,
+        );
+        let width = middle.chars().count() as u16;
+        let middle_x = (slot_x(count / 2) + slot / 2)
+            .saturating_sub(width / 2)
+            .clamp(plot.x, plot.x + plot.width - width);
+        buffer.set_string(middle_x, axis_row, middle, MUTED);
+    }
+}
+
+fn candle_margin_columns(width: u16, percent: u16) -> u16 {
+    (u32::from(width) * u32::from(percent) / 100).min(u32::from(width.saturating_sub(2))) as u16
+}
+
+fn candle_bucket_ranges(length: usize, maximum: usize) -> Vec<Range<usize>> {
+    let count = maximum.min(length);
+    if count == 0 {
+        return Vec::new();
+    }
+    (0..count)
+        .map(|index| (index * length / count)..((index + 1) * length / count))
+        .collect()
+}
+
+fn aggregate_candles(candles: &[Candle]) -> Candle {
+    let (high, low) = candles
+        .iter()
+        .fold((f64::NEG_INFINITY, f64::INFINITY), |(high, low), candle| {
+            (high.max(candle.high), low.min(candle.low))
+        });
+    Candle {
+        timestamp: candles[0].timestamp,
+        open: candles[0].open,
+        high,
+        low,
+        close: candles[candles.len() - 1].close,
+    }
+}
+
+fn candle_scale(value: f64, low: f64, high: f64, sub_rows: usize) -> usize {
+    (((high - value) / (high - low) * sub_rows as f64) as usize).min(sub_rows - 1)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum CandleHalf {
+    Body,
+    Wick,
+    Empty,
+}
+
+fn candle_column(candle: &Candle, low: f64, high: f64, rows: u16) -> Vec<(u16, char)> {
+    let sub_rows = usize::from(rows) * 2;
+    let body_top = candle_scale(candle.open.max(candle.close), low, high, sub_rows);
+    let body_bottom = candle_scale(candle.open.min(candle.close), low, high, sub_rows);
+    let wick_top = candle_scale(candle.high, low, high, sub_rows);
+    let wick_bottom = candle_scale(candle.low, low, high, sub_rows);
+    let half = |sub_row: usize| {
+        if (body_top..=body_bottom).contains(&sub_row) {
+            CandleHalf::Body
+        } else if (wick_top..=wick_bottom).contains(&sub_row) {
+            CandleHalf::Wick
+        } else {
+            CandleHalf::Empty
+        }
+    };
+    (0..rows)
+        .filter_map(|row| {
+            let glyph = match (half(usize::from(row) * 2), half(usize::from(row) * 2 + 1)) {
+                (CandleHalf::Body, CandleHalf::Body) => '█',
+                (CandleHalf::Body, _) => '▀',
+                (_, CandleHalf::Body) => '▄',
+                (CandleHalf::Wick, CandleHalf::Wick) => '│',
+                (CandleHalf::Wick, CandleHalf::Empty) => '╵',
+                (CandleHalf::Empty, CandleHalf::Wick) => '╷',
+                (CandleHalf::Empty, CandleHalf::Empty) => return None,
+            };
+            Some((row, glyph))
+        })
+        .collect()
+}
+
+fn candle_body_only(glyph: char) -> char {
+    match glyph {
+        '█' | '▀' | '▄' => glyph,
+        _ => ' ',
+    }
+}
+
+fn candle_color(candle: &Candle, previous_close: Option<f64>) -> Color {
+    if candle.close > candle.open {
+        return GREEN;
+    }
+    if candle.close < candle.open {
+        return RED;
+    }
+    match previous_close {
+        Some(previous) if candle.close < previous => RED,
+        Some(_) => GREEN,
+        None => YELLOW,
+    }
+}
+
+fn candle_time_label(timestamp: i64, other_timestamp: i64) -> String {
+    let format = if (timestamp - other_timestamp).abs() <= 2 * 86_400 {
+        "%H:%M"
+    } else {
+        "%d %b"
+    };
+    DateTime::from_timestamp(timestamp, 0)
+        .map(|time| time.with_timezone(&Local).format(format).to_string())
+        .unwrap_or_default()
+}
+
+const BRAILLE_BITS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
+
+struct BrailleOverlay {
+    columns: u16,
+    rows: u16,
+    cells: Vec<(u8, Color)>,
+}
+
+impl BrailleOverlay {
+    fn new(columns: u16, rows: u16) -> Self {
+        Self {
+            columns,
+            rows,
+            cells: vec![(0, Color::Reset); usize::from(columns) * usize::from(rows)],
+        }
+    }
+
+    fn dot(&mut self, x: i32, y: i32, color: Color) {
+        if x < 0 || y < 0 {
+            return;
+        }
+        let (column, row) = (x as u16 / 2, y as u16 / 4);
+        if column >= self.columns || row >= self.rows {
+            return;
+        }
+        let cell =
+            &mut self.cells[usize::from(row) * usize::from(self.columns) + usize::from(column)];
+        cell.0 |= BRAILLE_BITS[y as usize % 4][x as usize % 2];
+        cell.1 = color;
+    }
+
+    fn line(&mut self, (x0, y0): (i32, i32), (x1, y1): (i32, i32), color: Color) {
+        let (delta_x, delta_y) = ((x1 - x0).abs(), -(y1 - y0).abs());
+        let (step_x, step_y) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
+        let (mut x, mut y, mut error) = (x0, y0, delta_x + delta_y);
+        loop {
+            self.dot(x, y, color);
+            if x == x1 && y == y1 {
+                return;
+            }
+            let doubled = 2 * error;
+            if doubled >= delta_y {
+                error += delta_y;
+                x += step_x;
+            }
+            if doubled <= delta_x {
+                error += delta_x;
+                y += step_y;
+            }
+        }
+    }
+
+    fn blit(&self, buffer: &mut ratatui::buffer::Buffer, plot: Rect) {
+        for row in 0..self.rows {
+            for column in 0..self.columns {
+                let (mask, color) =
+                    self.cells[usize::from(row) * usize::from(self.columns) + usize::from(column)];
+                if mask == 0 {
+                    continue;
+                }
+                let Some(cell) = buffer.cell_mut((plot.x + column, plot.y + row)) else {
+                    continue;
+                };
+                if matches!(cell.symbol(), "█" | "▀" | "▄") {
+                    continue;
+                }
+                cell.set_char(char::from_u32(0x2800 + u32::from(mask)).unwrap_or('·'))
+                    .set_fg(color);
+            }
+        }
+    }
 }
 
 fn compact_volume(volume: u64) -> String {
@@ -1133,6 +1568,7 @@ fn padded_bounds(minimum: f64, maximum: f64) -> [f64; 2] {
 
 fn apply_chart_command(
     specification: &mut ChartSpecification,
+    display_mode: &mut ChartDisplayMode,
     args: &[String],
     status: &mut String,
 ) {
@@ -1197,6 +1633,20 @@ fn apply_chart_command(
                 specification.normalization = Normalization::Price;
                 index += 1;
             }
+            "STYLE" => match args.get(index + 1).map(|value| value.to_ascii_uppercase()) {
+                Some(style) if matches!(style.as_str(), "CANDLES" | "CANDLE" | "OHLC") => {
+                    *display_mode = ChartDisplayMode::Candlesticks;
+                    index += 2;
+                }
+                Some(style) if style == "LINE" => {
+                    *display_mode = ChartDisplayMode::Line;
+                    index += 2;
+                }
+                _ => {
+                    *status = "CHART ERROR · EXPECTED STYLE CANDLES/LINE".to_owned();
+                    index += 1;
+                }
+            },
             "VOLUME" => {
                 if !specification.has_study(Study::Volume) {
                     let _ = specification.toggle_study(Study::Volume);
@@ -1286,6 +1736,7 @@ fn is_option_token(token: &str) -> bool {
             | "PERFORMANCE"
             | "PRICE"
             | "ABSOLUTE"
+            | "STYLE"
             | "VOLUME"
             | "SMA"
             | "EMA"
@@ -1338,6 +1789,7 @@ mod tests {
     use super::*;
     use crate::features::charting::{HistoryQuality, PriceBar};
     use crossterm::event::KeyModifiers;
+    use ratatui::{backend::TestBackend, Terminal};
 
     struct StubHistory;
 
@@ -1368,10 +1820,12 @@ mod tests {
         let mut workspace = ChartingWorkspace::new(Arc::new(StubHistory));
         workspace.handle_command(&CommandInvocation {
             function: "CHART".to_owned(),
-            args: ["MSFT", "COMPARE", "SPY,QQQ", "6M", "SMA50", "EMA12", "RSI7"]
-                .into_iter()
-                .map(ToOwned::to_owned)
-                .collect(),
+            args: [
+                "MSFT", "COMPARE", "SPY,QQQ", "6M", "SMA50", "EMA12", "RSI7", "STYLE", "LINE",
+            ]
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect(),
         });
 
         assert_eq!(workspace.specification.primary.symbol, "MSFT");
@@ -1390,6 +1844,7 @@ mod tests {
         assert!(workspace
             .specification
             .has_study(Study::RelativeStrengthIndex { period: 7 }));
+        assert_eq!(workspace.display_mode, ChartDisplayMode::Line);
     }
 
     #[test]
@@ -1416,6 +1871,8 @@ mod tests {
         assert!(!workspace
             .specification
             .has_study(Study::RelativeStrengthIndex { period: RSI_PERIOD }));
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE)));
+        assert_eq!(workspace.display_mode, ChartDisplayMode::Line);
     }
 
     #[test]
@@ -1497,6 +1954,102 @@ mod tests {
     }
 
     #[test]
+    fn comparisons_force_the_effective_chart_style_to_line() {
+        let mut workspace = ChartingWorkspace::new(Arc::new(StubHistory));
+        assert_eq!(
+            workspace.effective_display_mode(),
+            ChartDisplayMode::Candlesticks
+        );
+
+        workspace.toggle_default_comparison();
+
+        assert_eq!(workspace.effective_display_mode(), ChartDisplayMode::Line);
+    }
+
+    #[test]
+    fn half_block_candles_preserve_wicks_bodies_and_doji() {
+        let candle = Candle {
+            timestamp: 0,
+            open: 2.0,
+            high: 9.0,
+            low: 1.0,
+            close: 6.0,
+        };
+        assert_eq!(
+            candle_column(&candle, 0.0, 10.0, 5),
+            vec![(0, '╷'), (1, '│'), (2, '█'), (3, '█'), (4, '▀')]
+        );
+
+        let doji = Candle {
+            timestamp: 0,
+            open: 5.0,
+            high: 5.0,
+            low: 5.0,
+            close: 5.0,
+        };
+        assert_eq!(candle_column(&doji, 0.0, 10.0, 5).len(), 1);
+    }
+
+    #[test]
+    fn candle_buckets_fill_width_and_preserve_ohlc_extremes() {
+        assert_eq!(candle_bucket_ranges(10, 4), vec![0..2, 2..5, 5..7, 7..10]);
+        let candles = [
+            Candle {
+                timestamp: 1,
+                open: 10.0,
+                high: 12.0,
+                low: 9.0,
+                close: 11.0,
+            },
+            Candle {
+                timestamp: 2,
+                open: 11.0,
+                high: 15.0,
+                low: 10.5,
+                close: 14.0,
+            },
+        ];
+
+        let merged = aggregate_candles(&candles);
+
+        assert_eq!(
+            (merged.open, merged.high, merged.low, merged.close),
+            (10.0, 15.0, 9.0, 14.0)
+        );
+    }
+
+    #[test]
+    fn candlestick_renderer_draws_ohlc_into_a_terminal_buffer() {
+        let specification = ChartSpecification::new(ChartInstrument::from_terminal_subject("AAPL"));
+        let series = StubHistory
+            .load_history(&HistoryRequest::new(
+                specification.primary.clone(),
+                specification.period,
+            ))
+            .unwrap();
+        let chart = prepare_chart(&specification, &[series]).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(70, 14)).unwrap();
+
+        terminal
+            .draw(|frame| render_candlesticks(frame, frame.area(), &chart, 1))
+            .unwrap();
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("CANDLESTICKS"));
+        assert!(rendered.contains('▀') || rendered.contains('▄'));
+
+        let mut tiny = Terminal::new(TestBackend::new(12, 8)).unwrap();
+        tiny.draw(|frame| render_candlesticks(frame, frame.area(), &chart, 1))
+            .unwrap();
+    }
+
+    #[test]
     fn normalized_comparisons_share_a_zero_origin() {
         let mut spec = ChartSpecification::new(ChartInstrument::from_terminal_subject("AAPL"));
         spec.normalization = Normalization::PercentChange;
@@ -1523,6 +2076,19 @@ mod tests {
         let workspace = ChartingWorkspace::new(Arc::new(StubHistory));
         assert_eq!(workspace.descriptor().commands, &["CHART", "GRAPH"]);
         assert_eq!(workspace.descriptor().id, ID);
+    }
+
+    #[test]
+    fn a_symbol_named_line_is_not_confused_with_the_style_option() {
+        let mut workspace = ChartingWorkspace::new(Arc::new(StubHistory));
+
+        workspace.handle_command(&CommandInvocation {
+            function: "CHART".to_owned(),
+            args: vec!["LINE".to_owned()],
+        });
+
+        assert_eq!(workspace.specification.primary.symbol, "LINE");
+        assert_eq!(workspace.display_mode, ChartDisplayMode::Candlesticks);
     }
 
     #[test]
