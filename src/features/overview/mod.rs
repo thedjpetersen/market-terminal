@@ -2,7 +2,7 @@ mod domain;
 mod port;
 mod workspace;
 
-pub use domain::OverviewSnapshot;
+pub use domain::{LiveOverviewSnapshot, OverviewHeadline, OverviewHolding, OverviewSnapshot};
 pub use port::OverviewQuery;
 pub use workspace::OverviewWorkspace;
 

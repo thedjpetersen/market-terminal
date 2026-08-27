@@ -22,8 +22,8 @@ use crate::{
         ConfiguredWatchlistCatalog, CsvPortfolioRepository, DemoAlertsReplay, DemoChartHistory,
         DemoChatGateway, DemoData, DemoInstrumentSearch, DemoMarketDataReplay,
         DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway, LiveAlertsQuery,
-        LiveNewsFeed, LiveSecurityQuery, LocalPersistence, OpenRouterConfig, OpenRouterGateway,
-        SecInstrumentSearch, SystemNewsArticleOpener,
+        LiveNewsFeed, LiveOverviewQuery, LiveSecurityQuery, LocalPersistence, OpenRouterConfig,
+        OpenRouterGateway, SecInstrumentSearch, SystemNewsArticleOpener,
     },
 };
 
@@ -32,6 +32,7 @@ pub fn demo_app() -> App {
     let portfolio_query: Arc<dyn PortfolioRepository> = data.clone();
     let news_query: Arc<dyn NewsFeed> = data;
     build_app(AppProviders {
+        overview_query: Arc::new(DemoData),
         chat: Arc::new(DemoChatGateway::new()),
         portfolio_query,
         news_query,
@@ -51,6 +52,7 @@ pub fn demo_app() -> App {
 }
 
 struct AppProviders {
+    overview_query: Arc<dyn OverviewQuery>,
     chat: Arc<dyn ChatGateway>,
     portfolio_query: Arc<dyn PortfolioRepository>,
     news_query: Arc<dyn NewsFeed>,
@@ -70,6 +72,7 @@ struct AppProviders {
 
 fn build_app(providers: AppProviders) -> App {
     let AppProviders {
+        overview_query,
         chat,
         portfolio_query,
         news_query,
@@ -86,9 +89,7 @@ fn build_app(providers: AppProviders) -> App {
         snapshot_refresh_interval,
         runtime_settings,
     } = providers;
-    let data = Arc::new(DemoData);
-    let overview_query: Arc<dyn OverviewQuery> = data.clone();
-    let markets_query: Arc<dyn MarketsQuery> = data.clone();
+    let markets_query: Arc<dyn MarketsQuery> = Arc::new(DemoData);
     let assistant_provider = std::env::var("MARKET_TERMINAL_AI_PROVIDER")
         .unwrap_or_else(|_| "codex".to_owned())
         .to_ascii_lowercase();
@@ -161,7 +162,12 @@ pub fn persistent_app() -> App {
     let initial_symbol = initial_chart_symbol();
     let snapshot_refresh_interval = quote_refresh_interval();
     let runtime_settings = runtime_settings_summary(snapshot_refresh_interval, &initial_symbol);
+    let overview_query: Arc<dyn OverviewQuery> = Arc::new(LiveOverviewQuery::new(
+        portfolio_query.clone(),
+        news_query.clone(),
+    ));
     build_app(AppProviders {
+        overview_query,
         chat: Arc::new(IrcChatGateway::from_env()),
         portfolio_query,
         news_query,

@@ -62,7 +62,8 @@ retention constraints.
 
 ## RSS/Atom publishers
 
-- **Surfaces:** interactive News list and story metadata.
+- **Surfaces:** interactive News list/story metadata and the cached-headline
+  section of interactive Overview.
 - **Default sources:** CNBC Markets, U.S. SEC press releases, and Federal
   Reserve press releases; configurable through `MARKET_TERMINAL_NEWS_FEEDS`.
 - **Content boundary:** the feed-provided headline, summary/byline metadata,
@@ -74,14 +75,17 @@ retention constraints.
 
 ## User portfolio CSV
 
-- **Surface:** interactive Portfolio positions.
+- **Surfaces:** interactive Portfolio positions and the position/summary
+  sections of interactive Overview.
 - **Source/ownership:** a local export selected by the user. No broker login or
   API credential is collected.
 - **Retention:** parsed positions remain in process; the configured path may be
   retained in the user's ignored environment file. Account identifiers and
   unused columns are not retained.
 - **Quality:** snapshot market values are shown as imported values with source
-  status, never presented as a streaming quote feed.
+  status, never presented as a streaming quote feed. Overview does not infer
+  returns, risk statistics, attribution, or movers from this point-in-time
+  snapshot.
 
 ## SEC EDGAR structured data
 

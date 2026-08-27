@@ -219,7 +219,7 @@ const HEADLINES: [(&str, &str, &str, &str); 10] = [
 
 impl OverviewQuery for DemoData {
     fn load_overview(&self) -> OverviewSnapshot {
-        OverviewSnapshot {
+        OverviewSnapshot::Gallery {
             periods: &PERIODS,
             primary_returns: &RETURNS_A,
             comparison_returns: &RETURNS_B,

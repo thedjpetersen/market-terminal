@@ -11,14 +11,14 @@ use ratatui::{
 };
 
 use crate::{
-    app::{ShellChrome, Workspace, WorkspaceDescriptor},
+    app::{AppIntent, ShellChrome, Workspace, WorkspaceDescriptor},
     ui::{
-        is_primary_click,
+        is_primary_click, table_row_at,
         theme::{self, AMBER, BG, CYAN, GREEN, INK, MUTED, NAV_BG, YELLOW},
     },
 };
 
-use super::{OverviewQuery, ID};
+use super::{LiveOverviewSnapshot, OverviewQuery, OverviewSnapshot, ID};
 
 const METRIC_HIGHLIGHT: Color = Color::Rgb(77, 58, 10);
 
@@ -70,11 +70,16 @@ const HEADLINES: [&str; 5] = [
 pub struct OverviewWorkspace {
     query: Arc<dyn OverviewQuery>,
     selected_period: usize,
+    pending_intents: Vec<AppIntent>,
 }
 
 impl OverviewWorkspace {
     pub fn new(query: Arc<dyn OverviewQuery>) -> Self {
-        Self { query, selected_period: 3 }
+        Self {
+            query,
+            selected_period: 3,
+            pending_intents: Vec::new(),
+        }
     }
 
     fn render_context_header(&self, frame: &mut Frame, area: Rect, periods: &[&str]) {
@@ -159,8 +164,8 @@ impl OverviewWorkspace {
                 Axis::default()
                     .bounds([-3.0, 18.0])
                     .labels([
-                        "−3.0", "−1.7", "−0.3", "1.0", "2.4", "3.7", "5.0", "6.4",
-                        "7.7", "9.1", "10.4", "11.7", "13.1", "14.4", "15.8", "17.1",
+                        "−3.0", "−1.7", "−0.3", "1.0", "2.4", "3.7", "5.0", "6.4", "7.7", "9.1",
+                        "10.4", "11.7", "13.1", "14.4", "15.8", "17.1",
                     ])
                     .style(AMBER),
             );
@@ -195,14 +200,22 @@ impl OverviewWorkspace {
             frame,
             columns[1],
             "Asset returns — YTD",
-            &[("SPYY", "+13.97%"), ("IS3R", "+30.31%"), ("AVWS", "+22.05%")],
+            &[
+                ("SPYY", "+13.97%"),
+                ("IS3R", "+30.31%"),
+                ("AVWS", "+22.05%"),
+            ],
             Some(1),
         );
         render_metric_pairs(
             frame,
             columns[2],
             "Watchlist — YTD",
-            &[("AVWC", "+16.72%"), ("DEGC", "+13.15%"), ("DEGT", "+12.75%")],
+            &[
+                ("AVWC", "+16.72%"),
+                ("DEGC", "+13.15%"),
+                ("DEGT", "+12.75%"),
+            ],
             Some(0),
         );
     }
@@ -241,23 +254,87 @@ impl OverviewWorkspace {
     fn render_function_strip(&self, frame: &mut Frame, area: Rect) {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" 1 ", AMBER), Span::styled("D  ", INK),
-                Span::styled("2 ", AMBER), Span::styled("M  ", INK),
-                Span::styled("3 ", AMBER), Span::styled("6M  ", INK),
-                Span::styled("4 ", AMBER), Span::styled("YTD  ", INK),
-                Span::styled("5 ", AMBER), Span::styled("1Y  ", INK),
-                Span::styled("6 ", AMBER), Span::styled("2Y  ", INK),
-                Span::styled("7 ", AMBER), Span::styled("5Y  ", INK),
-                Span::styled("8 ", AMBER), Span::styled("10Y   ", INK),
-                Span::styled("← ", AMBER), Span::styled("◀ Period   ", INK),
-                Span::styled("→ ", AMBER), Span::styled("Period ▶   ", INK),
-                Span::styled("c ", AMBER), Span::styled("Compare   ", INK),
-                Span::styled("r ", AMBER), Span::styled("Refresh   ", INK),
-                Span::styled("/ ", AMBER), Span::styled("Command   ", INK),
-                Span::styled("q ", AMBER), Span::styled("Quit", INK),
+                Span::styled(" 1 ", AMBER),
+                Span::styled("D  ", INK),
+                Span::styled("2 ", AMBER),
+                Span::styled("M  ", INK),
+                Span::styled("3 ", AMBER),
+                Span::styled("6M  ", INK),
+                Span::styled("4 ", AMBER),
+                Span::styled("YTD  ", INK),
+                Span::styled("5 ", AMBER),
+                Span::styled("1Y  ", INK),
+                Span::styled("6 ", AMBER),
+                Span::styled("2Y  ", INK),
+                Span::styled("7 ", AMBER),
+                Span::styled("5Y  ", INK),
+                Span::styled("8 ", AMBER),
+                Span::styled("10Y   ", INK),
+                Span::styled("← ", AMBER),
+                Span::styled("◀ Period   ", INK),
+                Span::styled("→ ", AMBER),
+                Span::styled("Period ▶   ", INK),
+                Span::styled("c ", AMBER),
+                Span::styled("Compare   ", INK),
+                Span::styled("r ", AMBER),
+                Span::styled("Refresh   ", INK),
+                Span::styled("/ ", AMBER),
+                Span::styled("Command   ", INK),
+                Span::styled("q ", AMBER),
+                Span::styled("Quit", INK),
             ]))
             .style(Style::new().bg(NAV_BG)),
             area,
+        );
+    }
+
+    fn render_live(&self, frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSnapshot) {
+        let rows = live_layout(area);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(vec![
+                    Span::styled(" IMPORTED PORTFOLIO ", Style::new().bg(CYAN).fg(BG).bold()),
+                    Span::styled(format!(" {} ", snapshot.portfolio_source), INK),
+                ]),
+                Line::from(vec![
+                    Span::styled(" AS OF ", AMBER),
+                    Span::styled(&snapshot.portfolio_as_of, MUTED),
+                    Span::styled("   NEWS ", AMBER),
+                    Span::styled(&snapshot.news_status, MUTED),
+                ]),
+            ]),
+            rows[0],
+        );
+        render_live_holdings(frame, rows[1], snapshot);
+        render_live_kpis(frame, rows[2], snapshot);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled(
+                    "PERFORMANCE HISTORY UNAVAILABLE FROM A POINT-IN-TIME CSV SNAPSHOT",
+                    AMBER,
+                ),
+                Line::styled(
+                    "YTD return, drawdown, volatility, Sharpe, attribution, and movers are not synthesized.",
+                    MUTED,
+                ),
+            ])
+            .block(reference_block("Data boundary")),
+            rows[3],
+        );
+        render_live_headlines(frame, rows[4], snapshot);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" PORT IMPORT <CSV> ", AMBER),
+                Span::styled("LOAD POSITIONS   ", INK),
+                Span::styled("PORT RELOAD ", AMBER),
+                Span::styled("RELOAD   ", INK),
+                Span::styled("NEWS ", AMBER),
+                Span::styled("OPEN FEED   ", INK),
+                Span::styled("F9/R ", AMBER),
+                Span::styled("REFRESH NEWS", INK),
+            ]))
+            .style(Style::new().bg(NAV_BG)),
+            rows[5],
         );
     }
 }
@@ -272,19 +349,54 @@ impl Workspace for OverviewWorkspace {
         }
     }
 
-    fn shell_chrome(&self) -> ShellChrome { ShellChrome::Immersive }
+    fn shell_chrome(&self) -> ShellChrome {
+        ShellChrome::Immersive
+    }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
-        if let KeyCode::Char(character @ '1'..='8') = key.code {
-            self.selected_period = character as usize - '1' as usize;
-            true
-        } else {
-            false
+        match key.code {
+            KeyCode::Char(character @ '1'..='8') => {
+                self.selected_period = character as usize - '1' as usize;
+                true
+            }
+            KeyCode::Left => {
+                self.selected_period = self.selected_period.saturating_sub(1);
+                true
+            }
+            KeyCode::Right => {
+                self.selected_period = (self.selected_period + 1).min(7);
+                true
+            }
+            KeyCode::F(9) | KeyCode::Char('r' | 'R') => {
+                self.query.request_refresh();
+                true
+            }
+            _ => false,
         }
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
-        let snapshot = self.query.load_overview();
+        let periods = match self.query.load_overview() {
+            OverviewSnapshot::Gallery { periods, .. } => periods,
+            OverviewSnapshot::Live(snapshot) => {
+                let rows = live_layout(area);
+                if let Some(index) = table_row_at(event, rows[1], snapshot.holdings.len()) {
+                    self.pending_intents.push(AppIntent::DispatchCommand {
+                        command: format!("SEC {} US", snapshot.holdings[index].symbol),
+                        origin: ID,
+                    });
+                    return true;
+                }
+                if let Some(index) = table_row_at(event, rows[4], snapshot.headlines.len()) {
+                    self.pending_intents.push(AppIntent::DispatchCommand {
+                        command: format!("NEWS {}", snapshot.headlines[index].topic),
+                        origin: ID,
+                    });
+                    return true;
+                }
+                return false;
+            }
+        };
         let periods_area = Layout::vertical([
             Constraint::Length(2),
             Constraint::Percentage(52),
@@ -296,7 +408,7 @@ impl Workspace for OverviewWorkspace {
             return false;
         }
         let mut x = periods_area.x.saturating_add(1);
-        for (index, period) in snapshot.periods.iter().enumerate() {
+        for (index, period) in periods.iter().enumerate() {
             let width = format!(" {} {} ", index + 1, period).chars().count() as u16;
             if event.column >= x && event.column < x.saturating_add(width) {
                 self.selected_period = index;
@@ -307,8 +419,22 @@ impl Workspace for OverviewWorkspace {
         false
     }
 
+    fn poll_intents(&mut self) -> Vec<AppIntent> {
+        std::mem::take(&mut self.pending_intents)
+    }
+
     fn render(&self, frame: &mut Frame, area: Rect) {
-        let snapshot = self.query.load_overview();
+        let (periods, primary_returns, comparison_returns) = match self.query.load_overview() {
+            OverviewSnapshot::Gallery {
+                periods,
+                primary_returns,
+                comparison_returns,
+            } => (periods, primary_returns, comparison_returns),
+            OverviewSnapshot::Live(snapshot) => {
+                self.render_live(frame, area, &snapshot);
+                return;
+            }
+        };
         let rows = Layout::vertical([
             Constraint::Length(2),
             Constraint::Length(21),
@@ -318,13 +444,8 @@ impl Workspace for OverviewWorkspace {
             Constraint::Length(1),
         ])
         .split(area);
-        self.render_context_header(frame, rows[0], snapshot.periods);
-        self.render_returns_chart(
-            frame,
-            rows[1],
-            snapshot.primary_returns,
-            snapshot.comparison_returns,
-        );
+        self.render_context_header(frame, rows[0], periods);
+        self.render_returns_chart(frame, rows[1], primary_returns, comparison_returns);
         self.render_risk_band(frame, rows[2]);
         self.render_composition(frame, rows[3]);
         self.render_news(frame, rows[4]);
@@ -332,15 +453,147 @@ impl Workspace for OverviewWorkspace {
     }
 }
 
+fn live_layout(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(12),
+        Constraint::Length(5),
+        Constraint::Length(5),
+        Constraint::Min(8),
+        Constraint::Length(1),
+    ])
+    .split(area)
+}
+
+fn render_live_holdings(frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSnapshot) {
+    if snapshot.holdings.is_empty() {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled("NO PORTFOLIO IMPORTED", AMBER),
+                Line::raw(""),
+                Line::styled(
+                    "Use PORT IMPORT \"~/Downloads/positions.csv\" or set MARKET_TERMINAL_PORTFOLIO_CSV.",
+                    MUTED,
+                ),
+            ])
+            .block(reference_block("Current positions")),
+            area,
+        );
+        return;
+    }
+
+    let rows = snapshot.holdings.iter().map(|holding| {
+        Row::new([
+            Cell::from(holding.symbol.clone()).style(Style::new().fg(CYAN).bold()),
+            Cell::from(Line::from(holding.quantity.clone()).alignment(Alignment::Right)),
+            Cell::from(Line::from(holding.market_value.clone()).alignment(Alignment::Right)),
+            Cell::from(Line::from(holding.pnl.clone()).alignment(Alignment::Right))
+                .style(theme::value(&holding.pnl)),
+            Cell::from(Line::from(holding.weight.clone()).alignment(Alignment::Right)),
+        ])
+    });
+    frame.render_widget(
+        Table::new(
+            rows,
+            [
+                Constraint::Percentage(24),
+                Constraint::Percentage(17),
+                Constraint::Percentage(24),
+                Constraint::Percentage(18),
+                Constraint::Percentage(17),
+            ],
+        )
+        .header(
+            Row::new(["SYMBOL", "QUANTITY", "MARKET VALUE", "P&L", "WEIGHT"])
+                .style(Style::new().fg(INK).bold())
+                .bottom_margin(1),
+        )
+        .column_spacing(1)
+        .block(reference_block(
+            "Imported positions · click a row for Security",
+        )),
+        area,
+    );
+}
+
+fn render_live_kpis(frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSnapshot) {
+    let columns = Layout::horizontal([Constraint::Ratio(1, 4); 4]).split(area);
+    for (index, (label, value)) in [
+        ("NET ASSET VALUE", snapshot.net_asset_value.as_str()),
+        ("YTD RETURN", snapshot.ytd_return.as_str()),
+        ("AVAILABLE CASH", snapshot.available_cash.as_str()),
+        ("SHARPE", snapshot.sharpe.as_str()),
+    ]
+    .iter()
+    .enumerate()
+    {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled(*label, MUTED),
+                Line::styled(*value, if index == 1 { GREEN } else { CYAN }),
+            ])
+            .block(Block::new().borders(Borders::ALL).border_style(AMBER))
+            .alignment(Alignment::Center),
+            columns[index],
+        );
+    }
+}
+
+fn render_live_headlines(frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSnapshot) {
+    if snapshot.headlines.is_empty() {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled("NO LIVE STORIES LOADED", AMBER),
+                Line::styled(&snapshot.news_status, MUTED),
+            ])
+            .block(reference_block("Live headlines")),
+            area,
+        );
+        return;
+    }
+
+    frame.render_widget(
+        Table::new(
+            snapshot.headlines.iter().map(|headline| {
+                Row::new([
+                    headline.time.clone(),
+                    headline.topic.clone(),
+                    headline.title.clone(),
+                    headline.region.clone(),
+                ])
+            }),
+            [
+                Constraint::Length(6),
+                Constraint::Length(6),
+                Constraint::Min(30),
+                Constraint::Length(6),
+            ],
+        )
+        .header(
+            Row::new(["TIME", "TOPIC", "HEADLINE", "REGION"])
+                .style(Style::new().fg(INK).bold())
+                .bottom_margin(1),
+        )
+        .column_spacing(1)
+        .block(reference_block("Live headlines · click a row for News")),
+        area,
+    );
+}
+
 fn reference_block(title: &'static str) -> Block<'static> {
     Block::new()
         .borders(Borders::ALL)
         .border_style(AMBER)
-        .title(Span::styled(format!(" {title} "), Style::new().fg(AMBER).bold()))
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::new().fg(AMBER).bold(),
+        ))
 }
 
 fn stepped_points(points: &[(f64, f64)]) -> Vec<(f64, f64)> {
-    let Some(first) = points.first().copied() else { return Vec::new() };
+    let Some(first) = points.first().copied() else {
+        return Vec::new();
+    };
     let mut stepped = Vec::with_capacity(points.len().saturating_mul(2).saturating_sub(1));
     stepped.push(first);
     for window in points.windows(2) {
@@ -414,8 +667,11 @@ fn render_metric_pairs(
         ])
     });
     frame.render_widget(
-        Table::new(rows, [Constraint::Percentage(62), Constraint::Percentage(38)])
-            .block(reference_block(title)),
+        Table::new(
+            rows,
+            [Constraint::Percentage(62), Constraint::Percentage(38)],
+        )
+        .block(reference_block(title)),
         area,
     );
 }
@@ -463,14 +719,23 @@ fn render_holdings(frame: &mut Frame, area: Rect) {
 fn render_holding_half(frame: &mut Frame, area: Rect, offset: usize) {
     frame.render_widget(
         Table::new(
-            HOLDINGS.iter().skip(offset).take(5).enumerate().map(|(index, (name, weight))| {
-                Row::new([
-                    Cell::from(format!("{}", index + offset + 1)).style(MUTED),
-                    Cell::from(*name),
-                    Cell::from(Line::from(*weight).alignment(Alignment::Right)),
-                ])
-            }),
-            [Constraint::Length(3), Constraint::Min(16), Constraint::Length(6)],
+            HOLDINGS
+                .iter()
+                .skip(offset)
+                .take(5)
+                .enumerate()
+                .map(|(index, (name, weight))| {
+                    Row::new([
+                        Cell::from(format!("{}", index + offset + 1)).style(MUTED),
+                        Cell::from(*name),
+                        Cell::from(Line::from(*weight).alignment(Alignment::Right)),
+                    ])
+                }),
+            [
+                Constraint::Length(3),
+                Constraint::Min(16),
+                Constraint::Length(6),
+            ],
         )
         .column_spacing(1),
         area,
@@ -519,7 +784,10 @@ fn render_headlines(frame: &mut Frame, area: Rect) {
             HEADLINES
                 .iter()
                 .map(|headline| {
-                    Line::from(vec![Span::styled(" • ", MUTED), Span::styled(*headline, MUTED)])
+                    Line::from(vec![
+                        Span::styled(" • ", MUTED),
+                        Span::styled(*headline, MUTED),
+                    ])
                 })
                 .collect::<Vec<_>>(),
         ),
@@ -530,12 +798,99 @@ fn render_headlines(frame: &mut Frame, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
+    use ratatui::{backend::TestBackend, Terminal};
+
+    struct LiveQuery;
+
+    impl OverviewQuery for LiveQuery {
+        fn load_overview(&self) -> OverviewSnapshot {
+            OverviewSnapshot::Live(LiveOverviewSnapshot {
+                net_asset_value: "$48.00".to_owned(),
+                ytd_return: "N/A".to_owned(),
+                available_cash: "$0.00".to_owned(),
+                sharpe: "N/A".to_owned(),
+                portfolio_source: "CSV · actual-positions.csv".to_owned(),
+                portfolio_as_of: "2026-08-26 12:00 UTC".to_owned(),
+                holdings: vec![super::super::OverviewHolding {
+                    symbol: "USER".to_owned(),
+                    quantity: "4".to_owned(),
+                    market_value: "$48.00".to_owned(),
+                    pnl: "+20.00%".to_owned(),
+                    weight: "100.00%".to_owned(),
+                }],
+                headlines: vec![super::super::OverviewHeadline {
+                    time: "12:01".to_owned(),
+                    topic: "TOP".to_owned(),
+                    title: "Cached publisher headline".to_owned(),
+                    region: "US".to_owned(),
+                }],
+                news_status: "LIVE · 1 STORY".to_owned(),
+            })
+        }
+    }
+
+    fn click(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
 
     #[test]
     fn stepped_series_preserves_horizontal_plateaus_and_vertical_moves() {
         assert_eq!(
             stepped_points(&[(0.0, 1.0), (2.0, 3.0), (5.0, 2.0)]),
             [(0.0, 1.0), (2.0, 1.0), (2.0, 3.0), (5.0, 3.0), (5.0, 2.0)]
+        );
+    }
+
+    #[test]
+    fn live_overview_renders_imported_and_cached_values_without_gallery_analytics() {
+        let workspace = OverviewWorkspace::new(Arc::new(LiveQuery));
+        let mut terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+
+        terminal
+            .draw(|frame| workspace.render(frame, frame.area()))
+            .unwrap();
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("actual-positions.csv"));
+        assert!(rendered.contains("Cached publisher headline"));
+        assert!(rendered.contains("PERFORMANCE HISTORY UNAVAILABLE"));
+        assert!(!rendered.contains("Advantest"));
+        assert!(!rendered.contains("S&P Futures"));
+    }
+
+    #[test]
+    fn live_overview_rows_open_security_and_news() {
+        let area = Rect::new(0, 0, 160, 48);
+        let rows = live_layout(area);
+        let mut workspace = OverviewWorkspace::new(Arc::new(LiveQuery));
+
+        assert!(workspace.handle_mouse(click(rows[1].x + 2, rows[1].y + 3), area));
+        assert!(workspace.handle_mouse(click(rows[4].x + 2, rows[4].y + 3), area));
+
+        assert_eq!(
+            workspace.poll_intents(),
+            vec![
+                AppIntent::DispatchCommand {
+                    command: "SEC USER US".to_owned(),
+                    origin: ID,
+                },
+                AppIntent::DispatchCommand {
+                    command: "NEWS TOP".to_owned(),
+                    origin: ID,
+                },
+            ]
         );
     }
 }

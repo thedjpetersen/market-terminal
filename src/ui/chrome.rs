@@ -236,7 +236,9 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     }
     let gallery_replay = app.runtime_settings().gallery_replay;
     let provenance = match app.active_workspace().as_str() {
-        "overview" | "markets" => "DEMO ANALYTICS · NOT INVESTMENT ADVICE",
+        "overview" if gallery_replay => "GALLERY ANALYTICS · NOT LIVE",
+        "overview" => "IMPORTED PORTFOLIO + LIVE NEWS · PERFORMANCE MAY BE UNAVAILABLE",
+        "markets" => "DEMO ANALYTICS · NOT INVESTMENT ADVICE",
         "news" if gallery_replay => "GALLERY NEWS SNAPSHOT · NOT LIVE",
         "news" => "LIVE NEWS · VERIFY PUBLISHER SOURCE",
         "portfolio" if gallery_replay => "GALLERY PORTFOLIO SNAPSHOT · NOT YOUR POSITIONS",

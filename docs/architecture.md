@@ -48,6 +48,12 @@ validated USD positions import. Demo news and portfolio data are wired only by
 `demo_app` for deterministic tests and gallery captures. Network and filesystem
 formats remain outside the feature packages.
 
+`LiveOverviewQuery` composes those two already-loaded, in-memory snapshots for
+the interactive Overview. It performs no network or filesystem work and does
+not infer performance history from a point-in-time CSV. Missing return, risk,
+attribution, and mover data is rendered as unavailable rather than replaced by
+the gallery values.
+
 Spreadsheet financial formulas use the Spreadsheet-owned
 `SpreadsheetMarketData` batch port. The workspace parses top-level
 `PX_LAST`/`PX_CHANGE` requests, sends them through a capacity-bounded worker,
@@ -129,8 +135,8 @@ context.
 
 The next structural steps are intentionally additive:
 
-- finish replacing the remaining `DemoData` overview and market-analytics
-  composition with live adapters (quotes, news, portfolio, SEC instrument
+- replace the remaining `DemoData` market-analytics composition with live,
+  entitlement-aware adapters (Overview, quotes, news, portfolio, SEC instrument
   identity, Security research, and Alert observations are independently wired);
 - connect streaming adapters to the bounded event bus with acknowledgement and
   tracing where delivery guarantees require it;

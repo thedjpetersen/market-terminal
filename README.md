@@ -13,7 +13,8 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 
 ## Workspaces
 
-- Overview — returns, risk, holdings, watchlist, and movers
+- Overview — imported positions and live cached headlines, with unavailable
+  performance fields left explicit rather than synthesized
 - Markets — global indices, cross-asset monitor, sectors, breadth, and rates
 - Security — quote/chart, financials, estimates, ownership, filings, peers,
   and linked news
@@ -39,9 +40,10 @@ function such as `MON`, `CHART`, `SHEET`, `CHAT`, `FIND`, or `ASK` into the
 command bar. Mouse input is enabled in the interactive terminal: click the
 command box and `GO`, select table rows and spreadsheet cells, activate chart
 controls and research tabs, focus AI/chat composers, and scroll navigable
-lists. News uses live source feeds and Portfolio uses your imported snapshot;
-quote, analytics, and research panels that still use deterministic demo data
-remain labeled as such.
+lists. News uses live source feeds, Portfolio uses your imported snapshot, and
+Overview composes those same real snapshots without performing I/O while
+rendering. Markets and any other panels that still use deterministic gallery
+analytics remain labeled as such.
 
 Run `HELP` from the command bar—or press `F1`—to open the command and controls
 guide without leaving the current workspace. Close it with `Esc`, `Q`, `F1`,
@@ -201,6 +203,13 @@ Market value and gain/loss come from the export. YTD return and Sharpe remain
 `N/A` because a positions snapshot does not contain enough transaction history
 to calculate them honestly. No broker password or API credential is required,
 and the CSV stays local.
+
+Overview immediately reflects the same in-memory imported portfolio and live
+news cache. A point-in-time positions export does not contain a return series,
+so Overview leaves YTD return, drawdown, volatility, Sharpe, attribution, and
+movers unavailable instead of manufacturing them. Click a position to open
+Security or a headline to open its News topic; press `F9` or `R` to request a
+news refresh.
 
 ## Experience gallery
 
