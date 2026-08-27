@@ -161,6 +161,21 @@ pub(super) fn navigation_item_text(index: usize, item: WorkspaceNavigationItem) 
 }
 
 pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
+    if app.settings_visible() {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" ESC/Q/F2 ", AMBER),
+                Span::raw("CLOSE SETTINGS   "),
+                Span::styled("/ ", AMBER),
+                Span::raw("COMMAND   "),
+                Span::styled("F1 ", AMBER),
+                Span::raw("HELP"),
+            ]))
+            .style(Style::new().bg(FOOTER_BG)),
+            area,
+        );
+        return;
+    }
     if app.help_visible() {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
@@ -219,10 +234,24 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
         );
         return;
     }
+    let gallery_replay = app.runtime_settings().gallery_replay;
     let provenance = match app.active_workspace().as_str() {
+        "overview" | "markets" => "DEMO ANALYTICS · NOT INVESTMENT ADVICE",
+        "news" if gallery_replay => "GALLERY NEWS SNAPSHOT · NOT LIVE",
         "news" => "LIVE NEWS · VERIFY PUBLISHER SOURCE",
+        "portfolio" if gallery_replay => "GALLERY PORTFOLIO SNAPSHOT · NOT YOUR POSITIONS",
         "portfolio" => "IMPORTED SNAPSHOT · VERIFY SOURCE AND AS-OF",
-        _ => "DELAYED DEMO DATA · NOT INVESTMENT ADVICE",
+        "instrument_search" if gallery_replay => "GALLERY INSTRUMENT MASTER · NOT LIVE",
+        "instrument_search" => "LIVE SEC INSTRUMENT MASTER",
+        "watchlist" | "charting" | "security" | "alerts" | "spreadsheet" if gallery_replay => {
+            "GALLERY MARKET-DATA REPLAY · NOT LIVE"
+        }
+        "watchlist" | "charting" | "security" | "alerts" | "spreadsheet" => {
+            "EXTERNAL MARKET DATA · VERIFY PROVIDER QUALITY"
+        }
+        "chat" if gallery_replay => "LOCAL GALLERY CHAT · NOT LIVE",
+        "chat" => "EXTERNAL IRC · VERIFY PARTICIPANTS",
+        _ => "NOT INVESTMENT ADVICE",
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -234,6 +263,8 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
             Span::raw("COMMAND   "),
             Span::styled("F1 ", AMBER),
             Span::raw("HELP   "),
+            Span::styled("F2 ", AMBER),
+            Span::raw("SETUP   "),
             Span::styled("^B ", AMBER),
             Span::raw("PANELS   "),
             Span::styled("↑↓/JK ", AMBER),

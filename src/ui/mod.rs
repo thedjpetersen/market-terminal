@@ -5,7 +5,7 @@ pub(crate) mod theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::Style,
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
@@ -82,11 +82,19 @@ pub(crate) enum ShellClickTarget {
     AssistantBackdrop,
     HelpClose,
     HelpOverlay,
+    SettingsClose,
+    SettingsOverlay,
     Quit,
 }
 
 pub(crate) fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<ShellClickTarget> {
     let layout = ShellLayout::for_app(app, area);
+    if app.settings_visible() && contains(settings_close_area(layout.workspace), column, row) {
+        return Some(ShellClickTarget::SettingsClose);
+    }
+    if app.settings_visible() && contains(layout.workspace, column, row) {
+        return Some(ShellClickTarget::SettingsOverlay);
+    }
     if app.help_visible() && contains(help_close_area(layout.workspace), column, row) {
         return Some(ShellClickTarget::HelpClose);
     }
@@ -143,7 +151,9 @@ pub(crate) fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<S
         column,
         row,
     ) {
-        return Some(if app.help_visible() {
+        return Some(if app.settings_visible() {
+            ShellClickTarget::SettingsClose
+        } else if app.help_visible() {
             ShellClickTarget::HelpClose
         } else {
             ShellClickTarget::Quit
@@ -211,6 +221,19 @@ pub(crate) fn help_close_area(workspace: Rect) -> Rect {
     )
 }
 
+pub(crate) fn settings_close_area(workspace: Rect) -> Rect {
+    let panel = help_panel_area(workspace);
+    let width = panel.width.min(13);
+    Rect::new(
+        panel
+            .x
+            .saturating_add(panel.width.saturating_sub(width + 1)),
+        panel.y.saturating_add(1),
+        width,
+        1.min(panel.height),
+    )
+}
+
 pub(crate) const fn contains(area: Rect, column: u16, row: u16) -> bool {
     column >= area.x
         && column < area.x.saturating_add(area.width)
@@ -259,6 +282,7 @@ fn uses_immersive_shell(app: &App) -> bool {
     app.input_mode() == InputMode::Navigation
         && app.workspaces.shell_chrome(app.active_workspace()) == ShellChrome::Immersive
         && !app.help_visible()
+        && !app.settings_visible()
 }
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -267,7 +291,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.area(),
     );
     if uses_immersive_shell(app) {
-        app.workspaces.render(app.active_workspace(), frame, frame.area());
+        app.workspaces
+            .render(app.active_workspace(), frame, frame.area());
         if app.assistant_drawer_visible() {
             render_assistant_drawer(frame, frame.area(), app);
         }
@@ -285,6 +310,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
     if app.help_visible() {
         render_help(frame, layout.workspace, app);
+    }
+    if app.settings_visible() {
+        render_settings(frame, layout.workspace, app);
     }
 }
 
@@ -368,6 +396,7 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw("Enter      Run command / open input"),
             Line::raw("[KEY]      Open labeled workspace"),
             Line::raw("A          Toggle AI drawer; Esc closes"),
+            Line::raw("F2         Effective settings / setup"),
             Line::raw("Ctrl+B     tmux-style panel prefix"),
             Line::raw("  ←/→ N/P  Previous / next panel"),
             Line::raw("  1–9/0    Select numbered panel"),
@@ -388,6 +417,7 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw(""),
             Line::styled("USEFUL COMMANDS", theme::AMBER),
             Line::raw("HELP                 This guide"),
+            Line::raw("SETTINGS             Effective configuration"),
             Line::raw("PORT IMPORT <CSV>    Import positions"),
             Line::raw("PORT RELOAD          Reload positions"),
             Line::raw("NEWS                 Live headlines"),
@@ -418,4 +448,135 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(" [ CLOSE ] ").style(Style::new().bg(theme::CYAN).fg(theme::BG).bold()),
         help_close_area(area),
     );
+}
+
+fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
+    let panel = help_panel_area(area);
+    frame.render_widget(Clear, panel);
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .border_style(theme::CYAN)
+        .title(Line::from(vec![
+            Span::styled(" SETUP ", Style::new().bg(theme::CYAN).fg(theme::BG).bold()),
+            Span::styled(" EFFECTIVE SETTINGS ", theme::CYAN),
+        ]));
+    let inner = block.inner(panel);
+    frame.render_widget(block, panel);
+
+    let rows = Layout::vertical([
+        Constraint::Length(if app.settings_first_run() { 5 } else { 3 }),
+        Constraint::Min(8),
+        Constraint::Length(2),
+    ])
+    .split(inner);
+    let intro = if app.settings_first_run() {
+        vec![
+            Line::styled(
+                "WELCOME TO MARKET TERMINAL",
+                Style::new().fg(theme::INK).bold(),
+            ),
+            Line::styled(
+                "This is a secret-free view of the providers and local inputs selected for this process.",
+                theme::MUTED,
+            ),
+            Line::styled(
+                "Alpha Vantage demo data and live public feeds work immediately; configure the rest when useful.",
+                theme::MUTED,
+            ),
+        ]
+    } else {
+        vec![
+            Line::styled(
+                "EFFECTIVE STARTUP CONFIGURATION",
+                Style::new().fg(theme::INK).bold(),
+            ),
+            Line::styled(
+                "Values are resolved at startup from exported variables and the ignored .env file.",
+                theme::MUTED,
+            ),
+        ]
+    };
+    frame.render_widget(Paragraph::new(intro).wrap(Wrap { trim: true }), rows[0]);
+
+    let columns =
+        Layout::horizontal([Constraint::Percentage(54), Constraint::Percentage(46)]).split(rows[1]);
+    let settings = app.runtime_settings();
+    let credential_style = if settings.market_credentials == "MISSING" {
+        theme::RED
+    } else if settings.market_credentials == "CONFIGURED" {
+        theme::GREEN
+    } else {
+        theme::AMBER
+    };
+    frame.render_widget(
+        Paragraph::new(vec![
+            setting_line("PRICE SOURCE", &settings.market_provider, theme::CYAN),
+            setting_line(
+                "CREDENTIALS",
+                &settings.market_credentials,
+                credential_style,
+            ),
+            setting_line(
+                "QUOTE POLL",
+                &format!("{} SECONDS", settings.quote_refresh_seconds),
+                theme::INK,
+            ),
+            setting_line("WATCHLIST", &settings.watchlist, theme::INK),
+            setting_line("CHART SYMBOL", &settings.chart_symbol, theme::INK),
+            setting_line("AI", &settings.ai_provider, theme::CYAN),
+            setting_line("PORTFOLIO", &settings.portfolio_import, theme::INK),
+            setting_line("NEWS", &settings.news_sources, theme::INK),
+            setting_line("IRC", &settings.irc, theme::INK),
+        ])
+        .wrap(Wrap { trim: true })
+        .block(components::terminal_block("CFG", "ACTIVE PROCESS")),
+        columns[0],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled("FAST START", theme::AMBER),
+            Line::raw("1  cp .env.example .env"),
+            Line::raw("2  Choose alpha-vantage or alpaca"),
+            Line::raw("3  Set the provider credentials in .env"),
+            Line::raw("4  Run `codex login` for ChatGPT Pro"),
+            Line::raw("5  Set watchlist / chart symbol / portfolio CSV"),
+            Line::raw("6  Restart the terminal to apply provider changes"),
+            Line::raw(""),
+            Line::styled("USE NOW", theme::AMBER),
+            Line::raw("PORT IMPORT \"~/Downloads/positions.csv\""),
+            Line::raw("HELP  ·  F1 command and interaction guide"),
+            Line::raw(""),
+            Line::styled(
+                "Secrets are never displayed. CONFIGURED/MISSING is the only credential state shown.",
+                theme::MUTED,
+            ),
+        ])
+        .wrap(Wrap { trim: true })
+        .block(components::terminal_block("GO", "CONFIGURE AND RESTART")),
+        columns[1],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                " ESC / Q / F2 ",
+                Style::new().bg(theme::AMBER).fg(theme::BG).bold(),
+            ),
+            Span::styled(
+                " CLOSE SETTINGS   ·   / COMMAND   ·   F1 HELP",
+                theme::MUTED,
+            ),
+        ])),
+        rows[2],
+    );
+    frame.render_widget(
+        Paragraph::new(" [ CLOSE ] ").style(Style::new().bg(theme::CYAN).fg(theme::BG).bold()),
+        settings_close_area(area),
+    );
+}
+
+fn setting_line<'a>(label: &'a str, value: &'a str, value_color: Color) -> Line<'a> {
+    Line::from(vec![
+        Span::styled(format!("{label:<14}"), theme::AMBER),
+        Span::styled(value, value_color),
+    ])
 }

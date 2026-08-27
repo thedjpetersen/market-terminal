@@ -47,6 +47,11 @@ Run `HELP` from the command bar—or press `F1`—to open the command and contro
 guide without leaving the current workspace. Close it with `Esc`, `Q`, `F1`,
 the on-screen close button, or by selecting a workspace tab.
 
+Run `SETTINGS` (aliases `CONFIG` and `SETUP`) or press `F2` to inspect the
+secret-free effective startup configuration. On the first persistent launch,
+this setup screen opens automatically once. It shows credential presence but
+never credential values, and identifies which `.env` changes require a restart.
+
 Tmux-style panel switching is also available. Press `Ctrl+B`, release it, then
 use `Left`/`Right` or `N`/`P` for the next or previous workspace. Use `1`–`9`
 and `0` to select the corresponding numbered workspace, or `?` for help.
@@ -315,10 +320,11 @@ reconnect.
 HawaiianNinja pointed us to
 [`makeev/alphai-tui`](https://github.com/makeev/alphai-tui). Codex then
 integrated the selected MIT-licensed pieces we care about—indicator math,
-chart interaction ideas, provider-selection patterns, and official Alpaca
-adapter behavior—into this project's bounded, provider-aware architecture.
-`alphai-tui` is Copyright (c) 2026 Mikhail Makeev and licensed under MIT. The
-copied-code provenance and complete upstream license text are in
+chart interaction ideas, provider-selection patterns, official Alpaca adapter
+behavior, and the fast first-run/settings flow—into this project's bounded,
+provider-aware architecture. `alphai-tui` is Copyright (c) 2026 Mikhail Makeev
+and licensed under MIT. The copied-code provenance and complete upstream
+license text are in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Architecture

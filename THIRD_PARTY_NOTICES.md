@@ -8,7 +8,9 @@ Selected chart indicator algorithms and interaction ideas were adapted from
 implementation is identified in `src/features/charting/indicators.rs`. The
 official Alpaca adapter in `src/infrastructure/alpaca.rs` also adapts the
 upstream response-shape, price-fallback, feed-selection, and bar-ordering work
-to this project's typed ports and bounded synchronous workers.
+to this project's typed ports and bounded synchronous workers. The secret-free
+first-run/effective-settings overlay is based on the upstream settings-flow
+idea, with new state and rendering written for this application's shell.
 
 MIT License
 

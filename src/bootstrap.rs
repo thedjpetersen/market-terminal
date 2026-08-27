@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
-    app::{App, WorkspaceRegistry},
+    app::{App, RuntimeSettingsSummary, WorkspaceRegistry},
     features::{
         alerts::{AlertsQuery, AlertsWorkspace},
         assistant::{AssistantGateway, AssistantWorkspace},
@@ -46,6 +46,7 @@ pub fn demo_app() -> App {
         security_symbol: "AAPL US".to_owned(),
         alerts_query: Arc::new(DemoAlertsReplay::new()),
         snapshot_refresh_interval: Duration::from_secs(60),
+        runtime_settings: RuntimeSettingsSummary::demo(),
     })
 }
 
@@ -64,6 +65,7 @@ struct AppProviders {
     security_symbol: String,
     alerts_query: Arc<dyn AlertsQuery>,
     snapshot_refresh_interval: Duration,
+    runtime_settings: RuntimeSettingsSummary,
 }
 
 fn build_app(providers: AppProviders) -> App {
@@ -82,6 +84,7 @@ fn build_app(providers: AppProviders) -> App {
         security_symbol,
         alerts_query,
         snapshot_refresh_interval,
+        runtime_settings,
     } = providers;
     let data = Arc::new(DemoData);
     let overview_query: Arc<dyn OverviewQuery> = data.clone();
@@ -137,7 +140,7 @@ fn build_app(providers: AppProviders) -> App {
         }),
         Box::new(SpreadsheetWorkspace::new(spreadsheet_market_data)),
     ]);
-    App::new(workspaces, OVERVIEW)
+    App::new(workspaces, OVERVIEW).with_runtime_settings(runtime_settings)
 }
 
 /// Builds the interactive application with durable shell state enabled.
@@ -156,6 +159,8 @@ pub fn persistent_app() -> App {
     let watchlist_catalog: Arc<dyn WatchlistCatalog> =
         Arc::new(ConfiguredWatchlistCatalog::from_env());
     let initial_symbol = initial_chart_symbol();
+    let snapshot_refresh_interval = quote_refresh_interval();
+    let runtime_settings = runtime_settings_summary(snapshot_refresh_interval, &initial_symbol);
     build_app(AppProviders {
         chat: Arc::new(IrcChatGateway::from_env()),
         portfolio_query,
@@ -170,7 +175,8 @@ pub fn persistent_app() -> App {
         security_query,
         security_symbol: format!("{initial_symbol} US"),
         alerts_query,
-        snapshot_refresh_interval: quote_refresh_interval(),
+        snapshot_refresh_interval,
+        runtime_settings,
     })
     .with_session_repository(repository)
 }
@@ -210,6 +216,107 @@ fn quote_refresh_interval() -> Duration {
         .map(|seconds| seconds.clamp(5, 3_600))
         .unwrap_or(60);
     Duration::from_secs(seconds)
+}
+
+fn runtime_settings_summary(
+    quote_refresh_interval: Duration,
+    chart_symbol: &str,
+) -> RuntimeSettingsSummary {
+    let provider = std::env::var("MARKET_TERMINAL_MARKET_DATA_PROVIDER")
+        .unwrap_or_else(|_| "alpha-vantage".to_owned())
+        .trim()
+        .to_ascii_lowercase();
+    let (market_provider, market_credentials) = if provider == "alpaca" {
+        let feed = std::env::var("ALPACA_FEED")
+            .unwrap_or_else(|_| "iex".to_owned())
+            .trim()
+            .to_ascii_uppercase();
+        let configured = env_present("APCA_API_KEY_ID") && env_present("APCA_API_SECRET_KEY");
+        (
+            format!("ALPACA · {}", if feed == "SIP" { "SIP" } else { "IEX" }),
+            if configured { "CONFIGURED" } else { "MISSING" }.to_owned(),
+        )
+    } else {
+        let personal_key = std::env::var("ALPHA_VANTAGE_API_KEY").is_ok_and(|value| {
+            let value = value.trim();
+            !value.is_empty() && value != "demo"
+        });
+        (
+            if personal_key {
+                "ALPHA VANTAGE · PERSONAL KEY"
+            } else {
+                "ALPHA VANTAGE · DEMO (IBM ONLY)"
+            }
+            .to_owned(),
+            if personal_key {
+                "CONFIGURED"
+            } else {
+                "DEMO KEY"
+            }
+            .to_owned(),
+        )
+    };
+    let assistant_provider = std::env::var("MARKET_TERMINAL_AI_PROVIDER")
+        .unwrap_or_else(|_| "codex".to_owned())
+        .trim()
+        .to_ascii_lowercase();
+    let ai_provider = if assistant_provider == "codex" {
+        "CODEX · CHATGPT LOGIN".to_owned()
+    } else if env_present("OPENROUTER_API_KEY") {
+        "OPENROUTER · KEY CONFIGURED".to_owned()
+    } else {
+        "OPENROUTER · KEY MISSING".to_owned()
+    };
+    let news_sources = std::env::var("MARKET_TERMINAL_NEWS_FEEDS")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| {
+            format!(
+                "{} CUSTOM RSS/ATOM FEED(S)",
+                value
+                    .split(',')
+                    .filter(|feed| !feed.trim().is_empty())
+                    .count()
+            )
+        })
+        .unwrap_or_else(|| "3 DEFAULT LIVE RSS/ATOM FEEDS".to_owned());
+
+    RuntimeSettingsSummary {
+        gallery_replay: false,
+        market_provider,
+        market_credentials,
+        quote_refresh_seconds: quote_refresh_interval.as_secs(),
+        watchlist: bounded_env("MARKET_TERMINAL_WATCHLIST", "IBM", 96),
+        chart_symbol: chart_symbol.to_owned(),
+        ai_provider,
+        portfolio_import: if env_present("MARKET_TERMINAL_PORTFOLIO_CSV") {
+            "CSV PATH CONFIGURED"
+        } else {
+            "NOT CONFIGURED"
+        }
+        .to_owned(),
+        news_sources,
+        irc: if env_present("IRC_SERVER") {
+            "SERVER CONFIGURED"
+        } else {
+            "OFFLINE"
+        }
+        .to_owned(),
+    }
+}
+
+fn env_present(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| !value.trim().is_empty())
+}
+
+fn bounded_env(name: &str, default: &str, maximum_chars: usize) -> String {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| default.to_owned())
+        .chars()
+        .take(maximum_chars)
+        .collect()
 }
 
 fn initial_chart_symbol() -> String {

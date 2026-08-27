@@ -1,5 +1,6 @@
 mod events;
 mod input;
+mod settings;
 mod workspace;
 
 use std::{collections::BTreeMap, sync::Arc};
@@ -14,6 +15,7 @@ use crate::{
 
 pub use events::{EventBus, EventEnvelope, EventTopic, SubscriptionId, SubscriptionMetrics};
 pub use input::{CommandEditMode, InputMode};
+pub use settings::RuntimeSettingsSummary;
 pub use workspace::{
     AppIntent, CommandArgument, CommandInvocation, CommandParseError, ShellChrome, ShellContext,
     Workspace, WorkspaceDescriptor, WorkspaceId, WorkspaceNavigationItem, WorkspaceRegistry,
@@ -28,6 +30,9 @@ pub struct App {
     command_delete_pending: bool,
     history_cursor: Option<usize>,
     pub(crate) help_visible: bool,
+    pub(crate) settings_visible: bool,
+    pub(crate) settings_first_run: bool,
+    runtime_settings: RuntimeSettingsSummary,
     pub(crate) tmux_prefix_pending: bool,
     assistant_workspace: Option<WorkspaceId>,
     assistant_drawer_visible: bool,
@@ -53,6 +58,9 @@ impl App {
             command_delete_pending: false,
             history_cursor: None,
             help_visible: false,
+            settings_visible: false,
+            settings_first_run: false,
+            runtime_settings: RuntimeSettingsSummary::demo(),
             tmux_prefix_pending: false,
             assistant_workspace,
             assistant_drawer_visible: false,
@@ -89,7 +97,10 @@ impl App {
                 }
                 self.recent_commands = state.recent_commands().to_vec();
             }
-            Ok(None) => {}
+            Ok(None) => {
+                self.settings_visible = true;
+                self.settings_first_run = true;
+            }
             Err(error) => self.persistence_error = Some(error.to_string()),
         }
         self.persistence = Some(repository);
@@ -119,6 +130,23 @@ impl App {
 
     pub fn help_visible(&self) -> bool {
         self.help_visible
+    }
+
+    pub fn settings_visible(&self) -> bool {
+        self.settings_visible
+    }
+
+    pub fn settings_first_run(&self) -> bool {
+        self.settings_first_run
+    }
+
+    pub fn runtime_settings(&self) -> &RuntimeSettingsSummary {
+        &self.runtime_settings
+    }
+
+    pub fn with_runtime_settings(mut self, settings: RuntimeSettingsSummary) -> Self {
+        self.runtime_settings = settings;
+        self
     }
 
     pub fn tmux_prefix_pending(&self) -> bool {
@@ -177,6 +205,24 @@ impl App {
             return;
         }
 
+        if self.settings_visible {
+            match key.code {
+                KeyCode::Esc | KeyCode::F(2) | KeyCode::Char('q' | 'Q') => {
+                    self.close_settings();
+                }
+                KeyCode::F(1) => {
+                    self.close_settings();
+                    self.help_visible = true;
+                }
+                KeyCode::Char('/' | ':') => {
+                    self.close_settings();
+                    self.open_command();
+                }
+                _ => {}
+            }
+            return;
+        }
+
         if self.help_visible {
             match key.code {
                 KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('q' | 'Q') => {
@@ -185,6 +231,10 @@ impl App {
                 KeyCode::Char('/' | ':') => {
                     self.help_visible = false;
                     self.open_command();
+                }
+                KeyCode::F(2) => {
+                    self.help_visible = false;
+                    self.open_settings();
                 }
                 _ => {}
             }
@@ -221,6 +271,10 @@ impl App {
 
         if key.code == KeyCode::F(1) {
             self.help_visible = true;
+            return;
+        }
+        if key.code == KeyCode::F(2) {
+            self.open_settings();
             return;
         }
 
@@ -264,6 +318,7 @@ impl App {
         match target {
             Some(ShellClickTarget::CommandInput) => {
                 self.help_visible = false;
+                self.close_settings();
                 self.close_assistant_drawer();
                 if self.input_mode != InputMode::Command {
                     self.workspaces.on_blur(self.active_workspace);
@@ -272,6 +327,7 @@ impl App {
             }
             Some(ShellClickTarget::CommandGo) => {
                 self.help_visible = false;
+                self.close_settings();
                 self.close_assistant_drawer();
                 if self.input_mode == InputMode::Command {
                     self.execute_command();
@@ -282,6 +338,7 @@ impl App {
             }
             Some(ShellClickTarget::Navigation(id)) => {
                 self.help_visible = false;
+                self.close_settings();
                 self.cancel_command();
                 if Some(id) == self.assistant_workspace {
                     self.toggle_assistant_drawer();
@@ -311,6 +368,8 @@ impl App {
             }
             Some(ShellClickTarget::HelpClose) => self.help_visible = false,
             Some(ShellClickTarget::HelpOverlay) => {}
+            Some(ShellClickTarget::SettingsClose) => self.close_settings(),
+            Some(ShellClickTarget::SettingsOverlay) => {}
             Some(ShellClickTarget::Quit) => self.should_quit = true,
             None => {}
         }
@@ -320,8 +379,17 @@ impl App {
         let command = self.command.trim().to_owned();
         let opens_help = CommandInvocation::parse(&command)
             .is_some_and(|invocation| invocation.function == "HELP");
+        let opens_settings = CommandInvocation::parse(&command).is_some_and(|invocation| {
+            matches!(
+                invocation.function.as_str(),
+                "SETTINGS" | "CONFIG" | "SETUP"
+            )
+        });
         if opens_help {
+            self.settings_visible = false;
             self.help_visible = true;
+        } else if opens_settings {
+            self.open_settings();
         } else if let Some(id) = self.workspaces.dispatch_command(&command) {
             if Some(id) == self.assistant_workspace {
                 self.open_assistant_drawer();
@@ -607,6 +675,20 @@ impl App {
             self.close_assistant_drawer();
         } else {
             self.open_assistant_drawer();
+        }
+    }
+
+    fn open_settings(&mut self) {
+        self.help_visible = false;
+        self.close_assistant_drawer();
+        self.settings_visible = true;
+    }
+
+    fn close_settings(&mut self) {
+        if self.settings_visible || self.settings_first_run {
+            self.settings_visible = false;
+            self.settings_first_run = false;
+            self.persist_session();
         }
     }
 
@@ -1041,6 +1123,51 @@ mod tests {
     }
 
     #[test]
+    fn settings_command_opens_a_secret_free_overlay_without_switching_workspaces() {
+        let frame_area = Rect::new(0, 0, 160, 48);
+        let mut app = bootstrap::demo_app();
+        let active = app.active_workspace();
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "SETTINGS".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.settings_visible());
+        assert_eq!(app.active_workspace(), active);
+
+        let mut terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render(frame, &app))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("EFFECTIVE SETTINGS"));
+        assert!(rendered.contains("ACTIVE PROCESS"));
+        assert!(rendered.contains("Secrets are never displayed"));
+
+        let close =
+            crate::ui::settings_close_area(crate::ui::ShellLayout::new(frame_area).workspace);
+        app.handle_mouse(left_click(close.x + 1, close.y), frame_area);
+        assert!(!app.settings_visible());
+    }
+
+    #[test]
+    fn f2_opens_settings_and_f1_moves_to_help() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+        assert!(app.settings_visible());
+
+        app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        assert!(!app.settings_visible());
+        assert!(app.help_visible());
+    }
+
+    #[test]
     fn tmux_prefix_switches_to_the_next_and_previous_panels() {
         let mut app = bootstrap::demo_app();
         let first = app.active_workspace();
@@ -1156,6 +1283,20 @@ mod tests {
     #[derive(Default)]
     struct MemorySessionRepository {
         state: Mutex<Option<SessionState>>,
+    }
+
+    #[test]
+    fn a_missing_session_opens_first_run_setup_once_and_close_creates_state() {
+        let repository = Arc::new(MemorySessionRepository::default());
+        let mut app = bootstrap::demo_app().with_session_repository(repository.clone());
+        assert!(app.settings_visible());
+        assert!(app.settings_first_run());
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert!(!app.settings_visible());
+        assert!(!app.settings_first_run());
+        assert!(repository.state.lock().expect("session lock").is_some());
     }
 
     impl SessionStateRepository for MemorySessionRepository {
