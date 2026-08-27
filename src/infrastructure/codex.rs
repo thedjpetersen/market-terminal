@@ -4,22 +4,22 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
-        Mutex,
         atomic::{AtomicU64, Ordering},
-        mpsc::{self, Receiver, SyncSender},
+        mpsc::{self, Receiver, Sender, SyncSender},
+        Mutex,
     },
     thread,
     time::{Duration, Instant},
 };
 
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::features::assistant::{
-    AssistantError, AssistantGateway,
     domain::{
-        AssistantRequest, AssistantResponse, AssistantRole, COMMAND_PLANE_SYSTEM_PROMPT, UiAction,
+        AssistantRequest, AssistantResponse, AssistantRole, AssistantStreamEvent,
+        AssistantTokenUsage, UiAction, COMMAND_PLANE_SYSTEM_PROMPT,
     },
+    AssistantError, AssistantGateway,
 };
 
 const DEFAULT_TIMEOUT_SECS: u64 = 90;
@@ -83,28 +83,19 @@ impl CodexAppServerGateway {
             worker,
         }
     }
-
-    fn parse_output(
-        output: &str,
-        model: Option<String>,
-    ) -> Result<AssistantResponse, AssistantError> {
-        let output: CodexOutput = serde_json::from_str(output)
-            .map_err(|error| AssistantError::InvalidResponse(error.to_string()))?;
-        let actions = output
-            .actions
-            .into_iter()
-            .map(CodexAction::into_ui_action)
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(AssistantResponse {
-            content: output.content,
-            actions,
-            model: model.or_else(|| Some("codex".to_owned())),
-        })
-    }
 }
 
 impl AssistantGateway for CodexAppServerGateway {
     fn complete(&self, request: AssistantRequest) -> Result<AssistantResponse, AssistantError> {
+        let (updates, _receiver) = mpsc::channel();
+        self.complete_stream(request, updates)
+    }
+
+    fn complete_stream(
+        &self,
+        request: AssistantRequest,
+        updates: Sender<AssistantStreamEvent>,
+    ) -> Result<AssistantResponse, AssistantError> {
         if !self.config.configured {
             return Err(AssistantError::NotConfigured);
         }
@@ -113,6 +104,7 @@ impl AssistantGateway for CodexAppServerGateway {
         })?;
         worker.complete(
             request,
+            updates,
             self.config.timeout.saturating_mul(3) + Duration::from_secs(5),
         )
     }
@@ -132,7 +124,8 @@ impl AssistantGateway for CodexAppServerGateway {
 
 enum CodexWorkerMessage {
     Complete {
-        request: AssistantRequest,
+        request: Box<AssistantRequest>,
+        updates: Sender<AssistantStreamEvent>,
         reply: SyncSender<Result<AssistantResponse, AssistantError>>,
     },
     Shutdown,
@@ -159,11 +152,16 @@ impl CodexWorker {
     fn complete(
         &self,
         request: AssistantRequest,
+        updates: Sender<AssistantStreamEvent>,
         timeout: Duration,
     ) -> Result<AssistantResponse, AssistantError> {
         let (reply, response) = mpsc::sync_channel(1);
         self.sender
-            .send(CodexWorkerMessage::Complete { request, reply })
+            .send(CodexWorkerMessage::Complete {
+                request: Box::new(request),
+                updates,
+                reply,
+            })
             .map_err(|_| AssistantError::Transport("Codex background worker stopped".to_owned()))?;
         response
             .recv_timeout(timeout)
@@ -189,8 +187,17 @@ fn run_codex_worker(config: CodexAppServerConfig, receiver: Receiver<CodexWorker
     let mut session = CodexSession::connect(&config).ok();
     while let Ok(message) = receiver.recv() {
         match message {
-            CodexWorkerMessage::Complete { request, reply } => {
-                let _ = reply.send(complete_with_restart(&config, &mut session, request));
+            CodexWorkerMessage::Complete {
+                request,
+                updates,
+                reply,
+            } => {
+                let _ = reply.send(complete_with_restart(
+                    &config,
+                    &mut session,
+                    *request,
+                    updates,
+                ));
             }
             CodexWorkerMessage::Shutdown => break,
         }
@@ -201,6 +208,7 @@ fn complete_with_restart(
     config: &CodexAppServerConfig,
     session: &mut Option<CodexSession>,
     request: AssistantRequest,
+    updates: Sender<AssistantStreamEvent>,
 ) -> Result<AssistantResponse, AssistantError> {
     for attempt in 0..2 {
         if session.is_none() {
@@ -213,7 +221,7 @@ fn complete_with_restart(
         let result = session
             .as_mut()
             .expect("Codex session connected")
-            .complete(request.clone());
+            .complete(request.clone(), updates.clone());
         if matches!(result, Err(AssistantError::Transport(_))) {
             *session = None;
             if attempt == 0 {
@@ -249,11 +257,10 @@ impl CodexSession {
                     "version": env!("CARGO_PKG_VERSION")
                 },
                 "capabilities": {
+                    "experimentalApi": true,
                     "optOutNotificationMethods": [
-                        "item/agentMessage/delta",
                         "item/reasoning/summaryTextDelta",
-                        "item/reasoning/textDelta",
-                        "thread/tokenUsage/updated"
+                        "item/reasoning/textDelta"
                     ]
                 }
             }
@@ -268,7 +275,11 @@ impl CodexSession {
         })
     }
 
-    fn complete(&mut self, request: AssistantRequest) -> Result<AssistantResponse, AssistantError> {
+    fn complete(
+        &mut self,
+        request: AssistantRequest,
+        updates: Sender<AssistantStreamEvent>,
+    ) -> Result<AssistantResponse, AssistantError> {
         let deadline = Instant::now() + self.config.timeout;
         let thread_request_id = self.next_id();
         let mut thread_params = json!({
@@ -278,7 +289,8 @@ impl CodexSession {
             "ephemeral": true,
             "serviceName": "market_terminal",
             "baseInstructions": COMMAND_PLANE_SYSTEM_PROMPT,
-            "developerInstructions": "Return only the requested structured response. Do not invoke any agent tools."
+            "developerInstructions": "Use only the injected market_terminal_* and portfolio_* dynamic tools. Never use built-in shell, filesystem, web, MCP, connector, or trade tools.",
+            "dynamicTools": dynamic_tool_definitions()
         });
         if let Some(model) = &self.config.model {
             thread_params["model"] = json!(model);
@@ -302,12 +314,21 @@ impl CodexSession {
             "id": turn_request_id,
             "params": {
                 "threadId": thread_id,
-                "input": [{ "type": "text", "text": request_prompt(&request) }],
-                "outputSchema": output_schema()
+                "input": [{ "type": "text", "text": request_prompt(&request) }]
             }
         }))?;
-        let output = self.server.wait_for_turn(turn_request_id, deadline)?;
-        CodexAppServerGateway::parse_output(&output, self.config.model.clone())
+        let output = self
+            .server
+            .wait_for_turn(turn_request_id, deadline, &request, &updates)?;
+        Ok(AssistantResponse {
+            content: output.message,
+            actions: output.actions,
+            model: self
+                .config
+                .model
+                .clone()
+                .or_else(|| Some("codex".to_owned())),
+        })
     }
 
     fn next_id(&mut self) -> u64 {
@@ -357,7 +378,7 @@ fn request_prompt(request: &AssistantRequest) -> String {
         })
         .collect::<Vec<_>>();
     json!({
-        "instruction": "Answer the final user message. Return UI actions only when the user requested them.",
+        "instruction": "Answer the final user message. Use the injected read tools for current terminal or portfolio facts. Use action tools only when the user requests an interface change.",
         "active_workspace": request.active_workspace,
         "available_workspaces": request.available_workspaces,
         "conversation": messages
@@ -365,77 +386,283 @@ fn request_prompt(request: &AssistantRequest) -> String {
     .to_string()
 }
 
-fn output_schema() -> Value {
+fn dynamic_tool_definitions() -> Value {
+    json!([
+        dynamic_tool(
+            "market_terminal_get_state",
+            "Read the active workspace and the exact workspaces currently available in Market Terminal.",
+            json!({ "type": "object", "properties": {}, "additionalProperties": false })
+        ),
+        dynamic_tool(
+            "market_terminal_open_workspace",
+            "Focus an existing workspace without changing navigation order.",
+            target_schema()
+        ),
+        dynamic_tool(
+            "market_terminal_bring_workspace_forward",
+            "Move an existing workspace to the front of navigation and focus it.",
+            target_schema()
+        ),
+        dynamic_tool(
+            "market_terminal_run_command",
+            "Dispatch an existing Market Terminal command through the validated command bar.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "minLength": 1, "maxLength": 512 }
+                },
+                "required": ["command"],
+                "additionalProperties": false
+            })
+        ),
+        dynamic_tool(
+            "market_terminal_restore_layout",
+            "Restore the default workspace navigation order.",
+            json!({ "type": "object", "properties": {}, "additionalProperties": false })
+        ),
+        dynamic_tool(
+            "portfolio_get_positions",
+            "Read the user's current imported portfolio summary and positions. This is read-only.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "symbols": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "maxItems": 20
+                    },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+                },
+                "additionalProperties": false
+            })
+        ),
+        dynamic_tool(
+            "portfolio_open_position",
+            "Open the Security workspace for a symbol that exists in the user's current portfolio.",
+            json!({
+                "type": "object",
+                "properties": { "symbol": { "type": "string", "minLength": 1, "maxLength": 32 } },
+                "required": ["symbol"],
+                "additionalProperties": false
+            })
+        )
+    ])
+}
+
+fn dynamic_tool(name: &str, description: &str, input_schema: Value) -> Value {
+    json!({
+        "type": "function",
+        "name": name,
+        "description": description,
+        "inputSchema": input_schema
+    })
+}
+
+fn target_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "content": { "type": "string" },
-            "actions": {
-                "type": "array",
-                "maxItems": 4,
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "type": {
-                            "type": "string",
-                            "enum": [
-                                "open_workspace",
-                                "bring_workspace_forward",
-                                "run_terminal_command",
-                                "restore_workspace_layout"
-                            ]
-                        },
-                        "target": { "type": ["string", "null"] },
-                        "command": { "type": ["string", "null"] }
-                    },
-                    "required": ["type", "target", "command"],
-                    "additionalProperties": false
-                }
-            }
+            "target": { "type": "string", "minLength": 1, "maxLength": 64 }
         },
-        "required": ["content", "actions"],
+        "required": ["target"],
         "additionalProperties": false
     })
 }
 
-#[derive(Deserialize)]
-struct CodexOutput {
-    content: String,
-    actions: Vec<CodexAction>,
+struct DynamicToolOutcome {
+    success: bool,
+    text: String,
+    action: Option<UiAction>,
 }
 
-#[derive(Deserialize)]
-struct CodexAction {
-    #[serde(rename = "type")]
-    kind: String,
-    target: Option<String>,
-    command: Option<String>,
-}
+impl DynamicToolOutcome {
+    fn read(value: Value) -> Self {
+        Self {
+            success: true,
+            text: value.to_string(),
+            action: None,
+        }
+    }
 
-impl CodexAction {
-    fn into_ui_action(self) -> Result<UiAction, AssistantError> {
-        match self.kind.as_str() {
-            "open_workspace" => Ok(UiAction::OpenWorkspace {
-                target: required(self.target, "open_workspace target")?,
-            }),
-            "bring_workspace_forward" => Ok(UiAction::BringForward {
-                target: required(self.target, "bring_workspace_forward target")?,
-            }),
-            "run_terminal_command" => Ok(UiAction::RunCommand {
-                command: required(self.command, "run_terminal_command command")?,
-            }),
-            "restore_workspace_layout" => Ok(UiAction::RestoreLayout),
-            unknown => Err(AssistantError::InvalidResponse(format!(
-                "unsupported Codex action: {unknown}"
-            ))),
+    fn action(message: impl Into<String>, action: UiAction) -> Self {
+        Self {
+            success: true,
+            text: message.into(),
+            action: Some(action),
+        }
+    }
+
+    fn error(message: impl Into<String>) -> Self {
+        Self {
+            success: false,
+            text: message.into(),
+            action: None,
         }
     }
 }
 
-fn required(value: Option<String>, field: &str) -> Result<String, AssistantError> {
-    value
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| AssistantError::InvalidResponse(format!("missing {field}")))
+fn execute_dynamic_tool(params: &Value, request: &AssistantRequest) -> DynamicToolOutcome {
+    let tool = params["tool"].as_str().unwrap_or_default();
+    let arguments = &params["arguments"];
+    match tool {
+        "market_terminal_get_state" => DynamicToolOutcome::read(json!({
+            "active_workspace": request.active_workspace,
+            "available_workspaces": request.available_workspaces,
+        })),
+        "market_terminal_open_workspace" => workspace_action(arguments, request, false),
+        "market_terminal_bring_workspace_forward" => workspace_action(arguments, request, true),
+        "market_terminal_run_command" => {
+            let Some(command) = argument_string(arguments, "command") else {
+                return DynamicToolOutcome::error("command is required");
+            };
+            if command.len() > 512
+                || command
+                    .chars()
+                    .any(|character| matches!(character, '\r' | '\n'))
+            {
+                return DynamicToolOutcome::error("command is too long or contains a newline");
+            }
+            DynamicToolOutcome::action(
+                format!("Queued validated terminal command: {command}"),
+                UiAction::RunCommand { command },
+            )
+        }
+        "market_terminal_restore_layout" => DynamicToolOutcome::action(
+            "Queued restoration of the default workspace layout",
+            UiAction::RestoreLayout,
+        ),
+        "portfolio_get_positions" => portfolio_positions(arguments, request),
+        "portfolio_open_position" => open_portfolio_position(arguments, request),
+        _ => DynamicToolOutcome::error(format!("unsupported Market Terminal tool: {tool}")),
+    }
+}
+
+fn workspace_action(
+    arguments: &Value,
+    request: &AssistantRequest,
+    bring_forward: bool,
+) -> DynamicToolOutcome {
+    let Some(target) = argument_string(arguments, "target") else {
+        return DynamicToolOutcome::error("target is required");
+    };
+    let Some(canonical) = request
+        .available_workspaces
+        .iter()
+        .find(|workspace| workspace.eq_ignore_ascii_case(&target))
+        .cloned()
+    else {
+        return DynamicToolOutcome::error(format!(
+            "unknown workspace {target}; read market_terminal_get_state for valid IDs"
+        ));
+    };
+    if bring_forward {
+        DynamicToolOutcome::action(
+            format!("Queued {canonical} to move forward and receive focus"),
+            UiAction::BringForward { target: canonical },
+        )
+    } else {
+        DynamicToolOutcome::action(
+            format!("Queued {canonical} to receive focus"),
+            UiAction::OpenWorkspace { target: canonical },
+        )
+    }
+}
+
+fn portfolio_positions(arguments: &Value, request: &AssistantRequest) -> DynamicToolOutcome {
+    let requested_symbols = arguments["symbols"]
+        .as_array()
+        .map(|symbols| {
+            symbols
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|symbol| !symbol.is_empty())
+                .map(str::to_ascii_uppercase)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let limit = arguments["limit"].as_u64().unwrap_or(100).clamp(1, 100) as usize;
+    let matching = request
+        .portfolio
+        .positions
+        .iter()
+        .filter(|position| {
+            requested_symbols.is_empty()
+                || requested_symbols
+                    .iter()
+                    .any(|symbol| position.symbol.eq_ignore_ascii_case(symbol))
+        })
+        .collect::<Vec<_>>();
+    let matching_count = matching.len();
+    let returned = matching_count.min(limit);
+    let positions = matching
+        .into_iter()
+        .take(limit)
+        .map(|position| {
+            json!({
+                "symbol": position.symbol,
+                "quantity": position.quantity,
+                "average_cost": position.average_cost,
+                "market_value": position.market_value,
+                "pnl": position.pnl,
+                "weight": position.weight,
+            })
+        })
+        .collect::<Vec<_>>();
+    DynamicToolOutcome::read(json!({
+        "source": request.portfolio.source,
+        "as_of": request.portfolio.as_of,
+        "net_asset_value": request.portfolio.net_asset_value,
+        "available_cash": request.portfolio.available_cash,
+        "ytd_return": request.portfolio.ytd_return,
+        "sharpe": request.portfolio.sharpe,
+        "total_position_count": request.portfolio.positions.len(),
+        "matching_position_count": matching_count,
+        "returned_position_count": returned,
+        "truncated": matching_count > returned,
+        "positions": positions,
+    }))
+}
+
+fn open_portfolio_position(arguments: &Value, request: &AssistantRequest) -> DynamicToolOutcome {
+    let Some(symbol) = argument_string(arguments, "symbol") else {
+        return DynamicToolOutcome::error("symbol is required");
+    };
+    let Some(position) = request
+        .portfolio
+        .positions
+        .iter()
+        .find(|position| position.symbol.eq_ignore_ascii_case(&symbol))
+    else {
+        return DynamicToolOutcome::error(format!("{symbol} is not in the current portfolio"));
+    };
+    if position.symbol.len() > 32
+        || !position
+            .symbol
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || ".-^/".contains(character))
+    {
+        return DynamicToolOutcome::error("the held symbol is not safe to open as a command");
+    }
+    DynamicToolOutcome::action(
+        format!("Queued the Security workspace for {}", position.symbol),
+        UiAction::RunCommand {
+            command: format!("SEC {}", position.symbol),
+        },
+    )
+}
+
+fn argument_string(arguments: &Value, name: &str) -> Option<String> {
+    arguments[name]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+struct CodexTurnOutput {
+    message: String,
+    actions: Vec<UiAction>,
 }
 
 struct EphemeralWorkdir(PathBuf);
@@ -586,11 +813,19 @@ impl AppServerProcess {
         &mut self,
         request_id: u64,
         deadline: Instant,
-    ) -> Result<String, AssistantError> {
+        request: &AssistantRequest,
+        updates: &Sender<AssistantStreamEvent>,
+    ) -> Result<CodexTurnOutput, AssistantError> {
         let mut final_message = None;
         let mut turn_error = None;
+        let mut actions = Vec::new();
+        let mut commentary_items = Vec::new();
         loop {
             let message = self.receive(deadline)?;
+            if message.get("method").and_then(Value::as_str) == Some("item/tool/call") {
+                self.handle_dynamic_tool_call(&message, request, updates, &mut actions)?;
+                continue;
+            }
             self.reject_server_request(&message)?;
             if message.get("id").and_then(Value::as_u64) == Some(request_id) {
                 if let Some(error) = message.get("error") {
@@ -599,6 +834,34 @@ impl AppServerProcess {
                 continue;
             }
             match message.get("method").and_then(Value::as_str) {
+                Some("item/started") => {
+                    let item = &message["params"]["item"];
+                    if item["type"] == "agentMessage"
+                        && item["phase"].as_str() == Some("commentary")
+                    {
+                        if let Some(item_id) = item["id"].as_str() {
+                            commentary_items.push(item_id.to_owned());
+                        }
+                    }
+                }
+                Some("item/agentMessage/delta") => {
+                    let params = &message["params"];
+                    let is_commentary = params["itemId"]
+                        .as_str()
+                        .is_some_and(|item_id| commentary_items.iter().any(|id| id == item_id));
+                    if !is_commentary {
+                        if let Some(delta) =
+                            params["delta"].as_str().filter(|delta| !delta.is_empty())
+                        {
+                            let _ = updates.send(AssistantStreamEvent::TextDelta(delta.to_owned()));
+                        }
+                    }
+                }
+                Some("thread/tokenUsage/updated") => {
+                    if let Some(usage) = token_usage(&message) {
+                        let _ = updates.send(AssistantStreamEvent::TokenUsage(usage));
+                    }
+                }
                 Some("item/completed") => {
                     let item = &message["params"]["item"];
                     if item["type"] == "agentMessage"
@@ -624,15 +887,52 @@ impl AppServerProcess {
                             .unwrap_or_else(|| "Codex turn did not complete".to_owned());
                         return Err(AssistantError::Provider(message));
                     }
-                    return final_message.ok_or_else(|| {
+                    let message = final_message.ok_or_else(|| {
                         AssistantError::InvalidResponse(
                             "Codex completed without a final agent message".to_owned(),
                         )
-                    });
+                    })?;
+                    return Ok(CodexTurnOutput { message, actions });
                 }
                 _ => {}
             }
         }
+    }
+
+    fn handle_dynamic_tool_call(
+        &mut self,
+        message: &Value,
+        request: &AssistantRequest,
+        updates: &Sender<AssistantStreamEvent>,
+        actions: &mut Vec<UiAction>,
+    ) -> Result<(), AssistantError> {
+        let Some(id) = message.get("id").cloned() else {
+            return Err(AssistantError::InvalidResponse(
+                "Codex dynamic tool call did not include an id".to_owned(),
+            ));
+        };
+        let params = &message["params"];
+        let name = params["tool"].as_str().unwrap_or("unknown").to_owned();
+        let _ = updates.send(AssistantStreamEvent::ToolStarted(name.clone()));
+        let mut outcome = execute_dynamic_tool(params, request);
+        if outcome.action.is_some() && actions.len() >= 8 {
+            outcome = DynamicToolOutcome::error("too many UI actions requested in one turn");
+        }
+        if let Some(action) = outcome.action.take() {
+            actions.push(action);
+        }
+        self.send(&json!({
+            "id": id,
+            "result": {
+                "success": outcome.success,
+                "contentItems": [{ "type": "inputText", "text": outcome.text }]
+            }
+        }))?;
+        let _ = updates.send(AssistantStreamEvent::ToolFinished {
+            name,
+            success: outcome.success,
+        });
+        Ok(())
     }
 
     fn reject_server_request(&mut self, message: &Value) -> Result<(), AssistantError> {
@@ -662,6 +962,17 @@ impl AppServerProcess {
             .take()
             .and_then(|handle| handle.join().ok());
     }
+}
+
+fn token_usage(message: &Value) -> Option<AssistantTokenUsage> {
+    let usage = message.pointer("/params/tokenUsage/last")?;
+    Some(AssistantTokenUsage {
+        input_tokens: usage["inputTokens"].as_u64()?,
+        cached_input_tokens: usage["cachedInputTokens"].as_u64()?,
+        output_tokens: usage["outputTokens"].as_u64()?,
+        reasoning_output_tokens: usage["reasoningOutputTokens"].as_u64()?,
+        total_tokens: usage["totalTokens"].as_u64()?,
+    })
 }
 
 impl Drop for AppServerProcess {
@@ -707,46 +1018,66 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    #[test]
-    fn parses_structured_codex_actions() {
-        let response = CodexAppServerGateway::parse_output(
-            r#"{
-                "content":"Opening the portfolio.",
-                "actions":[{
-                    "type":"bring_workspace_forward",
-                    "target":"portfolio",
-                    "command":null
-                }]
-            }"#,
-            Some("test-model".to_owned()),
-        )
-        .expect("valid response");
-
-        assert_eq!(response.model.as_deref(), Some("test-model"));
-        assert_eq!(
-            response.actions,
-            vec![UiAction::BringForward {
-                target: "portfolio".to_owned()
-            }]
-        );
+    fn request_with_portfolio() -> AssistantRequest {
+        AssistantRequest {
+            messages: vec![crate::features::assistant::domain::AssistantMessage::user(
+                "hello",
+            )],
+            active_workspace: "overview".to_owned(),
+            available_workspaces: vec!["overview".to_owned(), "portfolio".to_owned()],
+            portfolio: crate::features::portfolio::PortfolioSnapshot {
+                positions: vec![crate::features::portfolio::Position {
+                    symbol: "AAPL".to_owned(),
+                    quantity: "10".to_owned(),
+                    average_cost: "$150.00".to_owned(),
+                    market_value: "$2,000.00".to_owned(),
+                    pnl: "+$500.00".to_owned(),
+                    weight: "25%".to_owned(),
+                }],
+                net_asset_value: "$8,000.00".to_owned(),
+                ytd_return: "+5.0%".to_owned(),
+                available_cash: "$1,000.00".to_owned(),
+                sharpe: "1.2".to_owned(),
+                source: "TEST".to_owned(),
+                as_of: "NOW".to_owned(),
+            },
+        }
     }
 
     #[test]
-    fn rejects_actions_missing_required_arguments() {
-        let error = CodexAppServerGateway::parse_output(
-            r#"{
-                "content":"",
-                "actions":[{
-                    "type":"open_workspace",
-                    "target":null,
-                    "command":null
-                }]
-            }"#,
-            None,
-        )
-        .expect_err("missing target must fail");
+    fn dynamic_tools_read_assets_and_queue_validated_ui_actions() {
+        let request = request_with_portfolio();
+        let read = execute_dynamic_tool(
+            &json!({ "tool": "portfolio_get_positions", "arguments": {} }),
+            &request,
+        );
+        assert!(read.success);
+        assert!(read.text.contains("AAPL"));
+        assert_eq!(read.action, None);
 
-        assert!(matches!(error, AssistantError::InvalidResponse(_)));
+        let open = execute_dynamic_tool(
+            &json!({
+                "tool": "portfolio_open_position",
+                "arguments": { "symbol": "aapl" }
+            }),
+            &request,
+        );
+        assert_eq!(
+            open.action,
+            Some(UiAction::RunCommand {
+                command: "SEC AAPL".to_owned()
+            })
+        );
+
+        let unknown = execute_dynamic_tool(
+            &json!({
+                "tool": "market_terminal_open_workspace",
+                "arguments": { "target": "invented" }
+            }),
+            &request,
+        );
+        assert!(!unknown.success);
+        assert_eq!(dynamic_tool_definitions().as_array().map(Vec::len), Some(7));
     }
 
     #[cfg(unix)]
@@ -774,7 +1105,10 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/start"'*)
       printf '{{"id":%s,"result":{{}}}}\n' "$id"
-      printf '%s\n' '{{"method":"item/completed","params":{{"item":{{"type":"agentMessage","phase":"final_answer","text":"{{\"content\":\"ok\",\"actions\":[]}}"}}}}}}'
+      printf '%s\n' '{{"method":"item/started","params":{{"item":{{"id":"answer-1","type":"agentMessage","phase":"final_answer","text":""}}}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"test-thread","turnId":"test-turn","itemId":"answer-1","delta":"ok"}}}}'
+      printf '%s\n' '{{"method":"thread/tokenUsage/updated","params":{{"threadId":"test-thread","turnId":"test-turn","tokenUsage":{{"last":{{"cachedInputTokens":2,"inputTokens":10,"outputTokens":3,"reasoningOutputTokens":1,"totalTokens":13}},"total":{{"cachedInputTokens":2,"inputTokens":10,"outputTokens":3,"reasoningOutputTokens":1,"totalTokens":13}},"modelContextWindow":1000}}}}}}'
+      printf '%s\n' '{{"method":"item/completed","params":{{"item":{{"id":"answer-1","type":"agentMessage","phase":"final_answer","text":"ok"}}}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"status":"completed"}}}}}}'
       ;;
   esac
@@ -793,13 +1127,7 @@ done
             configured: true,
             configuration_hint: String::new(),
         });
-        let request = AssistantRequest {
-            messages: vec![crate::features::assistant::domain::AssistantMessage::user(
-                "hello",
-            )],
-            active_workspace: "overview".to_owned(),
-            available_workspaces: vec!["overview".to_owned()],
-        };
+        let request = request_with_portfolio();
 
         assert_eq!(gateway.complete(request.clone()).unwrap().content, "ok");
         assert_eq!(gateway.complete(request).unwrap().content, "ok");
@@ -811,23 +1139,42 @@ done
 
     #[test]
     #[ignore = "requires a local Codex CLI signed in with ChatGPT"]
-    fn live_chatgpt_subscription_tool_call() {
+    fn live_chatgpt_subscription_streams_usage_and_dynamic_tools() {
         let gateway = CodexAppServerGateway::new(CodexAppServerConfig::live());
+        let (updates, received_updates) = mpsc::channel();
         let response = gateway
-            .complete(AssistantRequest {
+            .complete_stream(
+                AssistantRequest {
                 messages: vec![crate::features::assistant::domain::AssistantMessage::user(
-                    "Open the portfolio workspace.",
+                    "Use the portfolio tools to identify my only holding, then open that held position.",
                 )],
                 active_workspace: "overview".to_owned(),
                 available_workspaces: vec!["overview".to_owned(), "portfolio".to_owned()],
-            })
+                portfolio: request_with_portfolio().portfolio,
+                },
+                updates,
+            )
             .expect("ChatGPT-backed Codex completion");
 
         assert_eq!(
             response.actions,
-            vec![UiAction::OpenWorkspace {
-                target: "portfolio".to_owned()
+            vec![UiAction::RunCommand {
+                command: "SEC AAPL".to_owned()
             }]
         );
+        assert!(response.content.contains("AAPL"));
+        let events = received_updates.try_iter().collect::<Vec<_>>();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AssistantStreamEvent::ToolStarted(name) if name == "portfolio_get_positions"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AssistantStreamEvent::TextDelta(delta) if !delta.is_empty()
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AssistantStreamEvent::TokenUsage(usage) if usage.output_tokens > 0
+        )));
     }
 }

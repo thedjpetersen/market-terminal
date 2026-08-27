@@ -131,6 +131,7 @@ fn build_app(providers: AppProviders) -> App {
         Box::new(desk_workspace),
         Box::new(AssistantWorkspace::new(
             assistant_gateway,
+            portfolio_query.clone(),
             vec![
                 "overview".to_owned(),
                 "desk".to_owned(),

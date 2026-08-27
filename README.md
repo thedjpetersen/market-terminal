@@ -386,9 +386,20 @@ cargo run --release
 The default provider keeps one Codex app-server process warm and uses its cached
 ChatGPT login. It does not copy an OAuth token or require API credits. Each
 request gets a fresh ephemeral, read-only Codex thread inside that process, with
-structured output restricted to the terminal's validated UI actions.
+live response deltas and exact input/output/total token usage rendered in the
+drawer. While a turn is running, the header shows an animated loading state,
+elapsed time, streamed output tokens, and the active Market Terminal tool.
 `CODEX_MODEL` is optional; when omitted, Codex uses the model selected by its
 local configuration.
+
+Codex receives client-executed tools for reading the active workspace and
+available panels, reading the current portfolio snapshot, focusing or
+reordering a registered workspace, dispatching a command through the terminal's
+validated command bar, restoring the default layout, and opening the Security
+panel for a held symbol. Portfolio reads use the same repository as the
+Portfolio panel, so a CSV imported there is the snapshot the assistant sees on
+its next request. Position data never enters the Codex process environment; it
+is returned only in response to the read-only portfolio tool.
 
 OpenRouter remains available as an API-key fallback:
 
@@ -403,11 +414,11 @@ key can also be used with the OpenAI endpoint and model name.
 
 You can also issue a direct command such as
 `AI bring portfolio forward and open it`. The
-model can request only four validated UI operations: focus a registered
-workspace, bring a registered workspace to the front, dispatch an existing
-terminal command, or restore the default workspace order. It cannot execute
-shell commands, read credentials, submit trades, or mutate arbitrary
-application state.
+model can request only validated UI operations: focus a registered workspace,
+bring a registered workspace to the front, dispatch an existing terminal
+command, restore the default workspace order, or open a symbol already present
+in the imported portfolio. It cannot execute shell commands, read credentials,
+submit trades, change positions, or mutate arbitrary application state.
 
 ## IRC chat
 

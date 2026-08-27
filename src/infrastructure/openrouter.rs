@@ -1,14 +1,15 @@
-use std::{env, time::Duration};
+use std::{env, sync::mpsc::Sender, time::Duration};
 
 use reqwest::blocking::Client;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::features::assistant::{
-    AssistantError, AssistantGateway,
     domain::{
-        AssistantRequest, AssistantResponse, AssistantRole, COMMAND_PLANE_SYSTEM_PROMPT, UiAction,
+        AssistantRequest, AssistantResponse, AssistantRole, AssistantStreamEvent,
+        AssistantTokenUsage, UiAction, COMMAND_PLANE_SYSTEM_PROMPT,
     },
+    AssistantError, AssistantGateway,
 };
 
 const DEFAULT_ENDPOINT: &str = "https://openrouter.ai/api/v1/chat/completions";
@@ -52,10 +53,11 @@ impl OpenRouterGateway {
 
     fn request_body(&self, request: AssistantRequest) -> Value {
         let workspace_catalog = request.available_workspaces.join(", ");
+        let portfolio = portfolio_context(&request);
         let mut messages = vec![json!({
             "role": "system",
             "content": format!(
-                "{COMMAND_PLANE_SYSTEM_PROMPT}\nCurrent workspace: {}\nWorkspace order: {workspace_catalog}",
+                "{COMMAND_PLANE_SYSTEM_PROMPT}\nFor this provider, the portfolio snapshot is supplied directly below; do not request a separate read tool.\nCurrent workspace: {}\nWorkspace order: {workspace_catalog}\nCurrent read-only portfolio snapshot: {portfolio}",
                 request.active_workspace
             )
         })];
@@ -79,7 +81,12 @@ impl OpenRouterGateway {
         })
     }
 
+    #[cfg(test)]
     fn parse_response(body: &str) -> Result<AssistantResponse, AssistantError> {
+        Ok(Self::parse_completion(body)?.response)
+    }
+
+    fn parse_completion(body: &str) -> Result<OpenRouterCompletion, AssistantError> {
         let response: ChatCompletion = serde_json::from_str(body)
             .map_err(|error| AssistantError::InvalidResponse(error.to_string()))?;
         if let Some(error) = response.error {
@@ -96,16 +103,21 @@ impl OpenRouterGateway {
             .map(parse_tool_call)
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(AssistantResponse {
-            content: choice.message.content.unwrap_or_default(),
-            actions,
-            model: response.model,
+        let usage = response.usage.map(Usage::into_assistant_usage);
+        Ok(OpenRouterCompletion {
+            response: AssistantResponse {
+                content: choice.message.content.unwrap_or_default(),
+                actions,
+                model: response.model,
+            },
+            usage,
         })
     }
-}
 
-impl AssistantGateway for OpenRouterGateway {
-    fn complete(&self, request: AssistantRequest) -> Result<AssistantResponse, AssistantError> {
+    fn send_request(
+        &self,
+        request: AssistantRequest,
+    ) -> Result<OpenRouterCompletion, AssistantError> {
         let api_key = self
             .config
             .api_key
@@ -137,7 +149,30 @@ impl AssistantGateway for OpenRouterGateway {
                 .unwrap_or_else(|| format!("HTTP {status}"));
             return Err(AssistantError::Provider(message));
         }
-        Self::parse_response(&body)
+        Self::parse_completion(&body)
+    }
+}
+
+impl AssistantGateway for OpenRouterGateway {
+    fn complete(&self, request: AssistantRequest) -> Result<AssistantResponse, AssistantError> {
+        Ok(self.send_request(request)?.response)
+    }
+
+    fn complete_stream(
+        &self,
+        request: AssistantRequest,
+        updates: Sender<AssistantStreamEvent>,
+    ) -> Result<AssistantResponse, AssistantError> {
+        let completion = self.send_request(request)?;
+        if let Some(usage) = completion.usage {
+            let _ = updates.send(AssistantStreamEvent::TokenUsage(usage));
+        }
+        if !completion.response.content.is_empty() {
+            let _ = updates.send(AssistantStreamEvent::TextDelta(
+                completion.response.content.clone(),
+            ));
+        }
+        Ok(completion.response)
     }
 
     fn model_label(&self) -> &str {
@@ -151,6 +186,37 @@ impl AssistantGateway for OpenRouterGateway {
     fn configuration_hint(&self) -> &str {
         "SET OPENROUTER_API_KEY TO ENABLE AI"
     }
+}
+
+fn portfolio_context(request: &AssistantRequest) -> String {
+    let positions = request
+        .portfolio
+        .positions
+        .iter()
+        .take(100)
+        .map(|position| {
+            json!({
+                "symbol": position.symbol,
+                "quantity": position.quantity,
+                "average_cost": position.average_cost,
+                "market_value": position.market_value,
+                "pnl": position.pnl,
+                "weight": position.weight,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "source": request.portfolio.source,
+        "as_of": request.portfolio.as_of,
+        "net_asset_value": request.portfolio.net_asset_value,
+        "available_cash": request.portfolio.available_cash,
+        "ytd_return": request.portfolio.ytd_return,
+        "sharpe": request.portfolio.sharpe,
+        "position_count": request.portfolio.positions.len(),
+        "positions": positions,
+        "truncated": request.portfolio.positions.len() > 100,
+    })
+    .to_string()
 }
 
 fn parse_tool_call(call: ToolCall) -> Result<UiAction, AssistantError> {
@@ -243,6 +309,52 @@ struct ChatCompletion {
     choices: Vec<Choice>,
     model: Option<String>,
     error: Option<ProviderError>,
+    usage: Option<Usage>,
+}
+
+struct OpenRouterCompletion {
+    response: AssistantResponse,
+    usage: Option<AssistantTokenUsage>,
+}
+
+#[derive(Deserialize)]
+struct Usage {
+    #[serde(default)]
+    prompt_tokens: u64,
+    #[serde(default)]
+    completion_tokens: u64,
+    #[serde(default)]
+    total_tokens: u64,
+    prompt_tokens_details: Option<PromptTokenDetails>,
+    completion_tokens_details: Option<CompletionTokenDetails>,
+}
+
+impl Usage {
+    fn into_assistant_usage(self) -> AssistantTokenUsage {
+        AssistantTokenUsage {
+            input_tokens: self.prompt_tokens,
+            cached_input_tokens: self
+                .prompt_tokens_details
+                .map_or(0, |details| details.cached_tokens),
+            output_tokens: self.completion_tokens,
+            reasoning_output_tokens: self
+                .completion_tokens_details
+                .map_or(0, |details| details.reasoning_tokens),
+            total_tokens: self.total_tokens,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct PromptTokenDetails {
+    #[serde(default)]
+    cached_tokens: u64,
+}
+
+#[derive(Deserialize)]
+struct CompletionTokenDetails {
+    #[serde(default)]
+    reasoning_tokens: u64,
 }
 
 #[derive(Deserialize)]
@@ -340,15 +452,14 @@ mod tests {
             )],
             active_workspace: "overview".to_owned(),
             available_workspaces: vec!["overview".to_owned(), "markets".to_owned()],
+            portfolio: crate::features::portfolio::PortfolioSnapshot::empty("TEST"),
         });
 
         assert_eq!(body["model"], "test/model");
         assert_eq!(body["parallel_tool_calls"], false);
         assert_eq!(body["tools"].as_array().map(Vec::len), Some(4));
-        assert!(
-            body["messages"][0]["content"]
-                .as_str()
-                .is_some_and(|content| content.contains("overview, markets"))
-        );
+        assert!(body["messages"][0]["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("overview, markets")));
     }
 }
