@@ -131,6 +131,16 @@ MARKET_TERMINAL_MARKET_DATA_PROVIDER="alpha-vantage"
 ALPHA_VANTAGE_API_KEY="your-key-or-demo"
 ```
 
+Finnhub is also available for real-time US quote snapshots with an API key.
+Its stock-candle endpoint is premium, so this adapter does not fake provider
+history: charts show only bounded, flat OHLC marks accumulated from quotes
+during the current process and label them `DERIVED · SESSION ONLY`.
+
+```dotenv
+MARKET_TERMINAL_MARKET_DATA_PROVIDER="finnhub"
+FINNHUB_API_KEY="your-key"
+```
+
 Charts start with OHLC candlesticks, SMA 20/100, Wilder RSI 14, and volume.
 Candles aggregate complete OHLC buckets when history is wider than the terminal;
 the right margin and price tag identify the latest history bar, not a fabricated
@@ -390,9 +400,9 @@ HawaiianNinja pointed us to
 [`makeev/alphai-tui`](https://github.com/makeev/alphai-tui). Codex then
 integrated the selected MIT-licensed pieces we care about—indicator math,
 chart and watchlist-density ideas, the responsive split desk,
-provider-selection patterns, Yahoo and official Alpaca adapter behavior, the
-fast first-run/settings flow, and the Form 4 insider workflow—into this
-project's bounded, provider-aware
+provider-selection patterns, Yahoo/Finnhub/Alpaca adapter behavior, the fast
+first-run/settings flow, and the Form 4 insider workflow—into this project's
+bounded, provider-aware
 architecture. `alphai-tui` is Copyright (c) 2026 Mikhail Makeev and licensed
 under MIT. The copied-code provenance and complete upstream license text are in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

@@ -253,6 +253,7 @@ pub enum HistoryQuality {
     Replayed,
     Delayed,
     Live,
+    Derived,
 }
 
 impl HistoryQuality {
@@ -261,6 +262,7 @@ impl HistoryQuality {
             Self::Replayed => "REPLAY",
             Self::Delayed => "DELAYED",
             Self::Live => "LIVE",
+            Self::Derived => "DERIVED",
         }
     }
 }

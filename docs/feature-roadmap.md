@@ -51,6 +51,9 @@ move to its own crate later without changing its public vocabulary.
 - **Complete:** selectable no-key Yahoo Finance delayed chart adapter with
   bounded responses/cache and explicit unofficial-interface attribution,
   alongside documented Alpha Vantage and Alpaca adapters.
+- **Complete:** optional official Finnhub real-time US quote adapter with
+  header-only credentials and explicitly session-derived, non-provider chart
+  marks when premium candles are unavailable.
 - **Complete:** expanded Security Research and News/Events workflows with
   canonical instrument links, financial/estimate/ownership/filing/peer views,
   raw SEC Form 4 non-derivative transactions with official filing links,

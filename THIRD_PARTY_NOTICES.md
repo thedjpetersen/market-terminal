@@ -25,6 +25,12 @@ Yahoo Finance is a data source, not the licensor of this project or upstream
 code; its data terms and redistribution boundary are documented in
 `docs/data-sources.md`.
 
+The Finnhub quote adapter in `src/infrastructure/finnhub.rs` adapts the
+upstream bounded, duplicate-aware session-history behavior. This project sends
+the credential in Finnhub's documented header, exposes the provider's real
+quote fields through typed ports, and labels the accumulated flat chart marks
+as derived rather than provider candles.
+
 The half-block candlestick renderer, width-aware OHLC aggregation, reserved
 right margin, last-bar price marker, and Braille moving-average overlay adapt
 the upstream chart implementation; the integrated code is identified in

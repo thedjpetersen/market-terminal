@@ -36,6 +36,32 @@ points, and the trace is neither persisted nor synthesized.
 Yahoo is a trademark of Yahoo Inc. This project is not affiliated with,
 endorsed by, or sponsored by Yahoo.
 
+## Finnhub
+
+- **Surfaces:** optional Markets/Monitor snapshots, local Alert observations,
+  Spreadsheet `PX_LAST` / `PX_CHANGE(..., "1D")`, and session-derived Chart and
+  Security price marks.
+- **Official documentation:** [Finnhub quote API](https://finnhub.io/docs/api/quote).
+- **Authentication:** set `MARKET_TERMINAL_MARKET_DATA_PROVIDER=finnhub` and
+  `FINNHUB_API_KEY`. The key is sent only in Finnhub's documented
+  `X-Finnhub-Token` header and is never rendered.
+- **Freshness/provenance:** Finnhub documents `/quote` as real-time for US
+  stocks. The adapter retains provider timestamp, receive time, current price,
+  change, percent change, and day low/high; it also validates the returned open
+  and previous close. It reports no bid/ask or volume because `/quote` does not
+  return them.
+- **History boundary:** Finnhub documents stock candles as premium. This
+  adapter does not call that endpoint or present quote samples as provider
+  candles. It keeps at most 600 distinct-timestamp price samples in process,
+  updates duplicate timestamps in place, renders each as a flat OHLC mark, and
+  labels chart history `DERIVED · SESSION ONLY · NO PROVIDER CANDLES`. The
+  series resets at process exit.
+- **Bounds/failure:** symbols are validated, quote responses are capped at 1
+  MiB, successful quotes are cached for 15 seconds, HTTP 429 becomes a typed
+  rate limit, and missing/rejected keys become permission-denied states.
+- **Redistribution:** no redistribution right is assumed. Users are responsible
+  for selecting a Finnhub plan and display use consistent with Finnhub's terms.
+
 ## Alpha Vantage
 
 - **Surfaces:** interactive Markets/Monitor snapshots, Chart daily/weekly

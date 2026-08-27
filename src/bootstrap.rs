@@ -21,10 +21,10 @@ use crate::{
         AlpacaMarketData, AlphaVantageMarketData, CodexAppServerConfig, CodexAppServerGateway,
         ConfiguredWatchlistCatalog, CsvPortfolioRepository, DemoAlertsReplay, DemoChartHistory,
         DemoChatGateway, DemoData, DemoInstrumentSearch, DemoMarketDataReplay,
-        DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway, LiveAlertsQuery,
-        LiveMarketsQuery, LiveNewsFeed, LiveOverviewQuery, LiveSecurityQuery, LocalPersistence,
-        LocalSpreadsheetFiles, OpenRouterConfig, OpenRouterGateway, SecInstrumentSearch,
-        SystemNewsArticleOpener, YahooMarketData,
+        DemoSpreadsheetMarketData, DemoWatchlistCatalog, FinnhubMarketData, IrcChatGateway,
+        LiveAlertsQuery, LiveMarketsQuery, LiveNewsFeed, LiveOverviewQuery, LiveSecurityQuery,
+        LocalPersistence, LocalSpreadsheetFiles, OpenRouterConfig, OpenRouterGateway,
+        SecInstrumentSearch, SystemNewsArticleOpener, YahooMarketData,
     },
 };
 
@@ -255,6 +255,14 @@ fn configured_market_data() -> LiveMarketDataProviders {
                 chart_history: adapter,
             }
         }
+        "finnhub" => {
+            let adapter = Arc::new(FinnhubMarketData::from_env());
+            LiveMarketDataProviders {
+                spreadsheet: adapter.clone(),
+                market_data: adapter.clone(),
+                chart_history: adapter,
+            }
+        }
         _ => {
             let adapter = Arc::new(YahooMarketData::from_env());
             LiveMarketDataProviders {
@@ -315,6 +323,15 @@ fn runtime_settings_summary(
                 .to_owned(),
             )
         }
+        "finnhub" => (
+            "FINNHUB · REALTIME US QUOTE · SESSION CHART".to_owned(),
+            if env_present("FINNHUB_API_KEY") {
+                "CONFIGURED"
+            } else {
+                "MISSING"
+            }
+            .to_owned(),
+        ),
         _ => (
             "YAHOO FINANCE CHART · DELAYED · UNOFFICIAL".to_owned(),
             "NOT REQUIRED".to_owned(),
