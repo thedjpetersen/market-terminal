@@ -1,11 +1,37 @@
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::features::spreadsheet::domain::{
     translate_formula, AddressError, CellAddress, CellValue, FormulaError, Workbook, WorkbookError,
-    MAX_COLUMNS, MAX_ROWS,
+    Worksheet, MAX_COLUMNS, MAX_ROWS,
 };
 
 const HISTORY_LIMIT: usize = 100;
+const WORKBOOK_DOCUMENT_SCHEMA: &str = "market-terminal.spreadsheet-workbook";
+const WORKBOOK_DOCUMENT_VERSION: u64 = 1;
+const MAX_DOCUMENT_SHEETS: usize = 64;
+const MAX_DOCUMENT_CELLS: usize = 10_000;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct WorkbookDocument {
+    schema: String,
+    version: u64,
+    active_sheet: usize,
+    sheets: Vec<WorksheetDocument>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct WorksheetDocument {
+    name: String,
+    cells: Vec<CellDocument>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CellDocument {
+    address: String,
+    raw: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct Spreadsheet {
@@ -33,6 +59,102 @@ impl Spreadsheet {
 
     pub fn into_workbook(self) -> Workbook {
         self.workbook
+    }
+
+    /// Serializes the complete workbook as a versioned feature payload.
+    ///
+    /// Formula source is preserved rather than persisting calculated values,
+    /// so loading always recalculates against the current deterministic engine.
+    pub fn to_document_payload(&self) -> Result<serde_json::Value, SpreadsheetError> {
+        let populated = self
+            .workbook
+            .sheets()
+            .iter()
+            .map(|sheet| sheet.populated_cells().count())
+            .sum::<usize>();
+        if self.workbook.sheet_count() > MAX_DOCUMENT_SHEETS || populated > MAX_DOCUMENT_CELLS {
+            return Err(SpreadsheetError::DocumentLimit {
+                sheets: self.workbook.sheet_count(),
+                cells: populated,
+            });
+        }
+        let sheets = self
+            .workbook
+            .sheets()
+            .iter()
+            .map(|sheet| {
+                let mut cells = sheet
+                    .populated_cells()
+                    .map(|(address, cell)| CellDocument {
+                        address: address.to_string(),
+                        raw: cell.raw().to_owned(),
+                    })
+                    .collect::<Vec<_>>();
+                cells.sort_by(|left, right| left.address.cmp(&right.address));
+                WorksheetDocument {
+                    name: sheet.name().to_owned(),
+                    cells,
+                }
+            })
+            .collect();
+        serde_json::to_value(WorkbookDocument {
+            schema: WORKBOOK_DOCUMENT_SCHEMA.to_owned(),
+            version: WORKBOOK_DOCUMENT_VERSION,
+            active_sheet: self.workbook.active_sheet_index(),
+            sheets,
+        })
+        .map_err(|error| SpreadsheetError::Document(error.to_string()))
+    }
+
+    pub fn from_document_payload(payload: &serde_json::Value) -> Result<Self, SpreadsheetError> {
+        let document: WorkbookDocument = serde_json::from_value(payload.clone())
+            .map_err(|error| SpreadsheetError::Document(error.to_string()))?;
+        if document.schema != WORKBOOK_DOCUMENT_SCHEMA {
+            return Err(SpreadsheetError::Document(format!(
+                "expected schema {WORKBOOK_DOCUMENT_SCHEMA}, found {}",
+                document.schema
+            )));
+        }
+        if document.version != WORKBOOK_DOCUMENT_VERSION {
+            return Err(SpreadsheetError::Document(format!(
+                "unsupported workbook version {}",
+                document.version
+            )));
+        }
+        if document.sheets.is_empty() || document.sheets.len() > MAX_DOCUMENT_SHEETS {
+            return Err(SpreadsheetError::DocumentLimit {
+                sheets: document.sheets.len(),
+                cells: document.sheets.iter().map(|sheet| sheet.cells.len()).sum(),
+            });
+        }
+        let populated = document
+            .sheets
+            .iter()
+            .map(|sheet| sheet.cells.len())
+            .sum::<usize>();
+        if populated > MAX_DOCUMENT_CELLS {
+            return Err(SpreadsheetError::DocumentLimit {
+                sheets: document.sheets.len(),
+                cells: populated,
+            });
+        }
+        let sheets = document
+            .sheets
+            .into_iter()
+            .map(|source| {
+                let mut sheet = Worksheet::new(source.name).map_err(|error| {
+                    SpreadsheetError::Workbook(WorkbookError::InvalidSheet(error))
+                })?;
+                for cell in source.cells {
+                    let address = parse_address(&cell.address)?;
+                    sheet.set(address, cell.raw);
+                }
+                Ok(sheet)
+            })
+            .collect::<Result<Vec<_>, SpreadsheetError>>()?;
+        let workbook = Workbook::from_sheets(sheets, document.active_sheet)
+            .map_err(SpreadsheetError::Workbook)?;
+        Ok(Self::from_workbook(workbook))
     }
 
     pub fn add_sheet(&mut self, name: impl Into<String>) -> Result<usize, SpreadsheetError> {
@@ -384,6 +506,8 @@ pub enum SpreadsheetError {
     Workbook(WorkbookError),
     Formula(FormulaError),
     Csv(CsvError),
+    Document(String),
+    DocumentLimit { sheets: usize, cells: usize },
     RegionOutOfBounds,
 }
 
@@ -394,6 +518,11 @@ impl fmt::Display for SpreadsheetError {
             Self::Workbook(error) => error.fmt(formatter),
             Self::Formula(error) => error.fmt(formatter),
             Self::Csv(error) => error.fmt(formatter),
+            Self::Document(message) => write!(formatter, "workbook document is invalid: {message}"),
+            Self::DocumentLimit { sheets, cells } => write!(
+                formatter,
+                "workbook exceeds persistence limits ({sheets} sheets, {cells} populated cells)"
+            ),
             Self::RegionOutOfBounds => write!(formatter, "visible region is outside A1:Z100"),
         }
     }
@@ -695,6 +824,48 @@ mod tests {
             spreadsheet.cell("A1").unwrap().value,
             CellValue::Number(240.0)
         );
+    }
+
+    #[test]
+    fn workbook_document_round_trip_preserves_tabs_formulas_and_selection() {
+        let mut spreadsheet = Spreadsheet::new();
+        spreadsheet.rename_active_sheet("Model").unwrap();
+        spreadsheet.set_cell("A1", "IBM US Equity").unwrap();
+        spreadsheet.set_cell("B1", "=POWER(2, 8)").unwrap();
+        spreadsheet.add_sheet("Assumptions").unwrap();
+        spreadsheet.select_sheet("Assumptions").unwrap();
+        spreadsheet.set_cell("A1", "0.12").unwrap();
+
+        let payload = spreadsheet.to_document_payload().unwrap();
+        let restored = Spreadsheet::from_document_payload(&payload).unwrap();
+
+        assert_eq!(restored.workbook().sheet_count(), 2);
+        assert_eq!(restored.workbook().active_sheet().name(), "Assumptions");
+        assert_eq!(restored.cell("A1").unwrap().raw, "0.12");
+        let mut restored = restored;
+        restored.select_sheet("Model").unwrap();
+        assert_eq!(restored.cell("A1").unwrap().raw, "IBM US Equity");
+        assert_eq!(restored.cell("B1").unwrap().raw, "=POWER(2, 8)");
+        assert_eq!(restored.cell("B1").unwrap().value, CellValue::Number(256.0));
+        assert!(!restored.can_undo());
+    }
+
+    #[test]
+    fn workbook_document_rejects_unknown_schema_and_out_of_range_selection() {
+        let spreadsheet = Spreadsheet::new();
+        let mut payload = spreadsheet.to_document_payload().unwrap();
+        payload["schema"] = serde_json::json!("unknown");
+        assert!(matches!(
+            Spreadsheet::from_document_payload(&payload),
+            Err(SpreadsheetError::Document(_))
+        ));
+
+        let mut payload = spreadsheet.to_document_payload().unwrap();
+        payload["active_sheet"] = serde_json::json!(99);
+        assert!(matches!(
+            Spreadsheet::from_document_payload(&payload),
+            Err(SpreadsheetError::Workbook(_))
+        ));
     }
 
     #[test]

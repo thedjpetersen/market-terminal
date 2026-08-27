@@ -22,6 +22,8 @@ impl SpreadsheetMarketData for DemoSpreadsheetMarketData {
                     ("QQQ US Equity", "CHG_PCT_1D") => 1.00,
                     ("AVGO US Equity", "CHG_PCT_1D") => 1.72,
                     ("NVDA US Equity", "CHG_PCT_1D") => 2.14,
+                    ("IBM US Equity", "HISTORY|PX_LAST|2026-01-01|2026-08-26") => 234.19,
+                    ("IBM US Equity", "FUNDAMENTAL|REVENUE|FY2025") => 67_500_000_000.0,
                     _ => return None,
                 };
                 Some(MarketDataPoint::ready(

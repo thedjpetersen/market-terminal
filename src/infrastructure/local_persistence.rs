@@ -3,16 +3,19 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::{
-        Mutex,
         atomic::{AtomicU64, Ordering},
+        Mutex,
     },
 };
 
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::features::persistence::{
-    DocumentId, FeatureDocument, FeatureDocumentRepository, FeatureKey, MAX_DOCUMENT_BYTES,
-    PersistenceError, SessionState, SessionStateRepository,
+    DocumentId, FeatureDocument, FeatureDocumentRepository, FeatureKey, PersistenceError,
+    SessionState, SessionStateRepository, MAX_DOCUMENT_BYTES,
+};
+use crate::features::spreadsheet::{
+    SpreadsheetFileError, SpreadsheetWorkbookStore, StoredWorkbook,
 };
 
 const SESSION_SCHEMA: &str = "market-terminal.session";
@@ -107,6 +110,62 @@ impl LocalPersistence {
         document.validate()?;
         Ok(Some(document))
     }
+}
+
+impl SpreadsheetWorkbookStore for LocalPersistence {
+    fn load_workbook(&self, id: &str) -> Result<Option<StoredWorkbook>, SpreadsheetFileError> {
+        let feature = spreadsheet_feature_key()?;
+        let id = spreadsheet_document_id(id)?;
+        FeatureDocumentRepository::load(self, &feature, &id)
+            .map_err(spreadsheet_persistence_error)
+            .map(|document| {
+                document.map(|document| StoredWorkbook {
+                    id: document.id().as_str().to_owned(),
+                    revision: document.revision(),
+                    payload: document.payload().clone(),
+                })
+            })
+    }
+
+    fn save_workbook(&self, workbook: &StoredWorkbook) -> Result<(), SpreadsheetFileError> {
+        let document = FeatureDocument::new(
+            spreadsheet_feature_key()?,
+            spreadsheet_document_id(&workbook.id)?,
+            workbook.revision,
+            workbook.payload.clone(),
+        )
+        .map_err(|error| SpreadsheetFileError::InvalidLocation(error.to_string()))?;
+        FeatureDocumentRepository::save(self, &document).map_err(spreadsheet_persistence_error)
+    }
+
+    fn list_workbooks(&self) -> Result<Vec<String>, SpreadsheetFileError> {
+        FeatureDocumentRepository::list(self, &spreadsheet_feature_key()?)
+            .map_err(spreadsheet_persistence_error)
+            .map(|ids| ids.into_iter().map(|id| id.as_str().to_owned()).collect())
+    }
+
+    fn delete_workbook(&self, id: &str) -> Result<bool, SpreadsheetFileError> {
+        FeatureDocumentRepository::delete(
+            self,
+            &spreadsheet_feature_key()?,
+            &spreadsheet_document_id(id)?,
+        )
+        .map_err(spreadsheet_persistence_error)
+    }
+}
+
+fn spreadsheet_feature_key() -> Result<FeatureKey, SpreadsheetFileError> {
+    FeatureKey::new("spreadsheet")
+        .map_err(|error| SpreadsheetFileError::InvalidLocation(error.to_string()))
+}
+
+fn spreadsheet_document_id(id: &str) -> Result<DocumentId, SpreadsheetFileError> {
+    DocumentId::new(id.trim())
+        .map_err(|error| SpreadsheetFileError::InvalidLocation(error.to_string()))
+}
+
+fn spreadsheet_persistence_error(error: PersistenceError) -> SpreadsheetFileError {
+    SpreadsheetFileError::Io(error.to_string())
 }
 
 impl SessionStateRepository for LocalPersistence {
@@ -483,11 +542,9 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
-        assert!(
-            names
-                .iter()
-                .all(|name| !name.to_string_lossy().ends_with(".tmp"))
-        );
+        assert!(names
+            .iter()
+            .all(|name| !name.to_string_lossy().ends_with(".tmp")));
     }
 
     #[test]

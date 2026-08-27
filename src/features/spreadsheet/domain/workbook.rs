@@ -25,6 +25,27 @@ impl Workbook {
         }
     }
 
+    pub fn from_sheets(sheets: Vec<Worksheet>, active_sheet: usize) -> Result<Self, WorkbookError> {
+        if sheets.is_empty() {
+            return Err(WorkbookError::EmptyWorkbook);
+        }
+        if active_sheet >= sheets.len() {
+            return Err(WorkbookError::SheetIndexOutOfBounds(active_sheet));
+        }
+        for (index, sheet) in sheets.iter().enumerate() {
+            if sheets[..index]
+                .iter()
+                .any(|candidate| candidate.name().eq_ignore_ascii_case(sheet.name()))
+            {
+                return Err(WorkbookError::DuplicateSheetName(sheet.name().to_owned()));
+            }
+        }
+        Ok(Self {
+            sheets,
+            active_sheet,
+        })
+    }
+
     pub fn sheets(&self) -> &[Worksheet] {
         &self.sheets
     }
@@ -300,6 +321,15 @@ impl Workbook {
                 };
                 self.evaluate_expression(branch, current_sheet, stack, cache)
             }
+            AggregateFunction::IfError => {
+                expect_arity(arguments, 2, 2)?;
+                match self.evaluate_expression(&arguments[0], current_sheet, stack, cache) {
+                    Ok(CellValue::Error(_)) | Err(_) => {
+                        self.evaluate_expression(&arguments[1], current_sheet, stack, cache)
+                    }
+                    Ok(value) => Ok(value),
+                }
+            }
             AggregateFunction::And | AggregateFunction::Or => {
                 if arguments.is_empty() {
                     return Err(CellError::InvalidValue);
@@ -333,6 +363,38 @@ impl Workbook {
                     value_as_text(value)?.chars().count() as f64
                 ))
             }
+            AggregateFunction::Lower | AggregateFunction::Upper | AggregateFunction::Trim => {
+                expect_arity(arguments, 1, 1)?;
+                let value = self.evaluate_expression(&arguments[0], current_sheet, stack, cache)?;
+                let text = value_as_text(value)?;
+                Ok(CellValue::Text(match function {
+                    AggregateFunction::Lower => text.to_lowercase(),
+                    AggregateFunction::Upper => text.to_uppercase(),
+                    AggregateFunction::Trim => {
+                        text.split_whitespace().collect::<Vec<_>>().join(" ")
+                    }
+                    _ => unreachable!("text transform was matched above"),
+                }))
+            }
+            AggregateFunction::Left | AggregateFunction::Right => {
+                expect_arity(arguments, 1, 2)?;
+                let value = self.evaluate_expression(&arguments[0], current_sheet, stack, cache)?;
+                let text = value_as_text(value)?;
+                let count = if let Some(argument) = arguments.get(1) {
+                    let value = self.evaluate_expression(argument, current_sheet, stack, cache)?;
+                    character_count(number(value)?)?
+                } else {
+                    1
+                };
+                let characters = text.chars().collect::<Vec<_>>();
+                let count = count.min(characters.len());
+                let selected = if function == AggregateFunction::Left {
+                    &characters[..count]
+                } else {
+                    &characters[characters.len() - count..]
+                };
+                Ok(CellValue::Text(selected.iter().collect()))
+            }
             AggregateFunction::Absolute => {
                 expect_arity(arguments, 1, 1)?;
                 let value = self.evaluate_expression(&arguments[0], current_sheet, stack, cache)?;
@@ -355,12 +417,29 @@ impl Workbook {
                     (number(value)? * factor).round() / factor,
                 ))
             }
+            AggregateFunction::Power => {
+                expect_arity(arguments, 2, 2)?;
+                let base = self.evaluate_expression(&arguments[0], current_sheet, stack, cache)?;
+                let exponent =
+                    self.evaluate_expression(&arguments[1], current_sheet, stack, cache)?;
+                finite_number(number(base)?.powf(number(exponent)?)).map(CellValue::Number)
+            }
+            AggregateFunction::SquareRoot => {
+                expect_arity(arguments, 1, 1)?;
+                let value = self.evaluate_expression(&arguments[0], current_sheet, stack, cache)?;
+                let value = number(value)?;
+                if value < 0.0 {
+                    return Err(CellError::InvalidValue);
+                }
+                finite_number(value.sqrt()).map(CellValue::Number)
+            }
             AggregateFunction::XLookup => {
                 self.evaluate_xlookup(arguments, current_sheet, stack, cache)
             }
-            AggregateFunction::PriceLast | AggregateFunction::PriceChange => {
-                Err(CellError::NotAvailable)
-            }
+            AggregateFunction::PriceLast
+            | AggregateFunction::PriceChange
+            | AggregateFunction::History
+            | AggregateFunction::Fundamental => Err(CellError::NotAvailable),
             AggregateFunction::Sum
             | AggregateFunction::Average
             | AggregateFunction::Minimum
@@ -548,6 +627,20 @@ fn number(value: CellValue) -> Result<f64, CellError> {
     }
 }
 
+fn character_count(value: f64) -> Result<usize, CellError> {
+    if value < 0.0 || value.fract().abs() > f64::EPSILON || value > usize::MAX as f64 {
+        return Err(CellError::InvalidValue);
+    }
+    Ok(value as usize)
+}
+
+fn finite_number(value: f64) -> Result<f64, CellError> {
+    value
+        .is_finite()
+        .then_some(value)
+        .ok_or(CellError::InvalidValue)
+}
+
 fn aggregate(function: AggregateFunction, numbers: &[f64]) -> Result<f64, CellError> {
     match function {
         AggregateFunction::Sum => Ok(numbers.iter().sum()),
@@ -576,6 +669,7 @@ impl Default for Workbook {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkbookError {
     InvalidSheet(WorksheetError),
+    EmptyWorkbook,
     DuplicateSheetName(String),
     SheetNotFound(String),
     SheetIndexOutOfBounds(usize),
@@ -586,6 +680,7 @@ impl fmt::Display for WorkbookError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidSheet(error) => error.fmt(formatter),
+            Self::EmptyWorkbook => write!(formatter, "a workbook must contain a worksheet"),
             Self::DuplicateSheetName(name) => {
                 write!(formatter, "worksheet '{name}' already exists")
             }

@@ -293,6 +293,15 @@ impl Worksheet {
                 };
                 self.evaluate_expression(branch, stack, cache)
             }
+            AggregateFunction::IfError => {
+                expect_arity(arguments, 2, 2)?;
+                match self.evaluate_expression(&arguments[0], stack, cache) {
+                    Ok(CellValue::Error(_)) | Err(_) => {
+                        self.evaluate_expression(&arguments[1], stack, cache)
+                    }
+                    Ok(value) => Ok(value),
+                }
+            }
             AggregateFunction::And | AggregateFunction::Or => {
                 if arguments.is_empty() {
                     return Err(CellError::InvalidValue);
@@ -326,6 +335,38 @@ impl Worksheet {
                     value_as_text(value)?.chars().count() as f64
                 ))
             }
+            AggregateFunction::Lower | AggregateFunction::Upper | AggregateFunction::Trim => {
+                expect_arity(arguments, 1, 1)?;
+                let value = self.evaluate_expression(&arguments[0], stack, cache)?;
+                let text = value_as_text(value)?;
+                Ok(CellValue::Text(match function {
+                    AggregateFunction::Lower => text.to_lowercase(),
+                    AggregateFunction::Upper => text.to_uppercase(),
+                    AggregateFunction::Trim => {
+                        text.split_whitespace().collect::<Vec<_>>().join(" ")
+                    }
+                    _ => unreachable!("text transform was matched above"),
+                }))
+            }
+            AggregateFunction::Left | AggregateFunction::Right => {
+                expect_arity(arguments, 1, 2)?;
+                let value = self.evaluate_expression(&arguments[0], stack, cache)?;
+                let text = value_as_text(value)?;
+                let count = if let Some(argument) = arguments.get(1) {
+                    let value = self.evaluate_expression(argument, stack, cache)?;
+                    character_count(self.number(value)?)?
+                } else {
+                    1
+                };
+                let characters = text.chars().collect::<Vec<_>>();
+                let count = count.min(characters.len());
+                let selected = if function == AggregateFunction::Left {
+                    &characters[..count]
+                } else {
+                    &characters[characters.len() - count..]
+                };
+                Ok(CellValue::Text(selected.iter().collect()))
+            }
             AggregateFunction::Absolute => {
                 expect_arity(arguments, 1, 1)?;
                 let value = self.evaluate_expression(&arguments[0], stack, cache)?;
@@ -348,10 +389,27 @@ impl Worksheet {
                     (self.number(value)? * factor).round() / factor,
                 ))
             }
-            AggregateFunction::XLookup => self.evaluate_xlookup(arguments, stack, cache),
-            AggregateFunction::PriceLast | AggregateFunction::PriceChange => {
-                Err(CellError::NotAvailable)
+            AggregateFunction::Power => {
+                expect_arity(arguments, 2, 2)?;
+                let base = self.evaluate_expression(&arguments[0], stack, cache)?;
+                let exponent = self.evaluate_expression(&arguments[1], stack, cache)?;
+                finite_number(self.number(base)?.powf(self.number(exponent)?))
+                    .map(CellValue::Number)
             }
+            AggregateFunction::SquareRoot => {
+                expect_arity(arguments, 1, 1)?;
+                let value = self.evaluate_expression(&arguments[0], stack, cache)?;
+                let value = self.number(value)?;
+                if value < 0.0 {
+                    return Err(CellError::InvalidValue);
+                }
+                finite_number(value.sqrt()).map(CellValue::Number)
+            }
+            AggregateFunction::XLookup => self.evaluate_xlookup(arguments, stack, cache),
+            AggregateFunction::PriceLast
+            | AggregateFunction::PriceChange
+            | AggregateFunction::History
+            | AggregateFunction::Fundamental => Err(CellError::NotAvailable),
             AggregateFunction::Sum
             | AggregateFunction::Average
             | AggregateFunction::Minimum
@@ -547,6 +605,20 @@ fn value_as_text(value: CellValue) -> Result<String, CellError> {
     }
 }
 
+fn character_count(value: f64) -> Result<usize, CellError> {
+    if value < 0.0 || value.fract().abs() > f64::EPSILON || value > usize::MAX as f64 {
+        return Err(CellError::InvalidValue);
+    }
+    Ok(value as usize)
+}
+
+fn finite_number(value: f64) -> Result<f64, CellError> {
+    value
+        .is_finite()
+        .then_some(value)
+        .ok_or(CellError::InvalidValue)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorksheetError {
     EmptyName,
@@ -692,6 +764,34 @@ mod tests {
         assert_eq!(sheet.value(address("B4")), CellValue::Number(2.0));
         assert_eq!(sheet.value(address("B5")), CellValue::Number(3.0));
         assert_eq!(sheet.value(address("B6")), CellValue::Number(1.0));
+    }
+
+    #[test]
+    fn evaluates_extended_text_math_and_error_functions() {
+        let mut sheet = Worksheet::new("Model").unwrap();
+        sheet.set(address("A1"), "  Ibm Research  ");
+        sheet.set(address("B1"), "=UPPER(TRIM(A1))");
+        sheet.set(address("B2"), "=LOWER(LEFT(TRIM(A1), 3))");
+        sheet.set(address("B3"), "=RIGHT(TRIM(A1), 8)");
+        sheet.set(address("B4"), "=POWER(2, 8) + SQRT(81)");
+        sheet.set(address("B5"), "=IFERROR(1 / 0, 42)");
+        sheet.set(address("B6"), "=IFERROR(7, 1 / 0)");
+
+        assert_eq!(
+            sheet.value(address("B1")),
+            CellValue::Text("IBM RESEARCH".to_owned())
+        );
+        assert_eq!(
+            sheet.value(address("B2")),
+            CellValue::Text("ibm".to_owned())
+        );
+        assert_eq!(
+            sheet.value(address("B3")),
+            CellValue::Text("Research".to_owned())
+        );
+        assert_eq!(sheet.value(address("B4")), CellValue::Number(265.0));
+        assert_eq!(sheet.value(address("B5")), CellValue::Number(42.0));
+        assert_eq!(sheet.value(address("B6")), CellValue::Number(7.0));
     }
 
     #[test]

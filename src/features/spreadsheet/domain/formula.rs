@@ -141,11 +141,21 @@ pub enum AggregateFunction {
     Not,
     Concat,
     Length,
+    Lower,
+    Upper,
+    Trim,
+    Left,
+    Right,
     Absolute,
     Round,
+    Power,
+    SquareRoot,
+    IfError,
     XLookup,
     PriceLast,
     PriceChange,
+    History,
+    Fundamental,
 }
 
 impl fmt::Display for Expr {
@@ -265,11 +275,21 @@ impl AggregateFunction {
             Self::Not => "NOT",
             Self::Concat => "CONCAT",
             Self::Length => "LEN",
+            Self::Lower => "LOWER",
+            Self::Upper => "UPPER",
+            Self::Trim => "TRIM",
+            Self::Left => "LEFT",
+            Self::Right => "RIGHT",
             Self::Absolute => "ABS",
             Self::Round => "ROUND",
+            Self::Power => "POWER",
+            Self::SquareRoot => "SQRT",
+            Self::IfError => "IFERROR",
             Self::XLookup => "XLOOKUP",
             Self::PriceLast => "PX_LAST",
             Self::PriceChange => "PX_CHANGE",
+            Self::History => "HISTORY",
+            Self::Fundamental => "FUNDAMENTAL",
         }
     }
 }
@@ -643,11 +663,21 @@ impl<'a> Parser<'a> {
             "NOT" => AggregateFunction::Not,
             "CONCAT" | "CONCATENATE" => AggregateFunction::Concat,
             "LEN" => AggregateFunction::Length,
+            "LOWER" => AggregateFunction::Lower,
+            "UPPER" => AggregateFunction::Upper,
+            "TRIM" => AggregateFunction::Trim,
+            "LEFT" => AggregateFunction::Left,
+            "RIGHT" => AggregateFunction::Right,
             "ABS" => AggregateFunction::Absolute,
             "ROUND" => AggregateFunction::Round,
+            "POWER" | "POW" => AggregateFunction::Power,
+            "SQRT" => AggregateFunction::SquareRoot,
+            "IFERROR" => AggregateFunction::IfError,
             "XLOOKUP" => AggregateFunction::XLookup,
             "PX_LAST" => AggregateFunction::PriceLast,
             "PX_CHANGE" => AggregateFunction::PriceChange,
+            "HISTORY" => AggregateFunction::History,
+            "FUNDAMENTAL" => AggregateFunction::Fundamental,
             _ => return Err(self.error("unknown function")),
         };
         self.expect('(')?;
@@ -829,6 +859,43 @@ mod tests {
             translate_formula("=PX_LAST(A1)", 1, 2).unwrap(),
             "=PX_LAST(B3)"
         );
+
+        let history =
+            parse_formula("=HISTORY(A1, \"PX_LAST\", \"2026-01-01\", \"2026-08-26\")").unwrap();
+        assert!(matches!(
+            history,
+            Expr::Function {
+                function: AggregateFunction::History,
+                ..
+            }
+        ));
+        let fundamental = parse_formula("=FUNDAMENTAL(A1, \"REVENUE\", \"FY2025\")").unwrap();
+        assert!(matches!(
+            fundamental,
+            Expr::Function {
+                function: AggregateFunction::Fundamental,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parser_accepts_extended_pure_functions() {
+        for (formula, expected) in [
+            ("=LOWER(\"IBM\")", AggregateFunction::Lower),
+            ("=UPPER(\"ibm\")", AggregateFunction::Upper),
+            ("=TRIM(\"  IBM  \")", AggregateFunction::Trim),
+            ("=LEFT(\"IBM\", 2)", AggregateFunction::Left),
+            ("=RIGHT(\"IBM\", 2)", AggregateFunction::Right),
+            ("=POWER(2, 8)", AggregateFunction::Power),
+            ("=SQRT(81)", AggregateFunction::SquareRoot),
+            ("=IFERROR(1 / 0, 0)", AggregateFunction::IfError),
+        ] {
+            assert!(matches!(
+                parse_formula(formula).unwrap(),
+                Expr::Function { function, .. } if function == expected
+            ));
+        }
     }
 
     #[test]

@@ -98,6 +98,24 @@ pub trait SpreadsheetFileStore: Send + Sync {
     ) -> Result<(), SpreadsheetFileError>;
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredWorkbook {
+    pub id: String,
+    pub revision: u64,
+    pub payload: serde_json::Value,
+}
+
+/// Durable workbook boundary owned by Spreadsheet.
+///
+/// The adapter persists an opaque, versioned JSON payload; it never imports the
+/// workbook domain or calculates cells.
+pub trait SpreadsheetWorkbookStore: Send + Sync {
+    fn load_workbook(&self, id: &str) -> Result<Option<StoredWorkbook>, SpreadsheetFileError>;
+    fn save_workbook(&self, workbook: &StoredWorkbook) -> Result<(), SpreadsheetFileError>;
+    fn list_workbooks(&self) -> Result<Vec<String>, SpreadsheetFileError>;
+    fn delete_workbook(&self, id: &str) -> Result<bool, SpreadsheetFileError>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpreadsheetFileError {
     InvalidLocation(String),

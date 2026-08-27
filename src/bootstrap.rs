@@ -14,7 +14,7 @@ use crate::{
         overview::{OverviewQuery, OverviewWorkspace, ID as OVERVIEW},
         portfolio::{PortfolioRepository, PortfolioWorkspace},
         security::{SecurityDocumentOpener, SecurityQuery, SecurityWorkspace},
-        spreadsheet::{SpreadsheetMarketData, SpreadsheetWorkspace},
+        spreadsheet::{SpreadsheetMarketData, SpreadsheetWorkbookStore, SpreadsheetWorkspace},
         watchlist::{WatchlistCatalog, WatchlistWorkspace},
     },
     infrastructure::{
@@ -41,6 +41,7 @@ pub fn demo_app() -> App {
         news_query,
         article_opener: None,
         spreadsheet_market_data: Arc::new(DemoSpreadsheetMarketData),
+        spreadsheet_workbook_store: None,
         market_data: Arc::new(DemoMarketDataReplay::new()),
         watchlist_catalog: Arc::new(DemoWatchlistCatalog),
         instrument_search: Arc::new(DemoInstrumentSearch),
@@ -63,6 +64,7 @@ struct AppProviders {
     news_query: Arc<dyn NewsFeed>,
     article_opener: Option<Arc<dyn NewsArticleOpener>>,
     spreadsheet_market_data: Arc<dyn SpreadsheetMarketData>,
+    spreadsheet_workbook_store: Option<Arc<dyn SpreadsheetWorkbookStore>>,
     market_data: Arc<dyn MarketDataQuery>,
     watchlist_catalog: Arc<dyn WatchlistCatalog>,
     instrument_search: Arc<dyn InstrumentSearch>,
@@ -85,6 +87,7 @@ fn build_app(providers: AppProviders) -> App {
         news_query,
         article_opener,
         spreadsheet_market_data,
+        spreadsheet_workbook_store,
         market_data,
         watchlist_catalog,
         instrument_search,
@@ -106,6 +109,12 @@ fn build_app(providers: AppProviders) -> App {
     };
     let spreadsheet_workspace = if runtime_settings.gallery_replay {
         SpreadsheetWorkspace::new(spreadsheet_market_data)
+    } else if let Some(store) = spreadsheet_workbook_store {
+        SpreadsheetWorkspace::persistent(
+            spreadsheet_market_data,
+            Arc::new(LocalSpreadsheetFiles),
+            store,
+        )
     } else {
         SpreadsheetWorkspace::empty(spreadsheet_market_data, Arc::new(LocalSpreadsheetFiles))
     };
@@ -221,6 +230,7 @@ pub fn persistent_app() -> App {
         news_query,
         article_opener: Some(Arc::new(SystemNewsArticleOpener)),
         spreadsheet_market_data: live_market_data.spreadsheet,
+        spreadsheet_workbook_store: Some(repository.clone()),
         market_data: live_market_data.market_data,
         watchlist_catalog,
         instrument_search: Arc::new(SecInstrumentSearch::from_env()),

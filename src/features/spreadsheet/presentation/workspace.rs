@@ -30,7 +30,7 @@ use super::super::{
         parse_formula, AggregateFunction, CellAddress, CellValue, Expr, MAX_COLUMNS, MAX_ROWS,
     },
     MarketDataPoint, MarketDataRequest, MarketDataState, Spreadsheet, SpreadsheetFileStore,
-    SpreadsheetMarketData, ID,
+    SpreadsheetMarketData, SpreadsheetWorkbookStore, StoredWorkbook, ID,
 };
 
 const CELL_WIDTH: u16 = 12;
@@ -92,11 +92,14 @@ impl EditSession {
 pub struct SpreadsheetWorkspace {
     spreadsheet: Spreadsheet,
     file_store: Option<Arc<dyn SpreadsheetFileStore>>,
+    workbook_store: Option<Arc<dyn SpreadsheetWorkbookStore>>,
+    workbook_id: String,
+    workbook_revision: u64,
     refresh_sender: SyncSender<MarketDataRefresh>,
     refresh_receiver: Receiver<MarketDataRefreshResult>,
     next_refresh_generation: u64,
     applied_refresh_generation: u64,
-    external_cells: HashMap<CellAddress, MarketDataRequest>,
+    external_cells: HashMap<CellAddress, Vec<MarketDataRequest>>,
     external_states: HashMap<MarketDataRequest, ExternalCellState>,
     cursor: CellAddress,
     first_column: u8,
@@ -110,19 +113,30 @@ pub struct SpreadsheetWorkspace {
 
 impl SpreadsheetWorkspace {
     pub fn new(market_data: Arc<dyn SpreadsheetMarketData>) -> Self {
-        Self::build(market_data, None, true)
+        Self::build(market_data, None, None, true)
     }
 
     pub fn empty(
         market_data: Arc<dyn SpreadsheetMarketData>,
         file_store: Arc<dyn SpreadsheetFileStore>,
     ) -> Self {
-        Self::build(market_data, Some(file_store), false)
+        Self::build(market_data, Some(file_store), None, false)
+    }
+
+    pub fn persistent(
+        market_data: Arc<dyn SpreadsheetMarketData>,
+        file_store: Arc<dyn SpreadsheetFileStore>,
+        workbook_store: Arc<dyn SpreadsheetWorkbookStore>,
+    ) -> Self {
+        let mut workspace = Self::build(market_data, Some(file_store), Some(workbook_store), false);
+        workspace.load_workbook("default", true);
+        workspace
     }
 
     fn build(
         market_data: Arc<dyn SpreadsheetMarketData>,
         file_store: Option<Arc<dyn SpreadsheetFileStore>>,
+        workbook_store: Option<Arc<dyn SpreadsheetWorkbookStore>>,
         seed_gallery: bool,
     ) -> Self {
         let (refresh_sender, worker_receiver) = sync_channel::<MarketDataRefresh>(1);
@@ -146,6 +160,9 @@ impl SpreadsheetWorkspace {
         let mut workspace = Self {
             spreadsheet: Spreadsheet::new(),
             file_store,
+            workbook_store,
+            workbook_id: "default".to_owned(),
+            workbook_revision: 0,
             refresh_sender,
             refresh_receiver,
             next_refresh_generation: 0,
@@ -169,6 +186,112 @@ impl SpreadsheetWorkspace {
             workspace.seed_demo_workbook();
         }
         workspace
+    }
+
+    fn save_workbook(&mut self, requested_id: &str, automatic: bool) {
+        let Some(store) = self.workbook_store.clone() else {
+            if !automatic {
+                self.status = "WORKBOOK PERSISTENCE IS DISABLED IN GALLERY MODE".to_owned();
+            }
+            return;
+        };
+        let id = if requested_id.trim().is_empty() {
+            self.workbook_id.clone()
+        } else {
+            requested_id.trim().to_owned()
+        };
+        let payload = match self.spreadsheet.to_document_payload() {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.status = format!("SAVE ERROR · {error}");
+                return;
+            }
+        };
+        let revision = self.workbook_revision.saturating_add(1);
+        match store.save_workbook(&StoredWorkbook {
+            id: id.clone(),
+            revision,
+            payload,
+        }) {
+            Ok(()) => {
+                self.workbook_id = id.clone();
+                self.workbook_revision = revision;
+                if !automatic {
+                    self.status = format!("SAVED WORKBOOK {id} · REVISION {revision}");
+                }
+            }
+            Err(error) => self.status = format!("SAVE ERROR · {error}"),
+        }
+    }
+
+    fn load_workbook(&mut self, requested_id: &str, startup: bool) {
+        let Some(store) = self.workbook_store.clone() else {
+            if !startup {
+                self.status = "WORKBOOK PERSISTENCE IS DISABLED IN GALLERY MODE".to_owned();
+            }
+            return;
+        };
+        let id = if requested_id.trim().is_empty() {
+            "default"
+        } else {
+            requested_id.trim()
+        };
+        match store.load_workbook(id) {
+            Ok(Some(document)) => match Spreadsheet::from_document_payload(&document.payload) {
+                Ok(spreadsheet) => {
+                    self.spreadsheet = spreadsheet;
+                    self.workbook_id = document.id;
+                    self.workbook_revision = document.revision;
+                    self.cursor = CellAddress::new(1, 1).expect("A1 is in bounds");
+                    self.first_column = 1;
+                    self.first_row = 1;
+                    self.refresh_market_data();
+                    self.status = format!(
+                        "LOADED WORKBOOK {} · REVISION {}",
+                        self.workbook_id, self.workbook_revision
+                    );
+                }
+                Err(error) => self.status = format!("LOAD ERROR · {error}"),
+            },
+            Ok(None) if startup => {
+                self.status = "EMPTY WORKBOOK · AUTOSAVE TARGET default".to_owned();
+            }
+            Ok(None) => self.status = format!("LOAD ERROR · WORKBOOK {id} WAS NOT FOUND"),
+            Err(error) => self.status = format!("LOAD ERROR · {error}"),
+        }
+    }
+
+    fn list_workbooks(&mut self) {
+        let Some(store) = self.workbook_store.clone() else {
+            self.status = "WORKBOOK PERSISTENCE IS DISABLED IN GALLERY MODE".to_owned();
+            return;
+        };
+        self.status = match store.list_workbooks() {
+            Ok(ids) if ids.is_empty() => "NO SAVED WORKBOOKS".to_owned(),
+            Ok(ids) => format!("WORKBOOKS · {}", ids.join(" · ")),
+            Err(error) => format!("LIST ERROR · {error}"),
+        };
+    }
+
+    fn delete_workbook(&mut self, id: &str) {
+        let Some(store) = self.workbook_store.clone() else {
+            self.status = "WORKBOOK PERSISTENCE IS DISABLED IN GALLERY MODE".to_owned();
+            return;
+        };
+        if id.trim().is_empty() {
+            self.status = "DELETE ERROR · SHEET DROP REQUIRES A WORKBOOK ID".to_owned();
+            return;
+        }
+        self.status = match store.delete_workbook(id.trim()) {
+            Ok(true) => format!("DELETED WORKBOOK {}", id.trim()),
+            Ok(false) => format!("WORKBOOK {} WAS NOT FOUND", id.trim()),
+            Err(error) => format!("DELETE ERROR · {error}"),
+        };
+    }
+
+    fn autosave(&mut self) {
+        let id = self.workbook_id.clone();
+        self.save_workbook(&id, true);
     }
 
     fn seed_demo_workbook(&mut self) {
@@ -221,7 +344,10 @@ impl SpreadsheetWorkspace {
 
     fn refresh_market_data(&mut self) {
         let formulas = self.financial_formula_requests();
-        let mut requests = formulas.values().cloned().collect::<Vec<_>>();
+        let mut requests = formulas
+            .values()
+            .flat_map(|requests| requests.iter().cloned())
+            .collect::<Vec<_>>();
         requests.sort_by(|left, right| {
             (&left.security, &left.field).cmp(&(&right.security, &right.field))
         });
@@ -294,17 +420,42 @@ impl SpreadsheetWorkspace {
         }
     }
 
-    fn financial_formula_requests(&self) -> HashMap<CellAddress, MarketDataRequest> {
+    fn financial_formula_requests(&self) -> HashMap<CellAddress, Vec<MarketDataRequest>> {
         self.spreadsheet
             .workbook()
             .active_sheet()
             .populated_cells()
             .filter_map(|(address, cell)| {
                 let expression = parse_formula(cell.raw()).ok()?;
-                self.financial_request(&expression)
-                    .map(|request| (address, request))
+                let mut requests = Vec::new();
+                self.collect_financial_requests(&expression, &mut requests);
+                requests.sort_by(|left, right| {
+                    (&left.security, &left.field).cmp(&(&right.security, &right.field))
+                });
+                requests.dedup();
+                (!requests.is_empty()).then_some((address, requests))
             })
             .collect()
+    }
+
+    fn collect_financial_requests(&self, expression: &Expr, requests: &mut Vec<MarketDataRequest>) {
+        if let Some(request) = self.financial_request(expression) {
+            requests.push(request);
+            return;
+        }
+        match expression {
+            Expr::Unary { operand, .. } => self.collect_financial_requests(operand, requests),
+            Expr::Binary { left, right, .. } => {
+                self.collect_financial_requests(left, requests);
+                self.collect_financial_requests(right, requests);
+            }
+            Expr::Function { arguments, .. } => {
+                for argument in arguments {
+                    self.collect_financial_requests(argument, requests);
+                }
+            }
+            Expr::Number(_) | Expr::Text(_) | Expr::Reference(_) | Expr::Range(_) => {}
+        }
     }
 
     fn financial_request(&self, expression: &Expr) -> Option<MarketDataRequest> {
@@ -325,6 +476,23 @@ impl SpreadsheetWorkspace {
                 Some(MarketDataRequest::new(
                     security,
                     format!("CHG_PCT_{period}"),
+                ))
+            }
+            AggregateFunction::History if arguments.len() == 4 => {
+                let field = self.expression_text(&arguments[1])?.to_ascii_uppercase();
+                let start = self.expression_text(&arguments[2])?;
+                let end = self.expression_text(&arguments[3])?;
+                Some(MarketDataRequest::new(
+                    security,
+                    format!("HISTORY|{field}|{start}|{end}"),
+                ))
+            }
+            AggregateFunction::Fundamental if arguments.len() == 3 => {
+                let field = self.expression_text(&arguments[1])?.to_ascii_uppercase();
+                let period = self.expression_text(&arguments[2])?.to_ascii_uppercase();
+                Some(MarketDataRequest::new(
+                    security,
+                    format!("FUNDAMENTAL|{field}|{period}"),
                 ))
             }
             _ => None,
@@ -348,22 +516,64 @@ impl SpreadsheetWorkspace {
 
     fn evaluated_spreadsheet(&self) -> Spreadsheet {
         let mut evaluated = self.spreadsheet.clone();
-        for (address, request) in &self.external_cells {
-            let Some(ExternalCellState::Resolved(state)) = self.external_states.get(request) else {
+        for address in self.external_cells.keys() {
+            let Some(cell) = self.spreadsheet.workbook().active_sheet().cell(*address) else {
                 continue;
             };
-            let value = match state {
-                MarketDataState::Ready { value, .. } | MarketDataState::Stale { value, .. } => {
-                    *value
-                }
-                MarketDataState::PermissionDenied { .. } | MarketDataState::Unavailable { .. } => {
-                    continue
-                }
+            let Some(expression) = parse_formula(cell.raw()).ok() else {
+                continue;
             };
-            let _ = evaluated.set_cell(&address.to_string(), value.to_string());
+            let Some(expression) = self.substitute_external_values(&expression) else {
+                continue;
+            };
+            let _ = evaluated.set_cell(&address.to_string(), format!("={expression}"));
         }
         evaluated.clear_history();
         evaluated
+    }
+
+    fn substitute_external_values(&self, expression: &Expr) -> Option<Expr> {
+        if let Some(request) = self.financial_request(expression) {
+            let ExternalCellState::Resolved(state) = self.external_states.get(&request)? else {
+                return None;
+            };
+            return match state {
+                MarketDataState::Ready { value, .. } | MarketDataState::Stale { value, .. } => {
+                    Some(Expr::Number(*value))
+                }
+                MarketDataState::PermissionDenied { .. } | MarketDataState::Unavailable { .. } => {
+                    None
+                }
+            };
+        }
+        match expression {
+            Expr::Unary { operator, operand } => Some(Expr::Unary {
+                operator: *operator,
+                operand: Box::new(self.substitute_external_values(operand)?),
+            }),
+            Expr::Binary {
+                left,
+                operator,
+                right,
+            } => Some(Expr::Binary {
+                left: Box::new(self.substitute_external_values(left)?),
+                operator: *operator,
+                right: Box::new(self.substitute_external_values(right)?),
+            }),
+            Expr::Function {
+                function,
+                arguments,
+            } => Some(Expr::Function {
+                function: *function,
+                arguments: arguments
+                    .iter()
+                    .map(|argument| self.substitute_external_values(argument))
+                    .collect::<Option<Vec<_>>>()?,
+            }),
+            Expr::Number(_) | Expr::Text(_) | Expr::Reference(_) | Expr::Range(_) => {
+                Some(expression.clone())
+            }
+        }
     }
 
     fn selected_address(&self) -> String {
@@ -392,6 +602,7 @@ impl SpreadsheetWorkspace {
             Ok(value) => {
                 self.status = format!("{address} = {value}");
                 self.refresh_market_data();
+                self.autosave();
             }
             Err(error) => self.status = format!("ERROR · {error}"),
         }
@@ -477,6 +688,7 @@ impl SpreadsheetWorkspace {
         } else {
             self.status = format!("CLEARED {address}");
             self.refresh_market_data();
+            self.autosave();
         }
     }
 
@@ -501,6 +713,7 @@ impl SpreadsheetWorkspace {
             Ok(value) => {
                 self.status = format!("PASTED {source} → {target} · {value}");
                 self.refresh_market_data();
+                self.autosave();
             }
             Err(error) => self.status = format!("ERROR · {error}"),
         }
@@ -532,13 +745,15 @@ impl SpreadsheetWorkspace {
             Ok(value) => {
                 self.status = format!("FILLED {source} → {target} · {value}");
                 self.refresh_market_data();
+                self.autosave();
             }
             Err(error) => self.status = format!("ERROR · {error}"),
         }
     }
 
     fn undo(&mut self) {
-        self.status = if self.spreadsheet.undo() {
+        let changed = self.spreadsheet.undo();
+        self.status = if changed {
             self.refresh_market_data();
             format!(
                 "UNDID CHANGE · {}",
@@ -547,10 +762,14 @@ impl SpreadsheetWorkspace {
         } else {
             "NOTHING TO UNDO".to_owned()
         };
+        if changed {
+            self.autosave();
+        }
     }
 
     fn redo(&mut self) {
-        self.status = if self.spreadsheet.redo() {
+        let changed = self.spreadsheet.redo();
+        self.status = if changed {
             self.refresh_market_data();
             format!(
                 "REDID CHANGE · {}",
@@ -559,6 +778,9 @@ impl SpreadsheetWorkspace {
         } else {
             "NOTHING TO REDO".to_owned()
         };
+        if changed {
+            self.autosave();
+        }
     }
 
     fn select_sheet(&mut self, name: &str) {
@@ -572,6 +794,7 @@ impl SpreadsheetWorkspace {
                     self.spreadsheet.workbook().active_sheet().name()
                 );
                 self.refresh_market_data();
+                self.autosave();
             }
             Err(error) => self.status = format!("ERROR · {error}"),
         }
@@ -624,6 +847,7 @@ impl SpreadsheetWorkspace {
                     "IMPORTED {populated} POPULATED CELL(S) · {} · UNDO AVAILABLE",
                     location.trim()
                 );
+                self.autosave();
             }
             Err(error) => self.status = format!("IMPORT ERROR · {error}"),
         }
@@ -659,6 +883,7 @@ impl SpreadsheetWorkspace {
             self.spreadsheet.workbook().active_sheet().name()
         );
         self.refresh_market_data();
+        self.autosave();
     }
 
     fn render_formula_bar(&self, frame: &mut Frame, area: Rect) {
@@ -817,8 +1042,18 @@ impl SpreadsheetWorkspace {
     }
 
     fn external_display(&self, address: CellAddress) -> Option<String> {
-        let request = self.external_cells.get(&address)?;
-        Some(match self.external_states.get(request)? {
+        let requests = self.external_cells.get(&address)?;
+        let expression = self
+            .spreadsheet
+            .workbook()
+            .active_sheet()
+            .cell(address)
+            .and_then(|cell| parse_formula(cell.raw()).ok())?;
+        let request = self.financial_request(&expression)?;
+        if requests.len() != 1 || requests.first() != Some(&request) {
+            return None;
+        }
+        Some(match self.external_states.get(&request)? {
             ExternalCellState::Loading => "…LOADING".to_owned(),
             ExternalCellState::Resolved(MarketDataState::Ready { value, .. }) => {
                 format_value(&CellValue::Number(*value))
@@ -834,7 +1069,29 @@ impl SpreadsheetWorkspace {
     }
 
     fn selected_external_status(&self) -> Option<String> {
-        let request = self.external_cells.get(&self.cursor)?;
+        let requests = self.external_cells.get(&self.cursor)?;
+        if requests.len() > 1 {
+            let ready = requests
+                .iter()
+                .filter(|request| {
+                    matches!(
+                        self.external_states.get(*request),
+                        Some(ExternalCellState::Resolved(MarketDataState::Ready { .. }))
+                            | Some(ExternalCellState::Resolved(MarketDataState::Stale { .. }))
+                    )
+                })
+                .count();
+            return Some(format!(
+                "COMPOSITE FINANCIAL FORMULA · {ready}/{} INPUTS READY · {}",
+                requests.len(),
+                requests
+                    .iter()
+                    .map(|request| format!("{} {}", request.security, request.field))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            ));
+        }
+        let request = requests.first()?;
         Some(match self.external_states.get(request)? {
             ExternalCellState::Loading => {
                 format!("LOADING · {} · {}", request.security, request.field)
@@ -906,9 +1163,13 @@ impl Workspace for SpreadsheetWorkspace {
         let operation = first.to_ascii_uppercase();
         let name = invocation.args.get(1..).unwrap_or_default().join(" ");
         match operation.as_str() {
-            "IMPORT" | "OPEN" => self.import_csv_file(&name),
-            "EXPORT" | "SAVE" => self.export_csv_file(&name, false),
-            "EXPORT!" | "SAVE!" => self.export_csv_file(&name, true),
+            "IMPORT" => self.import_csv_file(&name),
+            "EXPORT" => self.export_csv_file(&name, false),
+            "EXPORT!" => self.export_csv_file(&name, true),
+            "SAVE" => self.save_workbook(&name, false),
+            "LOAD" | "OPEN" => self.load_workbook(&name, false),
+            "LIST" => self.list_workbooks(),
+            "DROP" => self.delete_workbook(&name),
             "ADD" | "NEW" => self.add_sheet((!name.is_empty()).then_some(name)),
             "NEXT" => self.select_adjacent_sheet(true),
             "PREV" | "PREVIOUS" => self.select_adjacent_sheet(false),
@@ -925,6 +1186,7 @@ impl Workspace for SpreadsheetWorkspace {
                         "RENAMED SHEET {}",
                         self.spreadsheet.workbook().active_sheet().name()
                     );
+                    self.autosave();
                 }
                 Err(error) => self.status = format!("ERROR · {error}"),
             },
@@ -934,6 +1196,7 @@ impl Workspace for SpreadsheetWorkspace {
                         "REMOVED SHEET · NOW ON {}",
                         self.spreadsheet.workbook().active_sheet().name()
                     );
+                    self.autosave();
                 }
                 Err(error) => self.status = format!("ERROR · {error}"),
             },
@@ -1135,6 +1398,7 @@ mod tests {
     use super::*;
     use crate::features::spreadsheet::{
         MarketDataPoint, MarketDataProvenance, MarketDataQuality, SpreadsheetFileError,
+        SpreadsheetWorkbookStore, StoredWorkbook,
     };
     use crossterm::event::{MouseButton, MouseEventKind};
     use std::sync::Mutex;
@@ -1157,6 +1421,8 @@ mod tests {
                 .filter_map(|request| {
                     let value = match (request.security.as_str(), request.field.as_str()) {
                         ("IBM US Equity", "PX_LAST") => 234.19,
+                        ("IBM US Equity", "HISTORY|PX_LAST|2026-01-01|2026-08-26") => 234.19,
+                        ("IBM US Equity", "FUNDAMENTAL|REVENUE|FY2025") => 67_500_000_000.0,
                         (_, "CHG_PCT_1D") => 1.0,
                         _ => return None,
                     };
@@ -1192,6 +1458,51 @@ mod tests {
                 overwrite,
             ));
             Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryWorkbookStore {
+        workbooks: Mutex<HashMap<String, StoredWorkbook>>,
+    }
+
+    impl SpreadsheetWorkbookStore for MemoryWorkbookStore {
+        fn load_workbook(&self, id: &str) -> Result<Option<StoredWorkbook>, SpreadsheetFileError> {
+            Ok(self
+                .workbooks
+                .lock()
+                .expect("workbooks lock")
+                .get(id)
+                .cloned())
+        }
+
+        fn save_workbook(&self, workbook: &StoredWorkbook) -> Result<(), SpreadsheetFileError> {
+            self.workbooks
+                .lock()
+                .expect("workbooks lock")
+                .insert(workbook.id.clone(), workbook.clone());
+            Ok(())
+        }
+
+        fn list_workbooks(&self) -> Result<Vec<String>, SpreadsheetFileError> {
+            let mut ids = self
+                .workbooks
+                .lock()
+                .expect("workbooks lock")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>();
+            ids.sort();
+            Ok(ids)
+        }
+
+        fn delete_workbook(&self, id: &str) -> Result<bool, SpreadsheetFileError> {
+            Ok(self
+                .workbooks
+                .lock()
+                .expect("workbooks lock")
+                .remove(id)
+                .is_some())
         }
     }
 
@@ -1280,6 +1591,86 @@ mod tests {
         assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 1);
         assert!(workspace.status.contains("EMPTY WORKBOOK"));
         assert!(workspace.external_cells.is_empty());
+    }
+
+    #[test]
+    fn persistent_workspace_autosaves_and_restores_a_complete_workbook() {
+        let files = Arc::new(MemoryFileStore {
+            input: String::new(),
+            writes: Mutex::new(Vec::new()),
+        });
+        let workbooks = Arc::new(MemoryWorkbookStore::default());
+        let mut workspace = SpreadsheetWorkspace::persistent(
+            Arc::new(StubMarketData),
+            files.clone(),
+            workbooks.clone(),
+        );
+        workspace
+            .spreadsheet
+            .set_cell("A1", "IBM US Equity")
+            .unwrap();
+        workspace
+            .spreadsheet
+            .set_cell("B1", "=PX_LAST(A1)")
+            .unwrap();
+        workspace.spreadsheet.add_sheet("Model").unwrap();
+        workspace.spreadsheet.select_sheet("Model").unwrap();
+        workspace
+            .spreadsheet
+            .set_cell("A1", "=POWER(2, 8)")
+            .unwrap();
+        workspace.autosave();
+
+        let restored =
+            SpreadsheetWorkspace::persistent(Arc::new(StubMarketData), files, workbooks.clone());
+        assert_eq!(restored.spreadsheet.workbook().sheet_count(), 2);
+        assert_eq!(
+            restored.spreadsheet.workbook().active_sheet().name(),
+            "Model"
+        );
+        assert_eq!(restored.spreadsheet.cell("A1").unwrap().raw, "=POWER(2, 8)");
+        assert_eq!(restored.workbook_revision, 1);
+        assert!(restored.status.contains("LOADED WORKBOOK default"));
+        assert!(workbooks
+            .workbooks
+            .lock()
+            .expect("workbooks lock")
+            .contains_key("default"));
+    }
+
+    #[test]
+    fn financial_functions_compose_with_arithmetic_and_each_other() {
+        let mut workspace = workspace();
+        workspace
+            .spreadsheet
+            .set_cell("A20", "IBM US Equity")
+            .unwrap();
+        workspace
+            .spreadsheet
+            .set_cell(
+                "B20",
+                "=PX_LAST(A20)*2+FUNDAMENTAL(A20, \"REVENUE\", \"FY2025\")/1000000000",
+            )
+            .unwrap();
+        workspace
+            .spreadsheet
+            .set_cell(
+                "C20",
+                "=HISTORY(A20, \"PX_LAST\", \"2026-01-01\", \"2026-08-26\")",
+            )
+            .unwrap();
+        workspace.refresh_market_data();
+        wait_for_data(&mut workspace);
+
+        let evaluated = workspace.evaluated_spreadsheet();
+        assert_eq!(
+            evaluated.cell("B20").unwrap().value,
+            CellValue::Number(535.88)
+        );
+        assert_eq!(
+            evaluated.cell("C20").unwrap().value,
+            CellValue::Number(234.19)
+        );
     }
 
     #[test]
