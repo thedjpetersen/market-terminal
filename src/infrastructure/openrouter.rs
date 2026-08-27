@@ -221,6 +221,17 @@ fn portfolio_context(request: &AssistantRequest) -> String {
         "position_count": request.portfolio.positions.len(),
         "positions": positions,
         "truncated": request.portfolio.positions.len() > 100,
+        "activity": {
+            "source": request.activity.source,
+            "period": request.activity.period,
+            "input_version": request.activity.input_version,
+            "methodology": request.activity.methodology,
+            "disclosures": request.activity.disclosures,
+            "entry_count": request.activity.entries.len(),
+            "net_cash_effect": request.activity.net_cash_effect_label(),
+            "currency_count": request.activity.currency_totals.len(),
+            "entries_omitted": true,
+        },
     })
     .to_string()
 }
@@ -459,6 +470,7 @@ mod tests {
             active_workspace: "overview".to_owned(),
             available_workspaces: vec!["overview".to_owned(), "markets".to_owned()],
             portfolio: crate::features::portfolio::PortfolioSnapshot::empty("TEST"),
+            activity: crate::features::portfolio::PortfolioActivityLedger::empty("TEST"),
         });
 
         assert_eq!(body["model"], "test/model");

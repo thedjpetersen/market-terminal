@@ -437,6 +437,22 @@ fn dynamic_tool_definitions() -> Value {
             })
         ),
         dynamic_tool(
+            "portfolio_get_activity",
+            "Read bounded rows and exact per-currency totals from the user's current imported portfolio activity ledger. This is read-only.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "symbols": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "maxItems": 20
+                    },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+                },
+                "additionalProperties": false
+            })
+        ),
+        dynamic_tool(
             "portfolio_open_position",
             "Open the Security workspace for a symbol that exists in the user's current portfolio.",
             json!({
@@ -532,6 +548,7 @@ fn execute_dynamic_tool(params: &Value, request: &AssistantRequest) -> DynamicTo
             UiAction::RestoreLayout,
         ),
         "portfolio_get_positions" => portfolio_positions(arguments, request),
+        "portfolio_get_activity" => portfolio_activity(arguments, request),
         "portfolio_open_position" => open_portfolio_position(arguments, request),
         _ => DynamicToolOutcome::error(format!("unsupported Market Terminal tool: {tool}")),
     }
@@ -627,6 +644,86 @@ fn portfolio_positions(arguments: &Value, request: &AssistantRequest) -> Dynamic
         "returned_position_count": returned,
         "truncated": matching_count > returned,
         "positions": positions,
+    }))
+}
+
+fn portfolio_activity(arguments: &Value, request: &AssistantRequest) -> DynamicToolOutcome {
+    let requested_symbols = arguments["symbols"]
+        .as_array()
+        .map(|symbols| {
+            symbols
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|symbol| !symbol.is_empty())
+                .map(str::to_ascii_uppercase)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let limit = arguments["limit"].as_u64().unwrap_or(25).clamp(1, 50) as usize;
+    let matching = request
+        .activity
+        .entries
+        .iter()
+        .filter(|entry| {
+            requested_symbols.is_empty()
+                || entry.symbol.as_ref().is_some_and(|symbol| {
+                    requested_symbols
+                        .iter()
+                        .any(|requested| symbol.eq_ignore_ascii_case(requested))
+                })
+        })
+        .collect::<Vec<_>>();
+    let matching_count = matching.len();
+    let returned = matching_count.min(limit);
+    let entries = matching
+        .into_iter()
+        .take(limit)
+        .map(|entry| {
+            json!({
+                "activity_id": entry.activity_id,
+                "date": entry.date,
+                "account": entry.account_id.as_str(),
+                "type": entry.kind.label(),
+                "symbol": entry.symbol,
+                "description": entry.description,
+                "quantity": entry.quantity_label(),
+                "cash_effect": entry.cash_effect_label(),
+                "fees": entry.fees_label(),
+                "currency": entry.currency.to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let currency_totals = request
+        .activity
+        .currency_totals
+        .iter()
+        .map(|total| {
+            json!({
+                "currency": total.currency.to_string(),
+                "entries": total.entries,
+                "inflows": crate::features::portfolio::format_money(total.inflows),
+                "outflows": crate::features::portfolio::format_money(total.outflows),
+                "net_cash_effect": crate::features::portfolio::format_money(total.net_cash_effect),
+                "dividends": crate::features::portfolio::format_money(total.dividends),
+                "interest": crate::features::portfolio::format_money(total.interest),
+                "fees": crate::features::portfolio::format_money(total.fees),
+                "non_cash_entries": total.non_cash_entries,
+            })
+        })
+        .collect::<Vec<_>>();
+    DynamicToolOutcome::read(json!({
+        "source": request.activity.source,
+        "period": request.activity.period,
+        "input_version": request.activity.input_version,
+        "methodology": request.activity.methodology,
+        "disclosures": request.activity.disclosures,
+        "total_activity_count": request.activity.entries.len(),
+        "matching_activity_count": matching_count,
+        "returned_activity_count": returned,
+        "truncated": matching_count > returned,
+        "currency_totals": currency_totals,
+        "entries": entries,
     }))
 }
 
@@ -1052,6 +1149,33 @@ mod tests {
         }];
         portfolio.ytd_return_bps = Some(500);
         portfolio.sharpe_hundredths = Some(120);
+        let mut activity = crate::features::portfolio::PortfolioActivityLedger::empty("TEST");
+        activity
+            .entries
+            .push(crate::features::portfolio::PortfolioActivityEntry {
+                activity_id: "ACT-1".to_owned(),
+                account_id: crate::features::portfolio::PortfolioAccountId::new("ACCOUNT 1"),
+                date: "2026-08-01".to_owned(),
+                kind: crate::features::portfolio::PortfolioActivityKind::Dividend,
+                description: "CASH DIVIDEND".to_owned(),
+                symbol: Some("AAPL".to_owned()),
+                currency: usd,
+                quantity: None,
+                cash_effect: Some(crate::foundation::Money::from_minor_units(500, usd)),
+                fees: None,
+            });
+        activity.currency_totals =
+            vec![crate::features::portfolio::PortfolioActivityCurrencyTotal {
+                currency: usd,
+                entries: 1,
+                inflows: crate::foundation::Money::from_minor_units(500, usd),
+                outflows: crate::foundation::Money::from_minor_units(0, usd),
+                net_cash_effect: crate::foundation::Money::from_minor_units(500, usd),
+                dividends: crate::foundation::Money::from_minor_units(500, usd),
+                interest: crate::foundation::Money::from_minor_units(0, usd),
+                fees: crate::foundation::Money::from_minor_units(0, usd),
+                non_cash_entries: 0,
+            }];
         AssistantRequest {
             messages: vec![crate::features::assistant::domain::AssistantMessage::user(
                 "hello",
@@ -1059,6 +1183,7 @@ mod tests {
             active_workspace: "overview".to_owned(),
             available_workspaces: vec!["overview".to_owned(), "portfolio".to_owned()],
             portfolio,
+            activity,
         }
     }
 
@@ -1072,6 +1197,18 @@ mod tests {
         assert!(read.success);
         assert!(read.text.contains("AAPL"));
         assert_eq!(read.action, None);
+
+        let activity = execute_dynamic_tool(
+            &json!({
+                "tool": "portfolio_get_activity",
+                "arguments": { "symbols": ["AAPL"], "limit": 1 }
+            }),
+            &request,
+        );
+        assert!(activity.success);
+        assert!(activity.text.contains("CASH DIVIDEND"));
+        assert!(activity.text.contains("$5.00"));
+        assert_eq!(activity.action, None);
 
         let open = execute_dynamic_tool(
             &json!({
@@ -1095,7 +1232,7 @@ mod tests {
             &request,
         );
         assert!(!unknown.success);
-        assert_eq!(dynamic_tool_definitions().as_array().map(Vec::len), Some(7));
+        assert_eq!(dynamic_tool_definitions().as_array().map(Vec::len), Some(8));
     }
 
     #[cfg(unix)]
@@ -1163,12 +1300,13 @@ done
         let response = gateway
             .complete_stream(
                 AssistantRequest {
-                messages: vec![crate::features::assistant::domain::AssistantMessage::user(
-                    "Use the portfolio tools to identify my only holding, then open that held position.",
-                )],
-                active_workspace: "overview".to_owned(),
-                available_workspaces: vec!["overview".to_owned(), "portfolio".to_owned()],
-                portfolio: request_with_portfolio().portfolio,
+                    messages: vec![crate::features::assistant::domain::AssistantMessage::user(
+                        "Use the portfolio tools to identify my only holding, then open that held position.",
+                    )],
+                    active_workspace: "overview".to_owned(),
+                    available_workspaces: vec!["overview".to_owned(), "portfolio".to_owned()],
+                    portfolio: request_with_portfolio().portfolio,
+                    activity: request_with_portfolio().activity,
                 },
                 updates,
             )

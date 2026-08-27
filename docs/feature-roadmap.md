@@ -87,6 +87,11 @@ move to its own crate later without changing its public vocabulary.
   fixed-scale quantities, anonymized account separation, honest per-currency
   reconciliation, retained unpriced positions, deterministic input versions,
   methodology/disclosures, and crash-safe import-path restoration.
+- **Complete:** first Stage 2 activity-ledger slice with explicit cash/broker CSV
+  import, exact per-currency inflow/outflow/net/dividend/interest/fee
+  reconciliation, retained non-cash splits, anonymized accounts, independent
+  crash-safe restoration, clickable/Vim-navigable views, bounded AI access, and
+  a contract test against an actual local cash export.
 - **Complete:** restart-safe local Alert register with bounded rule and audit
   retention, full lifecycle/debounce/acknowledgement persistence, asynchronous
   crash-safe writes, and live-provider idempotency verification across restart.
@@ -350,12 +355,13 @@ ALERT core.drawdown > 8% -> preview -> enable
 - Alerts are idempotent, debounced, auditable, restart-safe, and visibly marked
   as simulated/local until an external notification channel is configured.
 
-**Status: in progress.** Position-snapshot ingestion supplies the versioned
-Portfolio boundary, and the first Risk slice consumes it without storage
-access. Transaction/cash ledgers, splits, dividends, performance, contribution,
-attribution, historical/factor risk, and stress libraries remain; screening and
-the additional news/topic, portfolio-threshold, calendar, and
-spreadsheet-expression alert rule families remain separate Stage 2 slices.
+**Status: in progress.** Position-snapshot ingestion and the first exact
+cash/activity ledger supply separate versioned Portfolio inputs, and the first
+Risk slice consumes positions without storage access. Verified broker trade and
+tax-lot history, dated valuations, benchmarks, TWR, contribution, attribution,
+historical/factor risk, and stress libraries remain; screening and the
+additional news/topic, portfolio-threshold, calendar, and spreadsheet-expression
+alert rule families remain separate Stage 2 slices.
 
 ## Stage 3 — Advanced analytics and paper workflows
 

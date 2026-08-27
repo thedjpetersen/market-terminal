@@ -96,6 +96,132 @@ pub struct PortfolioCurrencyTotal {
     pub unpriced_positions: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortfolioActivityKind {
+    Buy,
+    Sell,
+    Reinvestment,
+    Dividend,
+    Interest,
+    Fee,
+    CashIn,
+    CashOut,
+    Transfer,
+    Split,
+    Other,
+}
+
+impl PortfolioActivityKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Buy => "BUY",
+            Self::Sell => "SELL",
+            Self::Reinvestment => "REINVEST",
+            Self::Dividend => "DIVIDEND",
+            Self::Interest => "INTEREST",
+            Self::Fee => "FEE",
+            Self::CashIn => "CASH IN",
+            Self::CashOut => "CASH OUT",
+            Self::Transfer => "TRANSFER",
+            Self::Split => "SPLIT",
+            Self::Other => "OTHER",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioActivityEntry {
+    pub activity_id: String,
+    pub account_id: PortfolioAccountId,
+    pub date: String,
+    pub kind: PortfolioActivityKind,
+    pub description: String,
+    pub symbol: Option<String>,
+    pub currency: Currency,
+    pub quantity: Option<PositionQuantity>,
+    /// Provider-reported signed cash effect. Positive is cash in; negative is cash out.
+    pub cash_effect: Option<Money>,
+    /// Non-negative fee magnitude when the provider supplies a dedicated fee column.
+    pub fees: Option<Money>,
+}
+
+impl PortfolioActivityEntry {
+    pub fn symbol_label(&self) -> &str {
+        self.symbol.as_deref().unwrap_or("—")
+    }
+
+    pub fn quantity_label(&self) -> String {
+        self.quantity
+            .map(PositionQuantity::label)
+            .unwrap_or_else(|| "—".to_owned())
+    }
+
+    pub fn cash_effect_label(&self) -> String {
+        self.cash_effect
+            .map(format_money)
+            .unwrap_or_else(|| "NON-CASH".to_owned())
+    }
+
+    pub fn fees_label(&self) -> String {
+        self.fees
+            .map(format_money)
+            .unwrap_or_else(|| "—".to_owned())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioActivityCurrencyTotal {
+    pub currency: Currency,
+    pub entries: usize,
+    pub inflows: Money,
+    pub outflows: Money,
+    pub net_cash_effect: Money,
+    pub dividends: Money,
+    pub interest: Money,
+    pub fees: Money,
+    pub non_cash_entries: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioActivityLedger {
+    pub entries: Vec<PortfolioActivityEntry>,
+    pub currency_totals: Vec<PortfolioActivityCurrencyTotal>,
+    pub source: String,
+    pub period: String,
+    pub input_version: String,
+    pub methodology: String,
+    pub disclosures: Vec<String>,
+}
+
+impl PortfolioActivityLedger {
+    pub fn empty(source: impl Into<String>) -> Self {
+        Self {
+            entries: Vec::new(),
+            currency_totals: Vec::new(),
+            source: source.into(),
+            period: "—".to_owned(),
+            input_version: "—".to_owned(),
+            methodology: "NO ACTIVITY INPUT".to_owned(),
+            disclosures: vec![
+                "IMPORT ACTUAL CASH OR BROKER ACTIVITY TO BUILD A LEDGER".to_owned(),
+                "PERFORMANCE REMAINS UNAVAILABLE WITHOUT VALUATION HISTORY".to_owned(),
+            ],
+        }
+    }
+
+    pub fn net_cash_effect_label(&self) -> String {
+        match self.currency_totals.as_slice() {
+            [] => "—".to_owned(),
+            [total] => format_money(total.net_cash_effect),
+            totals => format!("{} CURRENCIES · SEE ACTIVITY", totals.len()),
+        }
+    }
+
+    pub fn period_label(&self) -> &str {
+        &self.period
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortfolioSnapshot {
     pub positions: Vec<Position>,
@@ -259,6 +385,18 @@ mod tests {
             format_money(Money::from_minor_units(123_456, kwd)),
             "KWD 123.456"
         );
+    }
+
+    #[test]
+    fn empty_activity_never_implies_performance() {
+        let ledger = PortfolioActivityLedger::empty("NO ACTIVITY");
+
+        assert_eq!(ledger.net_cash_effect_label(), "—");
+        assert!(ledger.entries.is_empty());
+        assert!(ledger
+            .disclosures
+            .iter()
+            .any(|value| value.contains("PERFORMANCE REMAINS UNAVAILABLE")));
     }
 
     #[test]

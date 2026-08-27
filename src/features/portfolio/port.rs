@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::PortfolioSnapshot;
+use super::{PortfolioActivityLedger, PortfolioSnapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PortfolioError {
@@ -27,6 +27,10 @@ impl std::error::Error for PortfolioError {}
 pub trait PortfolioRepository: Send + Sync {
     fn load_portfolio(&self) -> PortfolioSnapshot;
 
+    fn load_activity(&self) -> PortfolioActivityLedger {
+        PortfolioActivityLedger::empty("NO ACTIVITY IMPORTED · USE PORT IMPORT ACTIVITY <FILE.CSV>")
+    }
+
     fn import_csv(&self, _path: &Path) -> Result<PortfolioSnapshot, PortfolioError> {
         Err(PortfolioError::Unsupported(
             "THIS PORTFOLIO PROVIDER DOES NOT SUPPORT CSV IMPORT".to_owned(),
@@ -38,10 +42,32 @@ pub trait PortfolioRepository: Send + Sync {
             "NO IMPORTED PORTFOLIO TO RELOAD".to_owned(),
         ))
     }
+
+    fn import_activity_csv(&self, _path: &Path) -> Result<PortfolioActivityLedger, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS PORTFOLIO PROVIDER DOES NOT SUPPORT ACTIVITY CSV IMPORT".to_owned(),
+        ))
+    }
+
+    fn reload_activity(&self) -> Result<PortfolioActivityLedger, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "NO IMPORTED ACTIVITY TO RELOAD".to_owned(),
+        ))
+    }
 }
 
 /// Persists only the user-selected import location, never portfolio contents.
 pub trait PortfolioImportStateStore: Send + Sync {
     fn load_import_path(&self) -> Result<Option<PathBuf>, PortfolioError>;
     fn save_import_path(&self, path: &Path) -> Result<(), PortfolioError>;
+
+    fn load_activity_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+        Ok(None)
+    }
+
+    fn save_activity_import_path(&self, _path: &Path) -> Result<(), PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS STATE STORE DOES NOT SUPPORT ACTIVITY IMPORT PATHS".to_owned(),
+        ))
+    }
 }

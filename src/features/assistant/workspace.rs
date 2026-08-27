@@ -117,6 +117,7 @@ impl AssistantWorkspace {
                 active_workspace,
                 available_workspaces,
                 portfolio: portfolio.load_portfolio(),
+                activity: portfolio.load_activity(),
             };
             let _ = result_sender.send(gateway.complete_stream(request, updates));
         });
@@ -526,15 +527,41 @@ mod tests {
                 });
             snapshot
         }
+
+        fn load_activity(&self) -> crate::features::portfolio::PortfolioActivityLedger {
+            let usd = crate::foundation::Currency::new("USD").unwrap();
+            let mut activity =
+                crate::features::portfolio::PortfolioActivityLedger::empty("TEST ACTIVITY");
+            activity
+                .entries
+                .push(crate::features::portfolio::PortfolioActivityEntry {
+                    activity_id: "ACT-1".to_owned(),
+                    account_id: crate::features::portfolio::PortfolioAccountId::new("ACCOUNT 1"),
+                    date: "2026-08-01".to_owned(),
+                    kind: crate::features::portfolio::PortfolioActivityKind::Dividend,
+                    description: "DIVIDEND".to_owned(),
+                    symbol: Some("AAPL".to_owned()),
+                    currency: usd,
+                    quantity: None,
+                    cash_effect: Some(crate::foundation::Money::from_minor_units(500, usd)),
+                    fees: None,
+                });
+            activity
+        }
     }
 
     struct CapturingGateway {
-        seen: mpsc::SyncSender<crate::features::portfolio::PortfolioSnapshot>,
+        seen: mpsc::SyncSender<(
+            crate::features::portfolio::PortfolioSnapshot,
+            crate::features::portfolio::PortfolioActivityLedger,
+        )>,
     }
 
     impl AssistantGateway for CapturingGateway {
         fn complete(&self, request: AssistantRequest) -> Result<AssistantResponse, AssistantError> {
-            self.seen.send(request.portfolio).unwrap();
+            self.seen
+                .send((request.portfolio, request.activity))
+                .unwrap();
             Ok(AssistantResponse {
                 content: "ok".to_owned(),
                 actions: Vec::new(),
@@ -614,7 +641,7 @@ mod tests {
     }
 
     #[test]
-    fn each_request_loads_the_same_portfolio_snapshot_as_the_portfolio_panel() {
+    fn each_request_loads_the_same_portfolio_assets_as_the_portfolio_panel() {
         let (seen, received) = mpsc::sync_channel(1);
         let mut workspace = AssistantWorkspace::new(
             Arc::new(CapturingGateway { seen }),
@@ -624,10 +651,12 @@ mod tests {
         workspace.input = "analyze my positions".to_owned();
         workspace.submit();
 
-        let portfolio = received
+        let (portfolio, activity) = received
             .recv_timeout(std::time::Duration::from_secs(1))
             .expect("assistant request should receive the portfolio snapshot");
         assert_eq!(portfolio.positions[0].symbol, "AAPL");
         assert_eq!(portfolio.source, "TEST");
+        assert_eq!(activity.entries[0].symbol.as_deref(), Some("AAPL"));
+        assert_eq!(activity.source, "TEST ACTIVITY");
     }
 }

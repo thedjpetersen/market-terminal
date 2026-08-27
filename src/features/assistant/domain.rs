@@ -1,4 +1,4 @@
-use crate::features::portfolio::PortfolioSnapshot;
+use crate::features::portfolio::{PortfolioActivityLedger, PortfolioSnapshot};
 
 pub(crate) const COMMAND_PLANE_SYSTEM_PROMPT: &str = "You are the command plane for a native financial terminal. \
 Answer financial and product questions concisely. Use the supplied Market Terminal tools when the answer \
@@ -59,6 +59,7 @@ pub struct AssistantRequest {
     pub active_workspace: String,
     pub available_workspaces: Vec<String>,
     pub portfolio: PortfolioSnapshot,
+    pub activity: PortfolioActivityLedger,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -9,18 +9,23 @@ use chrono::Utc;
 use csv::StringRecord;
 
 use crate::features::portfolio::{
-    PortfolioAccountId, PortfolioCurrencyTotal, PortfolioError, PortfolioImportStateStore,
-    PortfolioRepository, PortfolioSnapshot, Position, PositionQuantity,
+    PortfolioAccountId, PortfolioActivityLedger, PortfolioCurrencyTotal, PortfolioError,
+    PortfolioImportStateStore, PortfolioRepository, PortfolioSnapshot, Position, PositionQuantity,
 };
 use crate::foundation::{Currency, InstrumentId, Money};
 
+use super::portfolio_activity_csv::parse_portfolio_activity_csv;
+
 const MAX_PORTFOLIO_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_ACTIVITY_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PORTFOLIO_ROWS: usize = 25_000;
 const MAX_PORTFOLIO_COLUMNS: usize = 256;
 
 pub struct CsvPortfolioRepository {
     snapshot: RwLock<PortfolioSnapshot>,
     path: RwLock<Option<PathBuf>>,
+    activity: RwLock<PortfolioActivityLedger>,
+    activity_path: RwLock<Option<PathBuf>>,
     state_store: Option<Arc<dyn PortfolioImportStateStore>>,
 }
 
@@ -40,6 +45,10 @@ impl CsvPortfolioRepository {
                 "NO PORTFOLIO IMPORTED · USE PORT IMPORT <FILE.CSV>",
             )),
             path: RwLock::new(None),
+            activity: RwLock::new(PortfolioActivityLedger::empty(
+                "NO ACTIVITY IMPORTED · USE PORT IMPORT ACTIVITY <FILE.CSV>",
+            )),
+            activity_path: RwLock::new(None),
             state_store,
         };
         let env_path = env::var_os("MARKET_TERMINAL_PORTFOLIO_CSV")
@@ -76,6 +85,43 @@ impl CsvPortfolioRepository {
                     .source = format!("AUTO-IMPORT ERROR · {error}");
             }
         }
+        let env_activity_path = env::var_os("MARKET_TERMINAL_PORTFOLIO_ACTIVITY_CSV")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let stored_activity_path = if env_activity_path.is_none() {
+            repository
+                .state_store
+                .as_ref()
+                .map(|store| store.load_activity_import_path())
+                .transpose()
+        } else {
+            Ok(None)
+        };
+        let startup_activity_path = match stored_activity_path {
+            Ok(stored) => env_activity_path.or(stored.flatten()),
+            Err(error) => {
+                repository
+                    .activity
+                    .write()
+                    .expect("portfolio activity lock")
+                    .source = format!("ACTIVITY IMPORT STATE ERROR · {error}");
+                env_activity_path
+            }
+        };
+        if let Some(path) = startup_activity_path {
+            let path = expand_home(path);
+            if let Err(error) = repository.import_activity_path(&path) {
+                *repository
+                    .activity_path
+                    .write()
+                    .expect("portfolio activity path lock") = Some(path);
+                repository
+                    .activity
+                    .write()
+                    .expect("portfolio activity lock")
+                    .source = format!("ACTIVITY AUTO-IMPORT ERROR · {error}");
+            }
+        }
         repository
     }
 
@@ -100,6 +146,37 @@ impl CsvPortfolioRepository {
         *self.path.write().expect("portfolio path lock") = Some(path.to_path_buf());
         Ok(snapshot)
     }
+
+    fn import_activity_path(&self, path: &Path) -> Result<PortfolioActivityLedger, PortfolioError> {
+        let metadata = fs::metadata(path).map_err(|error| {
+            PortfolioError::Io(format!(
+                "CANNOT READ ACTIVITY {} · {error}",
+                display_name(path)
+            ))
+        })?;
+        if metadata.len() > MAX_ACTIVITY_BYTES {
+            return Err(PortfolioError::InvalidCsv(format!(
+                "{} IS TOO LARGE · ACTIVITY LIMIT IS 10 MB",
+                display_name(path)
+            )));
+        }
+        let bytes = fs::read(path).map_err(|error| {
+            PortfolioError::Io(format!(
+                "CANNOT READ ACTIVITY {} · {error}",
+                display_name(path)
+            ))
+        })?;
+        let activity = parse_portfolio_activity_csv(&bytes, display_name(path))?;
+        if let Some(store) = &self.state_store {
+            store.save_activity_import_path(path)?;
+        }
+        *self.activity.write().expect("portfolio activity lock") = activity.clone();
+        *self
+            .activity_path
+            .write()
+            .expect("portfolio activity path lock") = Some(path.to_path_buf());
+        Ok(activity)
+    }
 }
 
 impl PortfolioRepository for CsvPortfolioRepository {
@@ -114,6 +191,17 @@ impl PortfolioRepository for CsvPortfolioRepository {
         self.import_path(path)
     }
 
+    fn load_activity(&self) -> PortfolioActivityLedger {
+        self.activity
+            .read()
+            .expect("portfolio activity lock")
+            .clone()
+    }
+
+    fn import_activity_csv(&self, path: &Path) -> Result<PortfolioActivityLedger, PortfolioError> {
+        self.import_activity_path(path)
+    }
+
     fn reload(&self) -> Result<PortfolioSnapshot, PortfolioError> {
         let path = self
             .path
@@ -126,6 +214,20 @@ impl PortfolioRepository for CsvPortfolioRepository {
                 )
             })?;
         self.import_path(&path)
+    }
+
+    fn reload_activity(&self) -> Result<PortfolioActivityLedger, PortfolioError> {
+        let path = self
+            .activity_path
+            .read()
+            .expect("portfolio activity path lock")
+            .clone()
+            .ok_or_else(|| {
+                PortfolioError::Unsupported(
+                    "NO IMPORTED ACTIVITY · USE PORT IMPORT ACTIVITY <FILE.CSV>".to_owned(),
+                )
+            })?;
+        self.import_activity_path(&path)
     }
 }
 
@@ -625,7 +727,7 @@ fn record_rejected_position(count: &mut usize, symbols: &mut Vec<String>, symbol
     }
 }
 
-fn parse_scaled(value: Option<&str>, decimals: u32) -> Option<i128> {
+pub(super) fn parse_scaled(value: Option<&str>, decimals: u32) -> Option<i128> {
     let value = value?.trim();
     if is_missing_provider_value(value) {
         return None;
@@ -727,7 +829,7 @@ fn is_missing_provider_value(value: &str) -> bool {
         )
 }
 
-fn parse_currency(value: &str) -> Result<Currency, PortfolioError> {
+pub(super) fn parse_currency(value: &str) -> Result<Currency, PortfolioError> {
     let normalized = value.trim().to_ascii_uppercase();
     let normalized = match normalized.as_str() {
         "$" | "US DOLLAR" | "US DOLLARS" => "USD",
@@ -768,7 +870,7 @@ fn rounded_division(numerator: i128, denominator: i128) -> i128 {
     }
 }
 
-fn csv_input_version(bytes: &[u8]) -> String {
+pub(super) fn csv_input_version(bytes: &[u8]) -> String {
     let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
     });
@@ -806,6 +908,7 @@ mod tests {
     #[derive(Default)]
     struct MemoryImportState {
         path: Mutex<Option<PathBuf>>,
+        activity_path: Mutex<Option<PathBuf>>,
     }
 
     impl PortfolioImportStateStore for MemoryImportState {
@@ -819,6 +922,22 @@ mod tests {
 
         fn save_import_path(&self, path: &Path) -> Result<(), PortfolioError> {
             *self.path.lock().unwrap_or_else(|error| error.into_inner()) = Some(path.to_path_buf());
+            Ok(())
+        }
+
+        fn load_activity_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+            Ok(self
+                .activity_path
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone())
+        }
+
+        fn save_activity_import_path(&self, path: &Path) -> Result<(), PortfolioError> {
+            *self
+                .activity_path
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(path.to_path_buf());
             Ok(())
         }
     }
@@ -944,6 +1063,8 @@ MSFT,MICROSOFT CORP,4,$500.00,"$2,000.00","$1,600.00",25%,USD
         let repository = CsvPortfolioRepository {
             snapshot: RwLock::new(PortfolioSnapshot::empty("TEST")),
             path: RwLock::new(None),
+            activity: RwLock::new(PortfolioActivityLedger::empty("TEST")),
+            activity_path: RwLock::new(None),
             state_store: None,
         };
         fs::write(&path, "Symbol,Quantity,Market Value\nAAPL,2,400\n").unwrap();
@@ -974,6 +1095,40 @@ MSFT,MICROSOFT CORP,4,$500.00,"$2,000.00","$1,600.00",25%,USD
         assert_eq!(restored.load_portfolio().positions[0].symbol, "AAPL");
         assert_eq!(restored.load_portfolio().net_asset_value_label(), "$400.00");
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn persistent_repository_restores_activity_independently_from_positions() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let positions_path =
+            env::temp_dir().join(format!("market-terminal-portfolio-state-{unique}.csv"));
+        let activity_path =
+            env::temp_dir().join(format!("market-terminal-activity-state-{unique}.csv"));
+        fs::write(
+            &positions_path,
+            "Symbol,Quantity,Market Value\nAAPL,2,400\n",
+        )
+        .unwrap();
+        fs::write(
+            &activity_path,
+            "Date,Description,Amount\n2026-08-01,Deposit,100.00\n",
+        )
+        .unwrap();
+        let state = Arc::new(MemoryImportState::default());
+        let first = CsvPortfolioRepository::persistent(state.clone());
+
+        first.import_csv(&positions_path).unwrap();
+        first.import_activity_csv(&activity_path).unwrap();
+        let restored = CsvPortfolioRepository::persistent(state);
+
+        assert_eq!(restored.load_portfolio().positions[0].symbol, "AAPL");
+        assert_eq!(restored.load_activity().entries.len(), 1);
+        assert_eq!(restored.load_activity().net_cash_effect_label(), "$100.00");
+        fs::remove_file(positions_path).unwrap();
+        fs::remove_file(activity_path).unwrap();
     }
 
     #[test]
@@ -1013,6 +1168,60 @@ MSFT,MICROSOFT CORP,4,$500.00,"$2,000.00","$1,600.00",25%,USD
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(rendered.contains("PORT"));
+        assert!(rendered.contains("CSV-FNV1A64"));
+    }
+
+    #[test]
+    #[ignore = "requires MARKET_TERMINAL_PORTFOLIO_ACTIVITY_CSV pointing to a real user export"]
+    fn live_configured_activity_reconciles_real_cash_without_demo_fallbacks() {
+        let _ = dotenvy::dotenv();
+        assert!(
+            env::var_os("MARKET_TERMINAL_PORTFOLIO_ACTIVITY_CSV").is_some(),
+            "set MARKET_TERMINAL_PORTFOLIO_ACTIVITY_CSV to an actual export"
+        );
+        let repository = Arc::new(CsvPortfolioRepository::from_env());
+        let activity = repository.load_activity();
+
+        assert!(!activity.entries.is_empty(), "{}", activity.source);
+        assert!(activity.source.starts_with("CSV ·"), "{}", activity.source);
+        assert!(!activity.source.contains("DEMO"));
+        assert!(activity.input_version.starts_with("CSV-FNV1A64-"));
+        assert!(!activity.currency_totals.is_empty());
+        for total in &activity.currency_totals {
+            assert_eq!(
+                total.inflows.minor_units() - total.outflows.minor_units(),
+                total.net_cash_effect.minor_units()
+            );
+        }
+        assert!(activity
+            .disclosures
+            .iter()
+            .any(|value| value.contains("NOT VERIFIED BROKER TRADE")));
+        assert!(activity.entries.iter().all(|entry| {
+            entry.account_id.as_str().starts_with("ACCOUNT ")
+                && !entry.account_id.as_str().contains('*')
+        }));
+
+        use crate::app::{CommandInvocation, Workspace};
+        use crate::features::portfolio::PortfolioWorkspace;
+        use ratatui::{backend::TestBackend, Terminal};
+        let mut workspace = PortfolioWorkspace::new(repository);
+        workspace.handle_command(&CommandInvocation {
+            function: "PORT".to_owned(),
+            args: vec!["ACTIVITY".to_owned()],
+        });
+        let mut terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+        terminal
+            .draw(|frame| workspace.render(frame, frame.area()))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("VERSIONED CASH + BROKER ACTIVITY"));
         assert!(rendered.contains("CSV-FNV1A64"));
     }
 }

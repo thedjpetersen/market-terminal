@@ -48,6 +48,9 @@ impl CommandInference for AiCommandInference {
                 portfolio: PortfolioSnapshot::empty(
                     "COMMAND INFERENCE · ASSET CONTEXT NOT PROVIDED",
                 ),
+                activity: crate::features::portfolio::PortfolioActivityLedger::empty(
+                    "COMMAND INFERENCE · ACTIVITY CONTEXT NOT PROVIDED",
+                ),
             })
             .map_err(|error| CommandInferenceError::Provider(error.to_string()))?;
         let mut actions = response.actions.into_iter();

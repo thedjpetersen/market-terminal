@@ -198,6 +198,48 @@ impl PortfolioImportStateStore for LocalPersistence {
         .map_err(|error| PortfolioError::Io(error.to_string()))?;
         FeatureDocumentRepository::save(self, &document).map_err(portfolio_persistence_error)
     }
+
+    fn load_activity_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+        let feature = portfolio_feature_key()?;
+        let id = portfolio_activity_import_document_id()?;
+        let document = FeatureDocumentRepository::load(self, &feature, &id)
+            .map_err(portfolio_persistence_error)?;
+        document
+            .map(|document| {
+                let path = document
+                    .payload()
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|path| !path.trim().is_empty() && path.len() <= 4_096)
+                    .ok_or_else(|| {
+                        PortfolioError::InvalidCsv(
+                            "PERSISTED PORTFOLIO ACTIVITY IMPORT PATH IS INVALID".to_owned(),
+                        )
+                    })?;
+                Ok(PathBuf::from(path))
+            })
+            .transpose()
+    }
+
+    fn save_activity_import_path(&self, path: &Path) -> Result<(), PortfolioError> {
+        let path = path
+            .to_str()
+            .filter(|path| path.len() <= 4_096)
+            .ok_or_else(|| {
+                PortfolioError::Unsupported(
+                    "PORTFOLIO ACTIVITY IMPORT PATH MUST BE UTF-8 AND AT MOST 4096 BYTES"
+                        .to_owned(),
+                )
+            })?;
+        let document = FeatureDocument::new(
+            portfolio_feature_key()?,
+            portfolio_activity_import_document_id()?,
+            1,
+            serde_json::json!({"path": path}),
+        )
+        .map_err(|error| PortfolioError::Io(error.to_string()))?;
+        FeatureDocumentRepository::save(self, &document).map_err(portfolio_persistence_error)
+    }
 }
 
 impl AlertStateStore for LocalPersistence {
@@ -242,6 +284,10 @@ fn portfolio_feature_key() -> Result<FeatureKey, PortfolioError> {
 
 fn portfolio_import_document_id() -> Result<DocumentId, PortfolioError> {
     DocumentId::new("active_import").map_err(|error| PortfolioError::Io(error.to_string()))
+}
+
+fn portfolio_activity_import_document_id() -> Result<DocumentId, PortfolioError> {
+    DocumentId::new("active_activity_import").map_err(|error| PortfolioError::Io(error.to_string()))
 }
 
 fn portfolio_persistence_error(error: PersistenceError) -> PortfolioError {
@@ -741,6 +787,37 @@ mod tests {
             .join("documents")
             .join("portfolio")
             .join("active_import.json");
+        assert!(document.is_file());
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(document).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn portfolio_activity_import_path_is_private_and_separate_from_positions() {
+        let directory = TestDirectory::new("portfolio-activity-import");
+        let repository = LocalPersistence::new(&directory.0);
+        let positions = PathBuf::from("/Users/example/Documents/positions.csv");
+        let activity = PathBuf::from("/Users/example/Documents/activity.csv");
+
+        PortfolioImportStateStore::save_import_path(&repository, &positions).unwrap();
+        PortfolioImportStateStore::save_activity_import_path(&repository, &activity).unwrap();
+
+        assert_eq!(
+            PortfolioImportStateStore::load_import_path(&repository).unwrap(),
+            Some(positions)
+        );
+        assert_eq!(
+            PortfolioImportStateStore::load_activity_import_path(&repository).unwrap(),
+            Some(activity)
+        );
+        let document = directory
+            .0
+            .join("documents")
+            .join("portfolio")
+            .join("active_activity_import.json");
         assert!(document.is_file());
         #[cfg(unix)]
         assert_eq!(

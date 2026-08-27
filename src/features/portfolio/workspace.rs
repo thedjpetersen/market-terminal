@@ -1,10 +1,11 @@
 use std::{path::PathBuf, sync::Arc};
 
-use crossterm::event::MouseEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
-    text::Line,
-    widgets::{Block, Borders, Cell, Paragraph, Row},
+    style::Style,
+    text::{Line, Span},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Wrap},
     Frame,
 };
 
@@ -12,15 +13,45 @@ use crate::{
     app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
     ui::{
         components::{render_table, terminal_block},
-        table_row_at,
-        theme::{self, AMBER, CYAN, GREEN, INK, MUTED, YELLOW},
+        is_primary_click, scroll_key, table_row_at,
+        theme::{self, AMBER, BG, CYAN, GREEN, INK, MUTED, RED, YELLOW},
     },
 };
 
-use super::{PortfolioRepository, ID};
+use super::{format_money, PortfolioActivityLedger, PortfolioRepository, PortfolioSnapshot, ID};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PortfolioView {
+    Positions,
+    Activity,
+    Performance,
+}
+
+impl PortfolioView {
+    const ALL: [Self; 3] = [Self::Positions, Self::Activity, Self::Performance];
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Positions => "POSITIONS",
+            Self::Activity => "ACTIVITY",
+            Self::Performance => "PERFORMANCE",
+        }
+    }
+
+    fn offset(self, delta: isize) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|candidate| *candidate == self)
+            .unwrap_or_default();
+        let next = (index as isize + delta).rem_euclid(Self::ALL.len() as isize) as usize;
+        Self::ALL[next]
+    }
+}
 
 pub struct PortfolioWorkspace {
     query: Arc<dyn PortfolioRepository>,
+    view: PortfolioView,
+    selected: usize,
     pending_intents: Vec<AppIntent>,
     status: String,
 }
@@ -30,8 +61,157 @@ impl PortfolioWorkspace {
         let status = query.load_portfolio().source;
         Self {
             query,
+            view: PortfolioView::Positions,
+            selected: 0,
             pending_intents: Vec::new(),
             status,
+        }
+    }
+
+    fn select_view(&mut self, view: PortfolioView) {
+        self.view = view;
+        self.clamp_selection();
+        self.status = match view {
+            PortfolioView::Positions => self.query.load_portfolio().source,
+            PortfolioView::Activity => self.query.load_activity().source,
+            PortfolioView::Performance => {
+                "PERFORMANCE REQUIRES DATED VALUATIONS · INPUT GAP SHOWN BELOW".to_owned()
+            }
+        };
+    }
+
+    fn selection_count(&self) -> usize {
+        match self.view {
+            PortfolioView::Positions => self.query.load_portfolio().positions.len(),
+            PortfolioView::Activity => self.query.load_activity().entries.len(),
+            PortfolioView::Performance => 0,
+        }
+    }
+
+    fn clamp_selection(&mut self) {
+        self.selected = self
+            .selection_count()
+            .checked_sub(1)
+            .map_or(0, |last| self.selected.min(last));
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        let count = self.selection_count();
+        self.selected = if count == 0 {
+            0
+        } else {
+            self.selected.saturating_add_signed(delta).min(count - 1)
+        };
+    }
+
+    fn open_selected(&mut self) -> bool {
+        let symbol = match self.view {
+            PortfolioView::Positions => self
+                .query
+                .load_portfolio()
+                .positions
+                .get(self.selected)
+                .and_then(|position| (!position.cash).then(|| position.symbol.clone())),
+            PortfolioView::Activity => self
+                .query
+                .load_activity()
+                .entries
+                .get(self.selected)
+                .and_then(|entry| entry.symbol.clone()),
+            PortfolioView::Performance => None,
+        };
+        let Some(symbol) = symbol else {
+            self.status = "SELECTED ROW HAS NO SECURITY TO OPEN".to_owned();
+            return self.selection_count() > 0;
+        };
+        self.pending_intents.push(AppIntent::DispatchCommand {
+            command: format!("SEC {symbol} US"),
+            origin: ID,
+        });
+        self.status = format!("OPENING {symbol} SECURITY RESEARCH");
+        true
+    }
+
+    fn import_positions(&mut self, args: &[String]) {
+        let raw_path = args.join(" ");
+        if raw_path.is_empty() {
+            self.status = "IMPORT REQUIRES A CSV PATH · PORT IMPORT <FILE.CSV>".to_owned();
+            return;
+        }
+        self.status = match self.query.import_csv(&expand_home(&raw_path)) {
+            Ok(snapshot) => format!(
+                "IMPORTED {} POSITIONS · {}",
+                snapshot.positions.len(),
+                snapshot.source
+            ),
+            Err(error) => format!("IMPORT ERROR · {error}"),
+        };
+        self.view = PortfolioView::Positions;
+        self.clamp_selection();
+    }
+
+    fn import_activity(&mut self, args: &[String]) {
+        let raw_path = args.join(" ");
+        if raw_path.is_empty() {
+            self.status =
+                "ACTIVITY IMPORT REQUIRES A CSV PATH · PORT IMPORT ACTIVITY <FILE.CSV>".to_owned();
+            return;
+        }
+        self.status = match self.query.import_activity_csv(&expand_home(&raw_path)) {
+            Ok(activity) => format!(
+                "IMPORTED {} ACTIVITY ROWS · {}",
+                activity.entries.len(),
+                activity.source
+            ),
+            Err(error) => format!("ACTIVITY IMPORT ERROR · {error}"),
+        };
+        self.view = PortfolioView::Activity;
+        self.clamp_selection();
+    }
+
+    fn reload_positions(&mut self) {
+        self.status = match self.query.reload() {
+            Ok(snapshot) => format!(
+                "RELOADED {} POSITIONS · {}",
+                snapshot.positions.len(),
+                snapshot.source
+            ),
+            Err(error) => format!("RELOAD ERROR · {error}"),
+        };
+        self.clamp_selection();
+    }
+
+    fn reload_activity(&mut self) {
+        self.status = match self.query.reload_activity() {
+            Ok(activity) => format!(
+                "RELOADED {} ACTIVITY ROWS · {}",
+                activity.entries.len(),
+                activity.source
+            ),
+            Err(error) => format!("ACTIVITY RELOAD ERROR · {error}"),
+        };
+        self.clamp_selection();
+    }
+
+    fn reload_current(&mut self) {
+        match self.view {
+            PortfolioView::Positions => self.reload_positions(),
+            PortfolioView::Activity => self.reload_activity(),
+            PortfolioView::Performance => {
+                let positions = self.query.reload();
+                let activity = self.query.reload_activity();
+                self.status = match (positions, activity) {
+                    (Ok(positions), Ok(activity)) => format!(
+                        "RELOADED {} POSITIONS + {} ACTIVITY ROWS · INPUT GAP UNCHANGED",
+                        positions.positions.len(),
+                        activity.entries.len()
+                    ),
+                    (Err(position_error), Err(activity_error)) => {
+                        format!("RELOAD ERRORS · {position_error} · {activity_error}")
+                    }
+                    (Err(error), _) | (_, Err(error)) => format!("PARTIAL RELOAD · {error}"),
+                };
+            }
         }
     }
 }
@@ -42,11 +222,24 @@ impl Workspace for PortfolioWorkspace {
             id: ID,
             label: "PORTFOLIO",
             hotkey: 'p',
-            commands: &["PORT", "PORTFOLIO", "POSITIONS"],
+            commands: &[
+                "PORT",
+                "PORTFOLIO",
+                "POSITIONS",
+                "ACTIVITY",
+                "TRANSACTIONS",
+                "PERFORMANCE",
+            ],
         }
     }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
+        match invocation.function.as_str() {
+            "POSITIONS" => self.select_view(PortfolioView::Positions),
+            "ACTIVITY" | "TRANSACTIONS" => self.select_view(PortfolioView::Activity),
+            "PERFORMANCE" => self.select_view(PortfolioView::Performance),
+            _ => {}
+        }
         let Some(operation) = invocation
             .args
             .first()
@@ -55,51 +248,146 @@ impl Workspace for PortfolioWorkspace {
             return true;
         };
         match operation.as_str() {
+            "POSITIONS" => self.select_view(PortfolioView::Positions),
+            "ACTIVITY" | "TRANSACTIONS" | "LEDGER" => self.select_view(PortfolioView::Activity),
+            "PERFORMANCE" | "PERF" => self.select_view(PortfolioView::Performance),
             "IMPORT" => {
-                let raw_path = invocation.args.get(1..).unwrap_or_default().join(" ");
-                if raw_path.is_empty() {
-                    self.status = "IMPORT REQUIRES A CSV PATH · PORT IMPORT <FILE.CSV>".to_owned();
-                    return true;
+                let target = invocation
+                    .args
+                    .get(1)
+                    .map(|value| value.to_ascii_uppercase());
+                if target
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "ACTIVITY" | "TRANSACTIONS" | "LEDGER"))
+                {
+                    self.import_activity(invocation.args.get(2..).unwrap_or_default());
+                } else {
+                    self.import_positions(invocation.args.get(1..).unwrap_or_default());
                 }
-                let path = expand_home(&raw_path);
-                self.status = match self.query.import_csv(&path) {
-                    Ok(snapshot) => format!(
-                        "IMPORTED {} POSITIONS · {}",
-                        snapshot.positions.len(),
-                        snapshot.source
-                    ),
-                    Err(error) => format!("IMPORT ERROR · {error}"),
-                };
             }
             "RELOAD" | "REFRESH" => {
-                self.status = match self.query.reload() {
-                    Ok(snapshot) => format!(
-                        "RELOADED {} POSITIONS · {}",
-                        snapshot.positions.len(),
-                        snapshot.source
-                    ),
-                    Err(error) => format!("RELOAD ERROR · {error}"),
-                };
+                let target = invocation
+                    .args
+                    .get(1)
+                    .map(|value| value.to_ascii_uppercase());
+                if target
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "ACTIVITY" | "TRANSACTIONS" | "LEDGER"))
+                {
+                    self.reload_activity();
+                } else {
+                    self.reload_positions();
+                }
             }
             _ => {}
         }
         true
     }
 
+    fn handle_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
+                self.select_view(self.view.offset(1));
+                true
+            }
+            KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
+                self.select_view(self.view.offset(-1));
+                true
+            }
+            KeyCode::Char('1') => {
+                self.select_view(PortfolioView::Positions);
+                true
+            }
+            KeyCode::Char('2') => {
+                self.select_view(PortfolioView::Activity);
+                true
+            }
+            KeyCode::Char('3') => {
+                self.select_view(PortfolioView::Performance);
+                true
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.move_selection(-1);
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.move_selection(1);
+                true
+            }
+            KeyCode::Enter | KeyCode::Char('o') => self.open_selected(),
+            KeyCode::Char('r') => {
+                self.reload_current();
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
-        let snapshot = self.query.load_portfolio();
-        let rows = Layout::vertical([Constraint::Length(4), Constraint::Min(10)]).split(area);
-        let columns = Layout::horizontal([Constraint::Percentage(76), Constraint::Percentage(24)])
-            .split(rows[1]);
-        let Some(index) = table_row_at(event, columns[0], snapshot.positions.len()) else {
-            return false;
-        };
-        let symbol = &snapshot.positions[index].symbol;
-        self.pending_intents.push(AppIntent::DispatchCommand {
-            command: format!("SEC {symbol} US"),
-            origin: ID,
-        });
-        true
+        let areas = portfolio_layout(area);
+        if is_primary_click(event, areas.header) {
+            self.reload_current();
+            return true;
+        }
+        if is_primary_click(event, areas.tabs) {
+            let mut x = areas.tabs.x;
+            for (index, view) in PortfolioView::ALL.into_iter().enumerate() {
+                let width = format!(" {} {} ", index + 1, view.label()).chars().count() as u16;
+                if event.column >= x && event.column < x.saturating_add(width) {
+                    self.select_view(view);
+                    return true;
+                }
+                x = x.saturating_add(width);
+            }
+            return true;
+        }
+        if let Some(index) = table_row_at(event, areas.main, self.selection_count()) {
+            self.selected = index;
+            return self.open_selected();
+        }
+        if is_primary_click(event, areas.main) {
+            if self.view == PortfolioView::Performance {
+                self.status =
+                    "IMPORT DATED VALUATIONS BEFORE CALCULATING TWR OR ATTRIBUTION".to_owned();
+            }
+            return true;
+        }
+        if is_primary_click(event, areas.side) {
+            self.status = match self.view {
+                PortfolioView::Positions => {
+                    "POSITION TOTALS RECONCILE BY CURRENCY · UNPRICED ROWS STAY VISIBLE".to_owned()
+                }
+                PortfolioView::Activity => {
+                    "CASH SIGNS ARE PROVIDER-REPORTED · NO FX OR RETURN INFERENCE".to_owned()
+                }
+                PortfolioView::Performance => {
+                    "ONE POSITION SNAPSHOT IS NOT A RETURN SERIES".to_owned()
+                }
+            };
+            return true;
+        }
+        if is_primary_click(event, areas.footer) {
+            let controls = [
+                (" 1/2/3/TAB VIEW  ", Some(KeyCode::Tab)),
+                ("↑↓/JK SELECT  ", None),
+                ("ENTER/O SECURITY  ", Some(KeyCode::Enter)),
+                ("R RELOAD  ", Some(KeyCode::Char('r'))),
+            ];
+            let mut x = areas.footer.x;
+            for (label, key) in controls {
+                let width = label.chars().count() as u16;
+                if event.column >= x && event.column < x.saturating_add(width) {
+                    return key
+                        .is_none_or(|key| self.handle_key(KeyEvent::new(key, KeyModifiers::NONE)));
+                }
+                x = x.saturating_add(width);
+            }
+            return true;
+        }
+        if let Some(key) = scroll_key(event, areas.main) {
+            return self.handle_key(key);
+        }
+        false
     }
 
     fn poll_intents(&mut self) -> Vec<AppIntent> {
@@ -107,120 +395,451 @@ impl Workspace for PortfolioWorkspace {
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
-        let snapshot = self.query.load_portfolio();
-        let rows = Layout::vertical([Constraint::Length(4), Constraint::Min(10)]).split(area);
-        let kpis = Layout::horizontal([Constraint::Ratio(1, 4); 4]).split(rows[0]);
-        let nav = snapshot.net_asset_value_label();
-        let ytd_return = snapshot.ytd_return_label();
-        let available_cash = snapshot.available_cash_label();
-        let sharpe = snapshot.sharpe_label();
-        for (index, (label, value)) in [
-            ("NET ASSET VALUE", nav.as_str()),
-            ("YTD RETURN", ytd_return.as_str()),
-            ("AVAILABLE CASH", available_cash.as_str()),
-            ("SHARPE", sharpe.as_str()),
-        ]
-        .iter()
-        .enumerate()
-        {
-            frame.render_widget(
-                Paragraph::new(vec![
-                    Line::styled(*label, MUTED),
-                    Line::styled(*value, if index == 1 { GREEN } else { CYAN }),
-                ])
-                .block(Block::new().borders(Borders::ALL).border_style(AMBER))
-                .alignment(Alignment::Center),
-                kpis[index],
-            );
+        let positions = self.query.load_portfolio();
+        let activity = self.query.load_activity();
+        let areas = portfolio_layout(area);
+        render_header(frame, areas.header, self.view, &positions, &activity);
+        render_tabs(frame, areas.tabs, self.view);
+        match self.view {
+            PortfolioView::Positions => {
+                render_positions(frame, areas.main, &positions, self.selected);
+                render_position_source(frame, areas.side, &positions, &self.status);
+            }
+            PortfolioView::Activity => {
+                render_activity(frame, areas.main, &activity, self.selected);
+                render_activity_source(frame, areas.side, &activity, &self.status);
+            }
+            PortfolioView::Performance => {
+                render_performance(frame, areas.main, &positions, &activity);
+                render_performance_inputs(frame, areas.side, &positions, &activity, &self.status);
+            }
         }
+        render_footer(frame, areas.footer, self.view);
+    }
+}
 
-        let columns = Layout::horizontal([Constraint::Percentage(76), Constraint::Percentage(24)])
-            .split(rows[1]);
-        let position_rows = snapshot
-            .positions
-            .iter()
-            .map(|position| {
-                Row::new(
-                    [
-                        format!(
-                            "{} · {} · {}",
-                            position.account_id.as_str(),
-                            position.symbol,
-                            position.currency
-                        ),
-                        position.quantity_label(),
-                        position.average_cost_label(),
-                        position.market_value_label(),
-                        position.pnl_label(),
-                        position.weight_label(),
-                    ]
-                    .into_iter()
-                    .map(|value| {
-                        let style = theme::value(&value);
-                        Cell::from(value).style(style)
-                    }),
-                )
-            })
-            .collect::<Vec<_>>();
-        render_table(
-            frame,
-            columns[0],
-            "PORT",
-            "POSITIONS",
-            [
-                "ACCOUNT · SYMBOL · CCY",
-                "QTY",
-                "AVG COST",
-                "MKT VALUE",
-                "P&L",
-                "WEIGHT",
-            ],
-            position_rows,
-            [
-                Constraint::Percentage(21),
-                Constraint::Percentage(11),
-                Constraint::Percentage(17),
-                Constraint::Percentage(21),
-                Constraint::Percentage(15),
-                Constraint::Percentage(15),
-            ],
-        );
-        let mut source_lines = vec![
-            Line::styled("SOURCE", AMBER),
-            Line::styled(snapshot.source.clone(), INK),
-            Line::raw(""),
-            Line::styled("AS OF / INPUT", AMBER),
-            Line::styled(snapshot.as_of.clone(), MUTED),
-            Line::styled(snapshot.input_version.clone(), MUTED),
-            Line::raw(""),
-            Line::styled("CURRENCY TOTALS", AMBER),
-        ];
-        for total in &snapshot.currency_totals {
-            source_lines.push(Line::styled(
-                format!(
-                    "{} NAV {} · CASH {} · {} UNPRICED",
-                    total.currency,
-                    super::format_money(total.net_asset_value),
-                    super::format_money(total.available_cash),
-                    total.unpriced_positions
-                ),
-                INK,
-            ));
-        }
-        source_lines.extend([
-            Line::raw(""),
-            Line::styled(&self.status, YELLOW),
-            Line::raw(""),
-            Line::styled("PORT IMPORT <FILE.CSV>", CYAN),
-            Line::styled("PORT RELOAD", CYAN),
-            Line::raw(""),
-            Line::styled("CLICK A POSITION TO OPEN SECURITY", MUTED),
-        ]);
+#[derive(Debug, Clone, Copy)]
+struct PortfolioLayout {
+    header: Rect,
+    tabs: Rect,
+    main: Rect,
+    side: Rect,
+    footer: Rect,
+}
+
+fn portfolio_layout(area: Rect) -> PortfolioLayout {
+    let rows = Layout::vertical([
+        Constraint::Length(4),
+        Constraint::Length(1),
+        Constraint::Min(9),
+        Constraint::Length(2),
+    ])
+    .split(area);
+    let body =
+        Layout::horizontal([Constraint::Percentage(74), Constraint::Percentage(26)]).split(rows[2]);
+    PortfolioLayout {
+        header: rows[0],
+        tabs: rows[1],
+        main: body[0],
+        side: body[1],
+        footer: rows[3],
+    }
+}
+
+fn render_header(
+    frame: &mut Frame,
+    area: Rect,
+    view: PortfolioView,
+    positions: &PortfolioSnapshot,
+    activity: &PortfolioActivityLedger,
+) {
+    let kpis = Layout::horizontal([Constraint::Ratio(1, 4); 4]).split(area);
+    let values = match view {
+        PortfolioView::Positions => [
+            ("NET ASSET VALUE", positions.net_asset_value_label()),
+            ("YTD RETURN", positions.ytd_return_label()),
+            ("AVAILABLE CASH", positions.available_cash_label()),
+            ("SHARPE", positions.sharpe_label()),
+        ],
+        PortfolioView::Activity => [
+            ("ACTIVITY ROWS", activity.entries.len().to_string()),
+            ("PERIOD", activity.period_label().to_owned()),
+            ("NET CASH EFFECT", activity.net_cash_effect_label()),
+            ("CURRENCIES", activity.currency_totals.len().to_string()),
+        ],
+        PortfolioView::Performance => [
+            (
+                "VALUATION POINTS",
+                usize::from(!positions.positions.is_empty()).to_string(),
+            ),
+            ("ACTIVITY ROWS", activity.entries.len().to_string()),
+            ("TIME-WEIGHTED RETURN", "N/A".to_owned()),
+            ("ATTRIBUTION", "N/A".to_owned()),
+        ],
+    };
+    for (index, (label, value)) in values.into_iter().enumerate() {
         frame.render_widget(
-            Paragraph::new(source_lines).block(terminal_block("SRC", "IMPORTED PORTFOLIO")),
-            columns[1],
+            Paragraph::new(vec![
+                Line::styled(label, MUTED),
+                Line::styled(value.clone(), if value == "N/A" { RED } else { CYAN }),
+            ])
+            .block(Block::new().borders(Borders::ALL).border_style(AMBER))
+            .alignment(Alignment::Center),
+            kpis[index],
         );
     }
+}
+
+fn render_tabs(frame: &mut Frame, area: Rect, active: PortfolioView) {
+    let spans = PortfolioView::ALL
+        .into_iter()
+        .enumerate()
+        .map(|(index, view)| {
+            let style = if view == active {
+                Style::new().bg(AMBER.into()).fg(BG.into()).bold()
+            } else {
+                Style::new().fg(MUTED.into())
+            };
+            Span::styled(format!(" {} {} ", index + 1, view.label()), style)
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn render_positions(frame: &mut Frame, area: Rect, snapshot: &PortfolioSnapshot, selected: usize) {
+    let rows = snapshot
+        .positions
+        .iter()
+        .enumerate()
+        .map(|(index, position)| {
+            styled_data_row(
+                [
+                    format!(
+                        "{} · {} · {}",
+                        position.account_id.as_str(),
+                        position.symbol,
+                        position.currency
+                    ),
+                    position.quantity_label(),
+                    position.average_cost_label(),
+                    position.market_value_label(),
+                    position.pnl_label(),
+                    position.weight_label(),
+                ],
+                index,
+                selected,
+            )
+        })
+        .collect::<Vec<_>>();
+    render_table(
+        frame,
+        area,
+        "PORT",
+        "POSITIONS",
+        [
+            "ACCOUNT · SYMBOL · CCY",
+            "QTY",
+            "AVG COST",
+            "MKT VALUE",
+            "P&L",
+            "WEIGHT",
+        ],
+        rows,
+        [
+            Constraint::Percentage(24),
+            Constraint::Percentage(11),
+            Constraint::Percentage(16),
+            Constraint::Percentage(20),
+            Constraint::Percentage(14),
+            Constraint::Percentage(15),
+        ],
+    );
+}
+
+fn render_activity(
+    frame: &mut Frame,
+    area: Rect,
+    activity: &PortfolioActivityLedger,
+    selected: usize,
+) {
+    let rows = activity
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            styled_data_row(
+                [
+                    entry.date.clone(),
+                    entry.account_id.as_str().to_owned(),
+                    entry.kind.label().to_owned(),
+                    format!("{} · {}", entry.symbol_label(), entry.description),
+                    entry.quantity_label(),
+                    entry.cash_effect_label(),
+                    entry.fees_label(),
+                ],
+                index,
+                selected,
+            )
+        })
+        .collect::<Vec<_>>();
+    render_table(
+        frame,
+        area,
+        "ACT",
+        "VERSIONED CASH + BROKER ACTIVITY",
+        [
+            "DATE",
+            "ACCOUNT",
+            "TYPE",
+            "SYMBOL · DESCRIPTION",
+            "QTY",
+            "CASH",
+            "FEES",
+        ],
+        rows,
+        [
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
+            Constraint::Percentage(11),
+            Constraint::Percentage(27),
+            Constraint::Percentage(11),
+            Constraint::Percentage(17),
+            Constraint::Percentage(10),
+        ],
+    );
+}
+
+fn styled_data_row<const N: usize>(
+    values: [String; N],
+    index: usize,
+    selected: usize,
+) -> Row<'static> {
+    Row::new(values.into_iter().map(|value| {
+        let style = theme::value(&value);
+        Cell::from(value).style(style)
+    }))
+    .style(if index == selected {
+        Style::new().bg(CYAN.into()).fg(BG.into()).bold()
+    } else {
+        Style::new()
+    })
+}
+
+fn render_position_source(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &PortfolioSnapshot,
+    status: &str,
+) {
+    let mut lines = vec![
+        Line::styled("SOURCE", AMBER),
+        Line::styled(snapshot.source.clone(), INK),
+        Line::styled(snapshot.as_of.clone(), MUTED),
+        Line::styled(snapshot.input_version.clone(), CYAN),
+        Line::raw(""),
+        Line::styled("CURRENCY TOTALS", AMBER),
+    ];
+    for total in &snapshot.currency_totals {
+        lines.push(Line::styled(
+            format!(
+                "{} NAV {} · CASH {} · {} UNPRICED",
+                total.currency,
+                format_money(total.net_asset_value),
+                format_money(total.available_cash),
+                total.unpriced_positions
+            ),
+            INK,
+        ));
+    }
+    lines.extend([
+        Line::raw(""),
+        Line::styled("METHODOLOGY", AMBER),
+        Line::styled(snapshot.methodology.clone(), MUTED),
+        Line::raw(""),
+        Line::styled(status, YELLOW),
+        Line::styled("PORT IMPORT <FILE.CSV>", CYAN),
+    ]);
+    for disclosure in snapshot.disclosures.iter().take(5) {
+        lines.push(Line::styled(format!("• {disclosure}"), MUTED));
+    }
+    render_side(frame, area, "SRC", "POSITION SNAPSHOT", lines);
+}
+
+fn render_activity_source(
+    frame: &mut Frame,
+    area: Rect,
+    activity: &PortfolioActivityLedger,
+    status: &str,
+) {
+    let mut lines = vec![
+        Line::styled("SOURCE / PERIOD", AMBER),
+        Line::styled(activity.source.clone(), INK),
+        Line::styled(activity.period.clone(), MUTED),
+        Line::styled(activity.input_version.clone(), CYAN),
+        Line::raw(""),
+        Line::styled("CASH RECONCILIATION", AMBER),
+    ];
+    for total in &activity.currency_totals {
+        lines.extend([
+            Line::styled(
+                format!(
+                    "{} IN {} · OUT {}",
+                    total.currency,
+                    format_money(total.inflows),
+                    format_money(total.outflows)
+                ),
+                INK,
+            ),
+            Line::styled(
+                format!(
+                    "  NET {} · DIV {} · INT {} · FEES {}",
+                    format_money(total.net_cash_effect),
+                    format_money(total.dividends),
+                    format_money(total.interest),
+                    format_money(total.fees)
+                ),
+                GREEN,
+            ),
+        ]);
+    }
+    lines.extend([
+        Line::raw(""),
+        Line::styled("METHODOLOGY", AMBER),
+        Line::styled(activity.methodology.clone(), MUTED),
+        Line::raw(""),
+        Line::styled(status, YELLOW),
+        Line::styled("PORT IMPORT ACTIVITY <CSV>", CYAN),
+    ]);
+    for disclosure in activity.disclosures.iter().take(6) {
+        lines.push(Line::styled(format!("• {disclosure}"), MUTED));
+    }
+    render_side(frame, area, "LEDGER", "EXACT CASH BY CURRENCY", lines);
+}
+
+fn render_side(
+    frame: &mut Frame,
+    area: Rect,
+    code: &'static str,
+    title: &'static str,
+    lines: Vec<Line<'_>>,
+) {
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(terminal_block(code, title)),
+        area,
+    );
+}
+
+fn render_performance(
+    frame: &mut Frame,
+    area: Rect,
+    positions: &PortfolioSnapshot,
+    activity: &PortfolioActivityLedger,
+) {
+    let valuation_count = usize::from(!positions.positions.is_empty());
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled("TIME-WEIGHTED RETURN UNAVAILABLE", RED),
+            Line::raw(""),
+            Line::styled("CURRENT INPUT COVERAGE", AMBER),
+            Line::styled(
+                format!(
+                    "{valuation_count} POSITION VALUATION POINT · {} ACTIVITY ROWS · {}",
+                    activity.entries.len(),
+                    activity.period_label()
+                ),
+                INK,
+            ),
+            Line::raw(""),
+            Line::styled("WHY CALCULATION IS BLOCKED", AMBER),
+            Line::styled(
+                "A point-in-time holding snapshot has no opening value or sub-period returns.",
+                MUTED,
+            ),
+            Line::styled(
+                "Cash activity identifies flows but does not value the portfolio at those flows.",
+                MUTED,
+            ),
+            Line::styled(
+                "Contribution and attribution require benchmark and dated position-level returns.",
+                MUTED,
+            ),
+            Line::raw(""),
+            Line::styled("REQUIRED NEXT INPUT", AMBER),
+            Line::styled(
+                "• Dated portfolio valuations at every external-flow boundary",
+                CYAN,
+            ),
+            Line::styled("• Resolved instruments and corporate actions", CYAN),
+            Line::styled("• Benchmark series in an explicit reporting currency", CYAN),
+            Line::raw(""),
+            Line::styled("AVAILABLE WITHOUT INFERENCE", AMBER),
+            Line::styled(
+                format!(
+                    "Current allocation: {} positions across {} currencies",
+                    positions.positions.len(),
+                    positions.currency_totals.len()
+                ),
+                INK,
+            ),
+            Line::styled(
+                format!(
+                    "Exact activity net cash: {}",
+                    activity.net_cash_effect_label()
+                ),
+                INK,
+            ),
+        ])
+        .wrap(Wrap { trim: true })
+        .block(terminal_block("PERF", "INPUT-AWARE PERFORMANCE")),
+        area,
+    );
+}
+
+fn render_performance_inputs(
+    frame: &mut Frame,
+    area: Rect,
+    positions: &PortfolioSnapshot,
+    activity: &PortfolioActivityLedger,
+    status: &str,
+) {
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled("POSITION INPUT", AMBER),
+            Line::styled(positions.input_version.clone(), CYAN),
+            Line::styled(positions.as_of.clone(), MUTED),
+            Line::raw(""),
+            Line::styled("ACTIVITY INPUT", AMBER),
+            Line::styled(activity.input_version.clone(), CYAN),
+            Line::styled(activity.period.clone(), MUTED),
+            Line::raw(""),
+            Line::styled("METHODOLOGY", AMBER),
+            Line::styled("NO RETURN, CONTRIBUTION, OR ATTRIBUTION INFERENCE", RED),
+            Line::raw(""),
+            Line::styled(status, YELLOW),
+        ])
+        .wrap(Wrap { trim: true })
+        .block(terminal_block("INPUT", "VALUATION REQUIREMENTS")),
+        area,
+    );
+}
+
+fn render_footer(frame: &mut Frame, area: Rect, view: PortfolioView) {
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" 1/2/3/TAB ", AMBER),
+            Span::styled("VIEW  ", MUTED),
+            Span::styled("↑↓/JK ", AMBER),
+            Span::styled("SELECT  ", MUTED),
+            Span::styled("ENTER/O ", AMBER),
+            Span::styled("SECURITY  ", MUTED),
+            Span::styled("R ", AMBER),
+            Span::styled("RELOAD  ", MUTED),
+            Span::styled(format!("{} · CLICKABLE", view.label()), YELLOW),
+        ])),
+        area,
+    );
 }
 
 fn expand_home(path: &str) -> PathBuf {
@@ -235,4 +854,76 @@ fn expand_home(path: &str) -> PathBuf {
         }
     }
     PathBuf::from(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{bootstrap, runtime};
+    use crossterm::event::{MouseButton, MouseEventKind};
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn click(x: u16, y: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn keyboard_and_commands_switch_all_views() {
+        let mut workspace = PortfolioWorkspace::new(Arc::new(crate::infrastructure::DemoData));
+
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE)));
+        assert_eq!(workspace.view, PortfolioView::Activity);
+        assert!(workspace.handle_command(&CommandInvocation {
+            function: "PORT".to_owned(),
+            args: vec!["PERFORMANCE".to_owned()],
+        }));
+        assert_eq!(workspace.view, PortfolioView::Performance);
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert_eq!(workspace.view, PortfolioView::Positions);
+    }
+
+    #[test]
+    fn all_portfolio_regions_respond_to_primary_clicks() {
+        let mut workspace = PortfolioWorkspace::new(Arc::new(crate::infrastructure::DemoData));
+        let area = Rect::new(0, 0, 120, 36);
+        let layout = portfolio_layout(area);
+
+        assert!(workspace.handle_mouse(click(layout.tabs.x + 15, layout.tabs.y), area));
+        assert_eq!(workspace.view, PortfolioView::Activity);
+        assert!(workspace.handle_mouse(click(layout.main.x + 2, layout.main.y + 2), area));
+        assert!(workspace.handle_mouse(click(layout.side.x + 1, layout.side.y + 1), area));
+        assert!(workspace.status.contains("PROVIDER-REPORTED"));
+        assert!(workspace.handle_mouse(click(layout.footer.x + 1, layout.footer.y), area));
+        assert!(workspace.handle_mouse(click(layout.header.x + 1, layout.header.y + 1), area));
+    }
+
+    #[test]
+    fn performance_panel_renders_missing_inputs_instead_of_mock_metrics() {
+        let mut app = bootstrap::demo_app();
+        for character in "/PERFORMANCE\n".chars() {
+            let code = match character {
+                '\n' => KeyCode::Enter,
+                character => KeyCode::Char(character),
+            };
+            app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(120, 36)).unwrap();
+        terminal.draw(|frame| runtime::render(frame, &app)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("TIME-WEIGHTED RETURN UNAVAILABLE"));
+        assert!(rendered.contains("NO RETURN, CONTRIBUTION"));
+        assert!(rendered.contains("ATTRIBUTION INFERENCE"));
+    }
 }

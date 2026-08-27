@@ -330,6 +330,39 @@ return and Sharpe remain `N/A` because a positions snapshot does not contain
 enough transaction history to calculate them honestly. No broker password or
 API credential is required, and the CSV stays local.
 
+Portfolio has three clickable, keyboard-addressable views: `1` Positions, `2`
+Activity, and `3` Performance. `Tab`, `Shift+Tab`, `h/l`, and the arrow keys
+switch views; `j/k` selects rows, and Enter opens a row's resolved security when
+one exists. Import a separate cash-account or broker activity export with:
+
+```text
+PORT IMPORT ACTIVITY "~/Downloads/activity.csv"
+PORT RELOAD ACTIVITY
+```
+
+The activity path is persisted separately from the positions path. It can also
+be configured explicitly at startup:
+
+```dotenv
+MARKET_TERMINAL_PORTFOLIO_ACTIVITY_CSV="~/Downloads/activity.csv"
+```
+
+The activity adapter accepts dated broker-style action exports with amount,
+symbol, quantity, fee, account, and currency aliases, including non-cash split
+rows. It also accepts the documented [Monarch cash-account CSV
+shape](https://help.monarchmoney.com/hc/en-us/articles/4409682789908-Import-data-manually-from-banks-or-other-finance-apps),
+where positive amounts are income and negative amounts are expenses. Provider
+signs are preserved, account identifiers are replaced with import-local labels,
+and inflows, outflows, net cash, dividends, interest, fees, and non-cash events
+reconcile exactly by currency. A Monarch cash export is labeled as cash-account
+activity—not broker trade history.
+
+`PORT PERFORMANCE` reports current input coverage. It intentionally leaves TWR,
+contribution, and attribution unavailable until dated portfolio valuations,
+resolved corporate actions, and an explicit benchmark/reporting currency are
+present. Cash events plus one current positions snapshot are not silently
+promoted into a return series.
+
 Overview immediately reflects the same in-memory imported portfolio and live
 news cache. A point-in-time positions export does not contain a return series,
 so Overview leaves YTD return, drawdown, volatility, Sharpe, attribution, and

@@ -20,6 +20,7 @@ mod live_spreadsheet;
 mod local_persistence;
 mod market_data_demo;
 mod openrouter;
+mod portfolio_activity_csv;
 mod portfolio_csv;
 mod portfolio_risk;
 mod sec_instruments;

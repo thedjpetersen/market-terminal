@@ -164,6 +164,29 @@ endorsed by, or sponsored by Yahoo.
   concentration and a labeled parallel non-cash shock; it does not infer an FX
   rate, historical distribution, or executable price.
 
+## User portfolio activity CSV
+
+- **Surface:** Portfolio Activity, Portfolio Performance input coverage, and the
+  assistant's bounded read-only `portfolio_get_activity` tool.
+- **Source/ownership:** an explicit local cash-account or broker activity export
+  selected by the user. Supported aliases cover dated actions, amounts,
+  symbols, quantities, fees, accounts, and currencies. The Monarch cash CSV
+  convention is documented by [Monarch's official import/export
+  guide](https://help.monarchmoney.com/hc/en-us/articles/4409682789908-Import-data-manually-from-banks-or-other-finance-apps):
+  positive is income and negative is expense.
+- **Retention/privacy:** parsed activity remains in process and raw CSV contents
+  are not copied. Only the separately selected path is stored in a private
+  crash-safe feature document. Raw account identifiers are replaced with
+  import-local labels before reaching the domain or AI tool.
+- **Bounds:** files are capped at 10 MB, 100,000 rows, 256 columns, 96 display
+  characters per description, 50 rows per AI tool response, and 20 optional
+  symbol filters. Any invalid dated or monetary row refuses the whole import.
+- **Quality:** provider signs are preserved; dedicated fees become non-negative
+  cost magnitudes; totals reconcile exactly in minor units by currency; missing
+  currency is visibly defaulted to USD; and no FX rate is invented. Cash-account
+  activity is explicitly not verified broker trade history. Activity without
+  dated valuations does not produce TWR, contribution, or attribution.
+
 ## User workbook and CSV
 
 - **Surface:** interactive Spreadsheet workbook and active-sheet CSV exchange.

@@ -1377,7 +1377,7 @@ mod tests {
         let mut app = bootstrap::demo_app();
         app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
 
-        app.handle_mouse(left_click(2, 12), Rect::new(0, 0, 160, 48));
+        app.handle_mouse(left_click(2, 13), Rect::new(0, 0, 160, 48));
         app.advance_tick();
 
         assert_eq!(app.active_workspace, SECURITY);

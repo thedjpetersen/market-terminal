@@ -489,6 +489,9 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw("$META / free text    AI infers a validated command"),
             Line::raw("DESK                 Monitor + Chart + News"),
             Line::raw("PORT IMPORT <CSV>    Import positions"),
+            Line::raw("PORT ACTIVITY        Open exact cash/activity ledger"),
+            Line::raw("PORT IMPORT ACTIVITY <CSV>  Import cash or broker activity"),
+            Line::raw("PORT PERFORMANCE     Show performance input coverage"),
             Line::raw("PORT RELOAD          Reload positions"),
             Line::raw("SHEET IMPORT <CSV>   Replace active sheet"),
             Line::raw("SHEET EXPORT <CSV>   Export active sheet"),
@@ -635,11 +638,12 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw("2  Keep Yahoo, or choose Finnhub / Alpha Vantage / Alpaca"),
             Line::raw("3  Set credentials only for official API providers"),
             Line::raw("4  Run `codex login` for ChatGPT Pro"),
-            Line::raw("5  Set watchlist / chart symbol / portfolio CSV"),
+            Line::raw("5  Set watchlist / chart symbol / portfolio CSV paths"),
             Line::raw("6  Restart the terminal to apply provider changes"),
             Line::raw(""),
             Line::styled("USE NOW", theme::AMBER),
             Line::raw("PORT IMPORT \"~/Downloads/positions.csv\""),
+            Line::raw("PORT IMPORT ACTIVITY \"~/Downloads/activity.csv\""),
             Line::raw(format!(
                 "THEME NORD  ·  {} cycle themes",
                 app.key_labels(&[ShellAction::NextTheme, ShellAction::PreviousTheme])
