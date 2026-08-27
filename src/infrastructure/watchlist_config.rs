@@ -5,7 +5,8 @@ use crate::features::{
     watchlist::{MonitorColumn, WatchlistCatalog, WatchlistDefinition, WatchlistItem},
 };
 
-const DEFAULT_SYMBOLS: &str = "IBM";
+const DEFAULT_SYMBOLS: &str = "AAPL,MSFT,NVDA";
+const FALLBACK_SYMBOL: &str = "AAPL";
 const MAX_SYMBOLS: usize = 50;
 
 #[derive(Debug, Clone)]
@@ -30,7 +31,7 @@ impl ConfiguredWatchlistCatalog {
             }
         }
         if symbols.is_empty() {
-            symbols.push(DEFAULT_SYMBOLS.to_owned());
+            symbols.push(FALLBACK_SYMBOL.to_owned());
         }
         Self { symbols }
     }

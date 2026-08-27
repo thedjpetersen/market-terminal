@@ -48,6 +48,9 @@ move to its own crate later without changing its public vocabulary.
 - **Complete:** first resilient quote-streaming slice with bounded per-instrument
   coalescing, cancellation, drop metrics, provenance, freshness/LKG caching,
   retry/rate-limit policies, and monitor fallback behavior.
+- **Complete:** selectable no-key Yahoo Finance delayed chart adapter with
+  bounded responses/cache and explicit unofficial-interface attribution,
+  alongside documented Alpha Vantage and Alpaca adapters.
 - **Complete:** expanded Security Research and News/Events workflows with
   canonical instrument links, financial/estimate/ownership/filing/peer views,
   raw SEC Form 4 non-derivative transactions with official filing links,

@@ -24,7 +24,7 @@ use crate::{
         DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway, LiveAlertsQuery,
         LiveMarketsQuery, LiveNewsFeed, LiveOverviewQuery, LiveSecurityQuery, LocalPersistence,
         LocalSpreadsheetFiles, OpenRouterConfig, OpenRouterGateway, SecInstrumentSearch,
-        SystemNewsArticleOpener,
+        SystemNewsArticleOpener, YahooMarketData,
     },
 };
 
@@ -235,22 +235,33 @@ struct LiveMarketDataProviders {
 
 fn configured_market_data() -> LiveMarketDataProviders {
     let provider = std::env::var("MARKET_TERMINAL_MARKET_DATA_PROVIDER")
-        .unwrap_or_else(|_| "alpha-vantage".to_owned())
+        .unwrap_or_else(|_| "yahoo".to_owned())
         .trim()
         .to_ascii_lowercase();
-    if provider == "alpaca" {
-        let adapter = Arc::new(AlpacaMarketData::from_env());
-        LiveMarketDataProviders {
-            spreadsheet: adapter.clone(),
-            market_data: adapter.clone(),
-            chart_history: adapter,
+    match provider.as_str() {
+        "alpaca" => {
+            let adapter = Arc::new(AlpacaMarketData::from_env());
+            LiveMarketDataProviders {
+                spreadsheet: adapter.clone(),
+                market_data: adapter.clone(),
+                chart_history: adapter,
+            }
         }
-    } else {
-        let adapter = Arc::new(AlphaVantageMarketData::from_env());
-        LiveMarketDataProviders {
-            spreadsheet: adapter.clone(),
-            market_data: adapter.clone(),
-            chart_history: adapter,
+        "alpha-vantage" | "alphavantage" => {
+            let adapter = Arc::new(AlphaVantageMarketData::from_env());
+            LiveMarketDataProviders {
+                spreadsheet: adapter.clone(),
+                market_data: adapter.clone(),
+                chart_history: adapter,
+            }
+        }
+        _ => {
+            let adapter = Arc::new(YahooMarketData::from_env());
+            LiveMarketDataProviders {
+                spreadsheet: adapter.clone(),
+                market_data: adapter.clone(),
+                chart_history: adapter,
+            }
         }
     }
 }
@@ -269,38 +280,45 @@ fn runtime_settings_summary(
     chart_symbol: &str,
 ) -> RuntimeSettingsSummary {
     let provider = std::env::var("MARKET_TERMINAL_MARKET_DATA_PROVIDER")
-        .unwrap_or_else(|_| "alpha-vantage".to_owned())
+        .unwrap_or_else(|_| "yahoo".to_owned())
         .trim()
         .to_ascii_lowercase();
-    let (market_provider, market_credentials) = if provider == "alpaca" {
-        let feed = std::env::var("ALPACA_FEED")
-            .unwrap_or_else(|_| "iex".to_owned())
-            .trim()
-            .to_ascii_uppercase();
-        let configured = env_present("APCA_API_KEY_ID") && env_present("APCA_API_SECRET_KEY");
-        (
-            format!("ALPACA · {}", if feed == "SIP" { "SIP" } else { "IEX" }),
-            if configured { "CONFIGURED" } else { "MISSING" }.to_owned(),
-        )
-    } else {
-        let personal_key = std::env::var("ALPHA_VANTAGE_API_KEY").is_ok_and(|value| {
-            let value = value.trim();
-            !value.is_empty() && value != "demo"
-        });
-        (
-            if personal_key {
-                "ALPHA VANTAGE · PERSONAL KEY"
-            } else {
-                "ALPHA VANTAGE · DEMO (IBM ONLY)"
-            }
-            .to_owned(),
-            if personal_key {
-                "CONFIGURED"
-            } else {
-                "DEMO KEY"
-            }
-            .to_owned(),
-        )
+    let (market_provider, market_credentials) = match provider.as_str() {
+        "alpaca" => {
+            let feed = std::env::var("ALPACA_FEED")
+                .unwrap_or_else(|_| "iex".to_owned())
+                .trim()
+                .to_ascii_uppercase();
+            let configured = env_present("APCA_API_KEY_ID") && env_present("APCA_API_SECRET_KEY");
+            (
+                format!("ALPACA · {}", if feed == "SIP" { "SIP" } else { "IEX" }),
+                if configured { "CONFIGURED" } else { "MISSING" }.to_owned(),
+            )
+        }
+        "alpha-vantage" | "alphavantage" => {
+            let personal_key = std::env::var("ALPHA_VANTAGE_API_KEY").is_ok_and(|value| {
+                let value = value.trim();
+                !value.is_empty() && value != "demo"
+            });
+            (
+                if personal_key {
+                    "ALPHA VANTAGE · PERSONAL KEY"
+                } else {
+                    "ALPHA VANTAGE · DEMO (IBM ONLY)"
+                }
+                .to_owned(),
+                if personal_key {
+                    "CONFIGURED"
+                } else {
+                    "DEMO KEY"
+                }
+                .to_owned(),
+            )
+        }
+        _ => (
+            "YAHOO FINANCE CHART · DELAYED · UNOFFICIAL".to_owned(),
+            "NOT REQUIRED".to_owned(),
+        ),
     };
     let assistant_provider = std::env::var("MARKET_TERMINAL_AI_PROVIDER")
         .unwrap_or_else(|_| "codex".to_owned())
@@ -332,10 +350,10 @@ fn runtime_settings_summary(
         market_provider,
         market_credentials,
         quote_refresh_seconds: quote_refresh_interval.as_secs(),
-        watchlist: bounded_env("MARKET_TERMINAL_WATCHLIST", "IBM", 96),
+        watchlist: bounded_env("MARKET_TERMINAL_WATCHLIST", "AAPL,MSFT,NVDA", 96),
         market_symbols: bounded_env(
             "MARKET_TERMINAL_MARKETS_SYMBOLS",
-            &bounded_env("MARKET_TERMINAL_WATCHLIST", "IBM", 96),
+            &bounded_env("MARKET_TERMINAL_WATCHLIST", "AAPL,MSFT,NVDA", 96),
             96,
         ),
         chart_symbol: chart_symbol.to_owned(),
@@ -375,7 +393,7 @@ fn configured_market_symbols() -> Vec<String> {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .or_else(|| std::env::var("MARKET_TERMINAL_WATCHLIST").ok())
-        .unwrap_or_else(|| "IBM".to_owned())
+        .unwrap_or_else(|| "AAPL,MSFT,NVDA".to_owned())
         .split(',')
         .map(str::trim)
         .filter(|symbol| !symbol.is_empty())
@@ -395,7 +413,7 @@ fn initial_chart_symbol() -> String {
                     character.is_ascii_alphanumeric() || matches!(character, '.' | '-')
                 })
         })
-        .unwrap_or_else(|| "IBM".to_owned())
+        .unwrap_or_else(|| "AAPL".to_owned())
 }
 
 pub fn default_state_directory() -> PathBuf {

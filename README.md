@@ -103,24 +103,33 @@ MARKET_TERMINAL_NEWS_REFRESH_SECS=300
 
 The interactive Markets, Monitor, Chart, Alerts, Security, and Spreadsheet resolve
 quote/history fields on bounded background workers; provider latency never
-runs on the input or render thread. Alpha Vantage is the default. Configure a
-personal key, comma-separated watchlist, and initial chart symbol:
+runs on the input or render thread. The default is Yahoo Finance's delayed,
+no-key chart endpoint, adapted from `alphai-tui`. It is an unofficial interface,
+is labeled that way in the UI, and may change without notice. Configure any
+listed symbols directly:
 
 ```dotenv
-ALPHA_VANTAGE_API_KEY="your-key"
-MARKET_TERMINAL_WATCHLIST="IBM,AAPL,MSFT"
-MARKET_TERMINAL_MARKETS_SYMBOLS="IBM,AAPL,MSFT"
+MARKET_TERMINAL_MARKET_DATA_PROVIDER="yahoo"
+MARKET_TERMINAL_WATCHLIST="AAPL,MSFT,NVDA"
+MARKET_TERMINAL_MARKETS_SYMBOLS="SPY,QQQ,IWM"
 MARKET_TERMINAL_CHART_SYMBOL="AAPL"
 ```
 
-With no key, the app uses Alpha Vantage's real `demo` quote and full-history
-IBM data, and limits the default monitor, chart, and sheet to IBM. Quote cells
-and history are explicitly labeled delayed end-of-day data with provider and
-quality. Unsupported symbols, one-day intraday history, or unentitled periods
-show unavailable/permission-denied state; the app never fills them with
-generated prices or replayed bars. Press `F9` or click the Chart header to
-refresh. See [the data-source register](docs/data-sources.md) for freshness,
-attribution, caching, and retention details.
+Yahoo responses are bounded to 8 MiB and cached in process for 60 seconds;
+null bars are dropped and missing OHLC fields fall back only to that same bar's
+reported close. Quotes, day ranges, volume, and history are explicitly labeled
+delayed with provider, source time, and cache status. The app never fills
+missing results with generated prices or replayed bars. Press `F9` or click the
+Chart header to refresh. See [the data-source register](docs/data-sources.md)
+for source terms, freshness, attribution, caching, and retention details.
+
+Alpha Vantage remains available as an official documented adapter. With no
+personal key it uses Alpha Vantage's real `demo` access and is limited to IBM:
+
+```dotenv
+MARKET_TERMINAL_MARKET_DATA_PROVIDER="alpha-vantage"
+ALPHA_VANTAGE_API_KEY="your-key-or-demo"
+```
 
 Charts start with OHLC candlesticks, SMA 20/100, Wilder RSI 14, and volume.
 Candles aggregate complete OHLC buckets when history is wider than the terminal;
@@ -381,8 +390,9 @@ HawaiianNinja pointed us to
 [`makeev/alphai-tui`](https://github.com/makeev/alphai-tui). Codex then
 integrated the selected MIT-licensed pieces we care about—indicator math,
 chart and watchlist-density ideas, the responsive split desk,
-provider-selection patterns, official Alpaca adapter behavior, the fast
-first-run/settings flow, and the Form 4 insider workflow—into this project's bounded, provider-aware
+provider-selection patterns, Yahoo and official Alpaca adapter behavior, the
+fast first-run/settings flow, and the Form 4 insider workflow—into this
+project's bounded, provider-aware
 architecture. `alphai-tui` is Copyright (c) 2026 Mikhail Makeev and licensed
 under MIT. The copied-code provenance and complete upstream license text are in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

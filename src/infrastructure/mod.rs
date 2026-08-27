@@ -21,6 +21,7 @@ mod sec_instruments;
 mod spreadsheet_demo;
 mod spreadsheet_files;
 mod watchlist_config;
+mod yahoo;
 
 pub use alerts_demo::DemoAlertsReplay;
 pub use alpaca::AlpacaMarketData;
@@ -45,3 +46,4 @@ pub use sec_instruments::SecInstrumentSearch;
 pub use spreadsheet_demo::DemoSpreadsheetMarketData;
 pub use spreadsheet_files::LocalSpreadsheetFiles;
 pub use watchlist_config::ConfiguredWatchlistCatalog;
+pub use yahoo::YahooMarketData;

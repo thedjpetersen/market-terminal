@@ -18,6 +18,13 @@ selection and Unicode sparkline downsampling adapt the upstream table behavior;
 the implementation and its provider-observation boundary are identified in
 `src/features/watchlist/workspace.rs`.
 
+The Yahoo Finance chart adapter in `src/infrastructure/yahoo.rs` adapts the
+upstream chart response mapping, null-bar handling, and daily previous-close
+fallback to this project's typed market-data, chart, and spreadsheet ports.
+Yahoo Finance is a data source, not the licensor of this project or upstream
+code; its data terms and redistribution boundary are documented in
+`docs/data-sources.md`.
+
 The half-block candlestick renderer, width-aware OHLC aggregation, reserved
 right margin, last-bar price marker, and Braille moving-average overlay adapt
 the upstream chart implementation; the integrated code is identified in

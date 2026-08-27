@@ -8,6 +8,34 @@ Across snapshot providers, Monitor retains at most 64 distinct observations per
 instrument for an in-process session sparkline. Cached repeats do not add
 points, and the trace is neither persisted nor synthesized.
 
+## Yahoo Finance chart
+
+- **Surfaces:** default interactive Markets/Monitor snapshots,
+  Chart/Security history, local Alert observations, and Spreadsheet `PX_LAST`
+  / `PX_CHANGE(..., "1D")` cells.
+- **Interface status:** the no-key `query1.finance.yahoo.com/v8/finance/chart`
+  interface is not a documented public Yahoo API. It may change or cease to be
+  available without notice; the terminal labels it `UNOFFICIAL` and never
+  silently falls back to gallery data.
+- **Freshness/provenance:** values are conservatively labeled delayed 15
+  minutes. Provider timestamp, receive time, cache status, currency, current-day
+  low/high, volume, price, and change travel with each usable quote.
+- **History semantics:** 1D uses five-minute bars; 1M/6M/YTD/1Y use daily bars;
+  5Y uses weekly OHLCV. Null-close bars are dropped. A thin bar may fill missing
+  open/high/low from its own close; no cross-bar or synthetic price is created.
+- **Bounds/caching:** provider symbols are path-safe, responses are limited to
+  8 MiB, and identical successful requests are cached only in process for 60
+  seconds. Data is not written to the repo, user workbook, screenshots, or
+  telemetry.
+- **Use boundary:** Yahoo states that Yahoo Finance information is for
+  informational purposes, not trading, and must not be redistributed. Users
+  are responsible for use consistent with Yahoo's
+  [exchange/data-provider notice](https://uk.help.yahoo.com/kb/exchanges-data-providers-yahoo-finance-sln2310.html)
+  and [terms](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html).
+
+Yahoo is a trademark of Yahoo Inc. This project is not affiliated with,
+endorsed by, or sponsored by Yahoo.
+
 ## Alpha Vantage
 
 - **Surfaces:** interactive Markets/Monitor snapshots, Chart daily/weekly
