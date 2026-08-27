@@ -146,13 +146,18 @@ endorsed by, or sponsored by Yahoo.
   sections of interactive Overview.
 - **Source/ownership:** a local export selected by the user. No broker login or
   API credential is collected.
-- **Retention:** parsed positions remain in process; the configured path may be
-  retained in the user's ignored environment file. Account identifiers and
-  unused columns are not retained.
+- **Retention:** parsed positions remain in process and raw CSV contents are not
+  copied. A successful import stores only the selected path in a private,
+  crash-safe feature document (or the ignored environment file can provide an
+  override). Raw broker account identifiers are replaced with import-local
+  labels; unused columns are not retained.
 - **Quality:** snapshot market values are shown as imported values with source
-  status, never presented as a streaming quote feed. Overview does not infer
-  returns, risk statistics, attribution, or movers from this point-in-time
-  snapshot.
+  status, never presented as a streaming quote feed. Exact-minor-unit totals
+  reconcile independently by ISO currency with no invented FX conversion.
+  Unpriced positions remain visible and excluded from an explicitly incomplete
+  NAV. Each snapshot carries a deterministic input version, valuation time,
+  methodology, and missing-data disclosures. Overview does not infer returns,
+  risk statistics, attribution, or movers from this point-in-time snapshot.
 
 ## User workbook and CSV
 

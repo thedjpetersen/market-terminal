@@ -288,8 +288,10 @@ Export current positions as CSV from your brokerage, open the command bar with
 PORT IMPORT "~/Downloads/positions.csv"
 ```
 
-Use `PORT RELOAD` after replacing the export. To load it automatically on every
-launch, set an absolute path (or a `~/` path) in the ignored `.env` file:
+Use `PORT RELOAD` after replacing the export. A successful interactive import
+stores only that path in the private crash-safe application state and restores
+it on later launches; the CSV contents are not copied. An absolute path (or a
+`~/` path) in the ignored `.env` file remains an explicit startup override:
 
 ```dotenv
 MARKET_TERMINAL_PORTFOLIO_CSV="~/Downloads/positions.csv"
@@ -299,14 +301,19 @@ The importer recognizes common Fidelity-, Schwab-, and Vanguard-style header
 aliases, including `Symbol`/`Ticker`, `Quantity`/`Qty`/`Shares`,
 `Current Value`/`Market Value`/`Mkt Val`, price, total or per-share cost basis,
 gain/loss percentage, description, and currency. It finds headers after broker
-preambles, combines the same symbol across accounts, identifies cash and money
-market rows, and rejects non-USD totals instead of silently adding unlike
-currencies. Account identifiers and other unused columns are not retained.
+preambles, combines duplicate rows only within the same account and currency,
+identifies cash and money market rows, preserves positions by anonymized
+import-local account label, and reconciles exact-minor-unit totals separately by ISO
+currency. It never combines unlike currencies using an invented FX rate. Raw
+broker account identifiers and other unused columns are not retained.
 
-Market value and gain/loss come from the export. YTD return and Sharpe remain
-`N/A` because a positions snapshot does not contain enough transaction history
-to calculate them honestly. No broker password or API credential is required,
-and the CSV stays local.
+Market value and gain/loss come from the export. A holding with a missing price
+or value remains visible as `UNPRICED` and is excluded from the explicitly
+incomplete NAV. Every snapshot carries a deterministic input version,
+valuation time, per-currency methodology, and missing-data disclosures. YTD
+return and Sharpe remain `N/A` because a positions snapshot does not contain
+enough transaction history to calculate them honestly. No broker password or
+API credential is required, and the CSV stays local.
 
 Overview immediately reflects the same in-memory imported portfolio and live
 news cache. A point-in-time positions export does not contain a return series,

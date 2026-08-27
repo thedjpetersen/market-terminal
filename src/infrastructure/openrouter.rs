@@ -196,22 +196,28 @@ fn portfolio_context(request: &AssistantRequest) -> String {
         .take(100)
         .map(|position| {
             json!({
+                "instrument_id": position.instrument_id.as_str(),
+                "account": position.account_id.as_str(),
                 "symbol": position.symbol,
-                "quantity": position.quantity,
-                "average_cost": position.average_cost,
-                "market_value": position.market_value,
-                "pnl": position.pnl,
-                "weight": position.weight,
+                "quantity": position.quantity_label(),
+                "average_cost": position.average_cost_label(),
+                "market_value": position.market_value_label(),
+                "currency": position.currency().to_string(),
+                "pnl": position.pnl_label(),
+                "weight": position.weight_label(),
             })
         })
         .collect::<Vec<_>>();
     json!({
         "source": request.portfolio.source,
         "as_of": request.portfolio.as_of,
-        "net_asset_value": request.portfolio.net_asset_value,
-        "available_cash": request.portfolio.available_cash,
-        "ytd_return": request.portfolio.ytd_return,
-        "sharpe": request.portfolio.sharpe,
+        "input_version": request.portfolio.input_version,
+        "methodology": request.portfolio.methodology,
+        "disclosures": request.portfolio.disclosures,
+        "net_asset_value": request.portfolio.net_asset_value_label(),
+        "available_cash": request.portfolio.available_cash_label(),
+        "ytd_return": request.portfolio.ytd_return_label(),
+        "sharpe": request.portfolio.sharpe_label(),
         "position_count": request.portfolio.positions.len(),
         "positions": positions,
         "truncated": request.portfolio.positions.len() > 100,

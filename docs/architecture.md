@@ -46,10 +46,14 @@ work during input or rendering.
 The interactive composition root uses `LiveNewsFeed`, which owns a bounded
 background RSS/Atom worker, performs explicit on-demand readability extraction,
 and exposes cloned provider-neutral workbench snapshots, and
-`CsvPortfolioRepository`, which owns the last successfully validated USD
-positions import. Demo news and portfolio data are wired only by `demo_app` for
-deterministic tests and gallery captures. Network and filesystem formats remain
-outside the feature packages.
+`CsvPortfolioRepository`, which owns the last successfully validated user
+positions import. The repository emits a versioned, typed snapshot with
+exact money, fixed-scale quantities, anonymized account identities,
+per-currency reconciliation, and explicit unpriced holdings. Only the selected
+CSV path is persisted through the Portfolio-owned state port; raw portfolio
+contents remain at the user-selected location. Demo news and portfolio data are
+wired only by `demo_app` for deterministic tests and gallery captures. Network
+and filesystem formats remain outside the feature packages.
 
 `LiveOverviewQuery` composes those two already-loaded, in-memory snapshots for
 the interactive Overview. It performs no network or filesystem work and does

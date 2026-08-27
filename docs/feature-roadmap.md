@@ -79,6 +79,10 @@ move to its own crate later without changing its public vocabulary.
   Vantage daily history and SEC EDGAR annual Company Facts, composed behind the
   Spreadsheet-owned batch port with explicit provenance, delay, unavailable,
   and entitlement states.
+- **Complete:** first Stage 2 Portfolio ingestion slice with exact money and
+  fixed-scale quantities, anonymized account separation, honest per-currency
+  reconciliation, retained unpriced positions, deterministic input versions,
+  methodology/disclosures, and crash-safe import-path restoration.
 - **Next:** the Stage 2 portfolio, risk, screening, and restart-safe alerts
   program. Provider availability extends the deployment surface; deterministic
   fixtures remain the Stage 1 acceptance baseline and opt-in live contracts
@@ -334,6 +338,12 @@ ALERT core.drawdown > 8% -> preview -> enable
   users can promote results to a watchlist or spreadsheet range.
 - Alerts are idempotent, debounced, auditable, restart-safe, and visibly marked
   as simulated/local until an external notification channel is configured.
+
+**Status: in progress.** Position-snapshot ingestion now supplies the versioned
+Portfolio boundary that downstream Risk can consume without storage access.
+Transaction/cash ledgers, splits, dividends, performance, contribution, and
+attribution remain the next Portfolio work; screening and durable alert state
+remain separate Stage 2 slices.
 
 ## Stage 3 — Advanced analytics and paper workflows
 

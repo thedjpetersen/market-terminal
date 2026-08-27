@@ -2,12 +2,16 @@ use crate::features::{
     markets::{MarketIndex, MarketsQuery, MarketsSnapshot},
     news::{Headline, NewsFeed, NewsSnapshot},
     overview::{OverviewQuery, OverviewSnapshot},
-    portfolio::{PortfolioRepository, PortfolioSnapshot, Position},
+    portfolio::{
+        PortfolioAccountId, PortfolioCurrencyTotal, PortfolioRepository, PortfolioSnapshot,
+        Position, PositionQuantity,
+    },
     security::{
         Estimate, Filing, FinancialPeriod, OwnerPosition, PeerComparison, SecurityError,
         SecurityIdentity, SecurityPage, SecurityQuery, SecurityResearch, SecuritySnapshot,
     },
 };
+use crate::foundation::{Currency, InstrumentId, Money};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DemoData;
@@ -338,25 +342,62 @@ fn demo_security_research(symbol: &str) -> SecurityResearch {
 
 impl PortfolioRepository for DemoData {
     fn load_portfolio(&self) -> PortfolioSnapshot {
+        let usd = Currency::new("USD").expect("USD is valid");
         PortfolioSnapshot {
             positions: POSITIONS
                 .iter()
                 .map(|position| Position {
+                    instrument_id: InstrumentId::new(format!(
+                        "demo:instrument:{}",
+                        position.0.to_ascii_lowercase()
+                    )),
+                    account_id: PortfolioAccountId::new("DEMO ACCOUNT"),
                     symbol: position.0.to_owned(),
-                    quantity: position.1.to_owned(),
-                    average_cost: position.2.to_owned(),
-                    market_value: position.3.to_owned(),
-                    pnl: position.4.to_owned(),
-                    weight: position.5.to_owned(),
+                    currency: usd,
+                    quantity: PositionQuantity::from_scaled_units(demo_decimal(position.1, 6)),
+                    average_cost: Some(Money::from_minor_units(demo_decimal(position.2, 2), usd)),
+                    market_value: Some(Money::from_minor_units(demo_decimal(position.3, 2), usd)),
+                    unrealized_return_bps: Some(demo_decimal(position.4, 2) as i32),
+                    weight_bps: Some(demo_decimal(position.5, 2) as i32),
+                    cash: false,
                 })
                 .collect(),
-            net_asset_value: "$1,045,228".to_owned(),
-            ytd_return: "+17.02%".to_owned(),
-            available_cash: "$127,834".to_owned(),
-            sharpe: "2.79".to_owned(),
+            currency_totals: vec![PortfolioCurrencyTotal {
+                currency: usd,
+                net_asset_value: Money::from_minor_units(104_522_800, usd),
+                available_cash: Money::from_minor_units(12_783_400, usd),
+                priced_positions: POSITIONS.len(),
+                unpriced_positions: 0,
+            }],
+            ytd_return_bps: Some(1_702),
+            sharpe_hundredths: Some(279),
             source: "DETERMINISTIC DEMO".to_owned(),
             as_of: "2026-08-25 16:00 ET".to_owned(),
+            input_version: "DEMO-V1".to_owned(),
+            methodology: "DETERMINISTIC GALLERY FIXTURE".to_owned(),
+            disclosures: vec!["NOT INTERACTIVE USER DATA".to_owned()],
         }
+    }
+}
+
+fn demo_decimal(value: &str, decimals: u32) -> i128 {
+    let negative = value.trim().starts_with('-');
+    let cleaned = value
+        .chars()
+        .filter(|character| character.is_ascii_digit() || *character == '.')
+        .collect::<String>();
+    let (whole, fraction) = cleaned.split_once('.').unwrap_or((&cleaned, ""));
+    let scale = 10_i128.pow(decimals);
+    let mut result = whole.parse::<i128>().unwrap_or_default() * scale;
+    let retained = fraction.chars().take(decimals as usize).collect::<String>();
+    if !retained.is_empty() {
+        result += retained.parse::<i128>().unwrap_or_default()
+            * 10_i128.pow(decimals - retained.len() as u32);
+    }
+    if negative {
+        -result
+    } else {
+        result
     }
 }
 

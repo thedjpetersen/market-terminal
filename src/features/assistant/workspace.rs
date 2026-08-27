@@ -506,16 +506,23 @@ mod tests {
 
     impl PortfolioRepository for TestPortfolio {
         fn load_portfolio(&self) -> crate::features::portfolio::PortfolioSnapshot {
+            let usd = crate::foundation::Currency::new("USD").unwrap();
             let mut snapshot = crate::features::portfolio::PortfolioSnapshot::empty("TEST");
             snapshot
                 .positions
                 .push(crate::features::portfolio::Position {
+                    instrument_id: crate::foundation::InstrumentId::new("us:xnas:aapl"),
+                    account_id: crate::features::portfolio::PortfolioAccountId::new("ACCOUNT 1"),
                     symbol: "AAPL".to_owned(),
-                    quantity: "10".to_owned(),
-                    average_cost: "$150.00".to_owned(),
-                    market_value: "$2,000.00".to_owned(),
-                    pnl: "+$500.00".to_owned(),
-                    weight: "25%".to_owned(),
+                    currency: usd,
+                    quantity: crate::features::portfolio::PositionQuantity::from_scaled_units(
+                        10_000_000,
+                    ),
+                    average_cost: Some(crate::foundation::Money::from_minor_units(15_000, usd)),
+                    market_value: Some(crate::foundation::Money::from_minor_units(200_000, usd)),
+                    unrealized_return_bps: Some(3_333),
+                    weight_bps: Some(2_500),
+                    cash: false,
                 });
             snapshot
         }

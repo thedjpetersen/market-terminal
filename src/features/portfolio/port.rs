@@ -1,4 +1,7 @@
-use std::{fmt, path::Path};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use super::PortfolioSnapshot;
 
@@ -35,4 +38,10 @@ pub trait PortfolioRepository: Send + Sync {
             "NO IMPORTED PORTFOLIO TO RELOAD".to_owned(),
         ))
     }
+}
+
+/// Persists only the user-selected import location, never portfolio contents.
+pub trait PortfolioImportStateStore: Send + Sync {
+    fn load_import_path(&self) -> Result<Option<PathBuf>, PortfolioError>;
+    fn save_import_path(&self, path: &Path) -> Result<(), PortfolioError>;
 }

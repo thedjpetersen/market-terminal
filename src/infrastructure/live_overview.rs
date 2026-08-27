@@ -43,22 +43,22 @@ impl OverviewQuery for LiveOverviewQuery {
             .collect();
         let holdings = portfolio
             .positions
-            .into_iter()
+            .iter()
             .take(12)
             .map(|position| OverviewHolding {
-                symbol: position.symbol,
-                quantity: position.quantity,
-                market_value: position.market_value,
-                pnl: position.pnl,
-                weight: position.weight,
+                symbol: position.symbol.clone(),
+                quantity: position.quantity_label(),
+                market_value: position.market_value_label(),
+                pnl: position.pnl_label(),
+                weight: position.weight_label(),
             })
             .collect();
 
         OverviewSnapshot::Live(LiveOverviewSnapshot {
-            net_asset_value: portfolio.net_asset_value,
-            ytd_return: portfolio.ytd_return,
-            available_cash: portfolio.available_cash,
-            sharpe: portfolio.sharpe,
+            net_asset_value: portfolio.net_asset_value_label(),
+            ytd_return: portfolio.ytd_return_label(),
+            available_cash: portfolio.available_cash_label(),
+            sharpe: portfolio.sharpe_label(),
             portfolio_source: portfolio.source,
             portfolio_as_of: portfolio.as_of,
             holdings,
@@ -84,22 +84,31 @@ mod tests {
 
     impl PortfolioRepository for PortfolioFixture {
         fn load_portfolio(&self) -> PortfolioSnapshot {
-            PortfolioSnapshot {
-                positions: vec![Position {
-                    symbol: "USER".to_owned(),
-                    quantity: "4".to_owned(),
-                    average_cost: "10.00".to_owned(),
-                    market_value: "$48.00".to_owned(),
-                    pnl: "+20.00%".to_owned(),
-                    weight: "100.00%".to_owned(),
-                }],
-                net_asset_value: "$48.00".to_owned(),
-                ytd_return: "N/A".to_owned(),
-                available_cash: "$0.00".to_owned(),
-                sharpe: "N/A".to_owned(),
-                source: "CSV · positions.csv".to_owned(),
-                as_of: "2026-08-26 12:00 UTC".to_owned(),
-            }
+            let usd = crate::foundation::Currency::new("USD").unwrap();
+            let mut snapshot = PortfolioSnapshot::empty("CSV · positions.csv");
+            snapshot.positions = vec![Position {
+                instrument_id: crate::foundation::InstrumentId::new("us:xnys:user"),
+                account_id: crate::features::portfolio::PortfolioAccountId::new("ACCOUNT 1"),
+                symbol: "USER".to_owned(),
+                currency: usd,
+                quantity: crate::features::portfolio::PositionQuantity::from_scaled_units(
+                    4_000_000,
+                ),
+                average_cost: Some(crate::foundation::Money::from_minor_units(1_000, usd)),
+                market_value: Some(crate::foundation::Money::from_minor_units(4_800, usd)),
+                unrealized_return_bps: Some(2_000),
+                weight_bps: Some(10_000),
+                cash: false,
+            }];
+            snapshot.currency_totals = vec![crate::features::portfolio::PortfolioCurrencyTotal {
+                currency: usd,
+                net_asset_value: crate::foundation::Money::from_minor_units(4_800, usd),
+                available_cash: crate::foundation::Money::from_minor_units(0, usd),
+                priced_positions: 1,
+                unpriced_positions: 0,
+            }];
+            snapshot.as_of = "2026-08-26 12:00 UTC".to_owned();
+            snapshot
         }
     }
 

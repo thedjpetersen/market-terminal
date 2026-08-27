@@ -600,22 +600,28 @@ fn portfolio_positions(arguments: &Value, request: &AssistantRequest) -> Dynamic
         .take(limit)
         .map(|position| {
             json!({
+                "instrument_id": position.instrument_id.as_str(),
+                "account": position.account_id.as_str(),
                 "symbol": position.symbol,
-                "quantity": position.quantity,
-                "average_cost": position.average_cost,
-                "market_value": position.market_value,
-                "pnl": position.pnl,
-                "weight": position.weight,
+                "quantity": position.quantity_label(),
+                "average_cost": position.average_cost_label(),
+                "market_value": position.market_value_label(),
+                "currency": position.currency().to_string(),
+                "pnl": position.pnl_label(),
+                "weight": position.weight_label(),
             })
         })
         .collect::<Vec<_>>();
     DynamicToolOutcome::read(json!({
         "source": request.portfolio.source,
         "as_of": request.portfolio.as_of,
-        "net_asset_value": request.portfolio.net_asset_value,
-        "available_cash": request.portfolio.available_cash,
-        "ytd_return": request.portfolio.ytd_return,
-        "sharpe": request.portfolio.sharpe,
+        "input_version": request.portfolio.input_version,
+        "methodology": request.portfolio.methodology,
+        "disclosures": request.portfolio.disclosures,
+        "net_asset_value": request.portfolio.net_asset_value_label(),
+        "available_cash": request.portfolio.available_cash_label(),
+        "ytd_return": request.portfolio.ytd_return_label(),
+        "sharpe": request.portfolio.sharpe_label(),
         "total_position_count": request.portfolio.positions.len(),
         "matching_position_count": matching_count,
         "returned_position_count": returned,
@@ -1019,28 +1025,40 @@ mod tests {
     };
 
     fn request_with_portfolio() -> AssistantRequest {
+        let usd = crate::foundation::Currency::new("USD").unwrap();
+        let mut portfolio = crate::features::portfolio::PortfolioSnapshot::empty("TEST");
+        portfolio
+            .positions
+            .push(crate::features::portfolio::Position {
+                instrument_id: crate::foundation::InstrumentId::new("us:xnas:aapl"),
+                account_id: crate::features::portfolio::PortfolioAccountId::new("ACCOUNT 1"),
+                symbol: "AAPL".to_owned(),
+                currency: usd,
+                quantity: crate::features::portfolio::PositionQuantity::from_scaled_units(
+                    10_000_000,
+                ),
+                average_cost: Some(crate::foundation::Money::from_minor_units(15_000, usd)),
+                market_value: Some(crate::foundation::Money::from_minor_units(200_000, usd)),
+                unrealized_return_bps: Some(3_333),
+                weight_bps: Some(2_500),
+                cash: false,
+            });
+        portfolio.currency_totals = vec![crate::features::portfolio::PortfolioCurrencyTotal {
+            currency: usd,
+            net_asset_value: crate::foundation::Money::from_minor_units(800_000, usd),
+            available_cash: crate::foundation::Money::from_minor_units(100_000, usd),
+            priced_positions: 1,
+            unpriced_positions: 0,
+        }];
+        portfolio.ytd_return_bps = Some(500);
+        portfolio.sharpe_hundredths = Some(120);
         AssistantRequest {
             messages: vec![crate::features::assistant::domain::AssistantMessage::user(
                 "hello",
             )],
             active_workspace: "overview".to_owned(),
             available_workspaces: vec!["overview".to_owned(), "portfolio".to_owned()],
-            portfolio: crate::features::portfolio::PortfolioSnapshot {
-                positions: vec![crate::features::portfolio::Position {
-                    symbol: "AAPL".to_owned(),
-                    quantity: "10".to_owned(),
-                    average_cost: "$150.00".to_owned(),
-                    market_value: "$2,000.00".to_owned(),
-                    pnl: "+$500.00".to_owned(),
-                    weight: "25%".to_owned(),
-                }],
-                net_asset_value: "$8,000.00".to_owned(),
-                ytd_return: "+5.0%".to_owned(),
-                available_cash: "$1,000.00".to_owned(),
-                sharpe: "1.2".to_owned(),
-                source: "TEST".to_owned(),
-                as_of: "NOW".to_owned(),
-            },
+            portfolio,
         }
     }
 

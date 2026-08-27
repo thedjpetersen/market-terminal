@@ -21,6 +21,40 @@ impl Currency {
         // Construction guarantees three ASCII bytes, which are valid UTF-8.
         std::str::from_utf8(&self.0).expect("currency is validated ASCII")
     }
+
+    /// ISO 4217 minor-unit exponent for monetary display and decimal import.
+    ///
+    /// Codes not listed as an ISO exception use the common two-digit exponent.
+    pub const fn minor_unit_digits(self) -> u32 {
+        match self.0 {
+            [b'B', b'I', b'F']
+            | [b'C', b'L', b'P']
+            | [b'D', b'J', b'F']
+            | [b'G', b'N', b'F']
+            | [b'I', b'S', b'K']
+            | [b'J', b'P', b'Y']
+            | [b'K', b'M', b'F']
+            | [b'K', b'R', b'W']
+            | [b'P', b'Y', b'G']
+            | [b'R', b'W', b'F']
+            | [b'U', b'G', b'X']
+            | [b'U', b'Y', b'I']
+            | [b'V', b'N', b'D']
+            | [b'V', b'U', b'V']
+            | [b'X', b'A', b'F']
+            | [b'X', b'O', b'F']
+            | [b'X', b'P', b'F'] => 0,
+            [b'B', b'H', b'D']
+            | [b'I', b'Q', b'D']
+            | [b'J', b'O', b'D']
+            | [b'K', b'W', b'D']
+            | [b'L', b'Y', b'D']
+            | [b'O', b'M', b'R']
+            | [b'T', b'N', b'D'] => 3,
+            [b'C', b'L', b'F'] | [b'U', b'Y', b'W'] => 4,
+            _ => 2,
+        }
+    }
 }
 
 impl FromStr for Currency {

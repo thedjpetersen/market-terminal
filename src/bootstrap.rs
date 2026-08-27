@@ -198,7 +198,7 @@ pub fn persistent_app() -> App {
     let repository = Arc::new(LocalPersistence::new(default_state_directory()));
     let (keymap, keymap_warnings) = Keymap::from_env();
     let portfolio_query: Arc<dyn PortfolioRepository> =
-        Arc::new(CsvPortfolioRepository::from_env());
+        Arc::new(CsvPortfolioRepository::persistent(repository.clone()));
     let news_query: Arc<dyn NewsFeed> = Arc::new(LiveNewsFeed::from_env());
     let live_market_data = configured_market_data();
     let live_security = Arc::new(LiveSecurityQuery::from_env(

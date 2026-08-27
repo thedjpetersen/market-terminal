@@ -14,6 +14,7 @@ use crate::features::persistence::{
     DocumentId, FeatureDocument, FeatureDocumentRepository, FeatureKey, PersistenceError,
     SessionState, SessionStateRepository, MAX_DOCUMENT_BYTES,
 };
+use crate::features::portfolio::{PortfolioError, PortfolioImportStateStore};
 use crate::features::spreadsheet::{
     SpreadsheetFileError, SpreadsheetWorkbookStore, StoredWorkbook,
 };
@@ -154,6 +155,49 @@ impl SpreadsheetWorkbookStore for LocalPersistence {
     }
 }
 
+impl PortfolioImportStateStore for LocalPersistence {
+    fn load_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+        let feature = portfolio_feature_key()?;
+        let id = portfolio_import_document_id()?;
+        let document = FeatureDocumentRepository::load(self, &feature, &id)
+            .map_err(portfolio_persistence_error)?;
+        document
+            .map(|document| {
+                let path = document
+                    .payload()
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|path| !path.trim().is_empty() && path.len() <= 4_096)
+                    .ok_or_else(|| {
+                        PortfolioError::InvalidCsv(
+                            "PERSISTED PORTFOLIO IMPORT PATH IS INVALID".to_owned(),
+                        )
+                    })?;
+                Ok(PathBuf::from(path))
+            })
+            .transpose()
+    }
+
+    fn save_import_path(&self, path: &Path) -> Result<(), PortfolioError> {
+        let path = path
+            .to_str()
+            .filter(|path| path.len() <= 4_096)
+            .ok_or_else(|| {
+                PortfolioError::Unsupported(
+                    "PORTFOLIO IMPORT PATH MUST BE UTF-8 AND AT MOST 4096 BYTES".to_owned(),
+                )
+            })?;
+        let document = FeatureDocument::new(
+            portfolio_feature_key()?,
+            portfolio_import_document_id()?,
+            1,
+            serde_json::json!({"path": path}),
+        )
+        .map_err(|error| PortfolioError::Io(error.to_string()))?;
+        FeatureDocumentRepository::save(self, &document).map_err(portfolio_persistence_error)
+    }
+}
+
 fn spreadsheet_feature_key() -> Result<FeatureKey, SpreadsheetFileError> {
     FeatureKey::new("spreadsheet")
         .map_err(|error| SpreadsheetFileError::InvalidLocation(error.to_string()))
@@ -166,6 +210,18 @@ fn spreadsheet_document_id(id: &str) -> Result<DocumentId, SpreadsheetFileError>
 
 fn spreadsheet_persistence_error(error: PersistenceError) -> SpreadsheetFileError {
     SpreadsheetFileError::Io(error.to_string())
+}
+
+fn portfolio_feature_key() -> Result<FeatureKey, PortfolioError> {
+    FeatureKey::new("portfolio").map_err(|error| PortfolioError::Io(error.to_string()))
+}
+
+fn portfolio_import_document_id() -> Result<DocumentId, PortfolioError> {
+    DocumentId::new("active_import").map_err(|error| PortfolioError::Io(error.to_string()))
+}
+
+fn portfolio_persistence_error(error: PersistenceError) -> PortfolioError {
+    PortfolioError::Io(error.to_string())
 }
 
 impl SessionStateRepository for LocalPersistence {
@@ -495,6 +551,9 @@ mod tests {
 
     use super::*;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     struct TestDirectory(PathBuf);
 
     impl TestDirectory {
@@ -621,6 +680,31 @@ mod tests {
         );
         assert!(FeatureDocumentRepository::delete(&repository, &feature, &first_id).unwrap());
         assert!(!FeatureDocumentRepository::delete(&repository, &feature, &first_id).unwrap());
+    }
+
+    #[test]
+    fn portfolio_import_path_round_trips_through_private_feature_document() {
+        let directory = TestDirectory::new("portfolio-import");
+        let repository = LocalPersistence::new(&directory.0);
+        let path = PathBuf::from("/Users/example/Documents/positions.csv");
+
+        PortfolioImportStateStore::save_import_path(&repository, &path).unwrap();
+
+        assert_eq!(
+            PortfolioImportStateStore::load_import_path(&repository).unwrap(),
+            Some(path)
+        );
+        let document = directory
+            .0
+            .join("documents")
+            .join("portfolio")
+            .join("active_import.json");
+        assert!(document.is_file());
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(document).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]
