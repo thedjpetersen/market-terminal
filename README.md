@@ -218,6 +218,23 @@ movers unavailable instead of manufacturing them. Click a position to open
 Security or a headline to open its News topic; press `F9` or `R` to request a
 news refresh.
 
+## Spreadsheet CSV files
+
+The persistent Spreadsheet starts empty; the IBM model is reserved for the
+deterministic gallery. Enter values directly or replace the active sheet from a
+UTF-8 CSV while preserving formulas as raw cell contents:
+
+```text
+SHEET IMPORT "~/Documents/model.csv"
+SHEET EXPORT "~/Documents/model-export.csv"
+```
+
+Import is bounded to 26 columns, 100 rows, and 10 MB and is one undoable edit.
+Export writes only the active sheet and refuses to replace an existing file.
+Use `SHEET EXPORT! <FILE.CSV>` when replacement is intentional; replacement is
+written through a same-directory temporary file. On Unix, newly created files
+use owner-only permissions.
+
 ## Experience gallery
 
 These captures are generated from the native Ratatui render buffer at a

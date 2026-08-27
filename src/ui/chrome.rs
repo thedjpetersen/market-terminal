@@ -249,7 +249,8 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
         "watchlist" | "charting" | "security" | "alerts" | "spreadsheet" if gallery_replay => {
             "GALLERY MARKET-DATA REPLAY · NOT LIVE"
         }
-        "watchlist" | "charting" | "security" | "alerts" | "spreadsheet" => {
+        "spreadsheet" => "LOCAL WORKBOOK + EXTERNAL MARKET DATA · VERIFY SOURCE QUALITY",
+        "watchlist" | "charting" | "security" | "alerts" => {
             "EXTERNAL MARKET DATA · VERIFY PROVIDER QUALITY"
         }
         "chat" if gallery_replay => "LOCAL GALLERY CHAT · NOT LIVE",

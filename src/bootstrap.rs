@@ -23,7 +23,8 @@ use crate::{
         DemoChatGateway, DemoData, DemoInstrumentSearch, DemoMarketDataReplay,
         DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway, LiveAlertsQuery,
         LiveMarketsQuery, LiveNewsFeed, LiveOverviewQuery, LiveSecurityQuery, LocalPersistence,
-        OpenRouterConfig, OpenRouterGateway, SecInstrumentSearch, SystemNewsArticleOpener,
+        LocalSpreadsheetFiles, OpenRouterConfig, OpenRouterGateway, SecInstrumentSearch,
+        SystemNewsArticleOpener,
     },
 };
 
@@ -99,6 +100,11 @@ fn build_app(providers: AppProviders) -> App {
         "codex" => Arc::new(CodexAppServerGateway::new(CodexAppServerConfig::from_env())),
         _ => Arc::new(OpenRouterGateway::new(OpenRouterConfig::from_env())),
     };
+    let spreadsheet_workspace = if runtime_settings.gallery_replay {
+        SpreadsheetWorkspace::new(spreadsheet_market_data)
+    } else {
+        SpreadsheetWorkspace::empty(spreadsheet_market_data, Arc::new(LocalSpreadsheetFiles))
+    };
 
     let workspaces = WorkspaceRegistry::new(vec![
         Box::new(OverviewWorkspace::new(overview_query)),
@@ -141,7 +147,7 @@ fn build_app(providers: AppProviders) -> App {
             Some(opener) => NewsWorkspace::with_article_opener(news_query, opener),
             None => NewsWorkspace::new(news_query),
         }),
-        Box::new(SpreadsheetWorkspace::new(spreadsheet_market_data)),
+        Box::new(spreadsheet_workspace),
     ]);
     App::new(workspaces, OVERVIEW).with_runtime_settings(runtime_settings)
 }

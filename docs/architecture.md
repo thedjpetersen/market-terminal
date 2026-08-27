@@ -63,6 +63,13 @@ kept alongside the workbook and carries provider, observation/receive times,
 quality, entitlement failure, and availability. This first slice deliberately
 does not make arbitrary provider calls from the formula evaluator.
 
+The persistent Spreadsheet starts with an empty workbook and receives
+`LocalSpreadsheetFiles` through its feature-owned `SpreadsheetFileStore` port.
+CSV import/export is bounded, formula-preserving, active-sheet scoped, and
+explicit about overwrite intent. The gallery-only constructor retains the
+seeded IBM workbook for deterministic captures; `persistent_app` never wires
+that seed.
+
 The interactive Monitor uses the same Alpha Vantage adapter through the
 Market-Data-owned `MarketDataQuery` port. `WatchlistWorkspace` submits snapshots
 to a capacity-one worker and only applies results during polling; construction,

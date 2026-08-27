@@ -1,3 +1,5 @@
+use std::fmt;
+
 /// A market-data field requested by a worksheet.
 ///
 /// Fields remain strings at this boundary so infrastructure adapters can map
@@ -83,3 +85,38 @@ pub enum MarketDataState {
 pub trait SpreadsheetMarketData: Send + Sync {
     fn load_batch(&self, requests: &[MarketDataRequest]) -> Vec<MarketDataPoint>;
 }
+
+/// User-selected CSV persistence boundary owned by Spreadsheet.
+pub trait SpreadsheetFileStore: Send + Sync {
+    fn read_csv(&self, location: &str) -> Result<String, SpreadsheetFileError>;
+
+    fn write_csv(
+        &self,
+        location: &str,
+        csv: &str,
+        overwrite: bool,
+    ) -> Result<(), SpreadsheetFileError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpreadsheetFileError {
+    InvalidLocation(String),
+    TooLarge,
+    AlreadyExists(String),
+    Io(String),
+}
+
+impl fmt::Display for SpreadsheetFileError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidLocation(message) | Self::Io(message) => formatter.write_str(message),
+            Self::TooLarge => formatter.write_str("CSV EXCEEDS THE 10 MB LIMIT"),
+            Self::AlreadyExists(location) => write!(
+                formatter,
+                "{location} ALREADY EXISTS · USE SHEET EXPORT! <FILE.CSV> TO REPLACE IT"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SpreadsheetFileError {}

@@ -420,6 +420,8 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw("SETTINGS             Effective configuration"),
             Line::raw("PORT IMPORT <CSV>    Import positions"),
             Line::raw("PORT RELOAD          Reload positions"),
+            Line::raw("SHEET IMPORT <CSV>   Replace active sheet"),
+            Line::raw("SHEET EXPORT <CSV>   Export active sheet"),
             Line::raw("NEWS                 Live headlines"),
             Line::raw("  O/Enter/Click       Open publisher article"),
             Line::raw("  R                   Mark story read/unread"),

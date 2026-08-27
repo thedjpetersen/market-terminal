@@ -19,6 +19,7 @@ mod openrouter;
 mod portfolio_csv;
 mod sec_instruments;
 mod spreadsheet_demo;
+mod spreadsheet_files;
 mod watchlist_config;
 
 pub use alerts_demo::DemoAlertsReplay;
@@ -42,4 +43,5 @@ pub use openrouter::{OpenRouterConfig, OpenRouterGateway};
 pub use portfolio_csv::CsvPortfolioRepository;
 pub use sec_instruments::SecInstrumentSearch;
 pub use spreadsheet_demo::DemoSpreadsheetMarketData;
+pub use spreadsheet_files::LocalSpreadsheetFiles;
 pub use watchlist_config::ConfiguredWatchlistCatalog;

@@ -29,7 +29,8 @@ use super::super::{
     domain::{
         parse_formula, AggregateFunction, CellAddress, CellValue, Expr, MAX_COLUMNS, MAX_ROWS,
     },
-    MarketDataPoint, MarketDataRequest, MarketDataState, Spreadsheet, SpreadsheetMarketData, ID,
+    MarketDataPoint, MarketDataRequest, MarketDataState, Spreadsheet, SpreadsheetFileStore,
+    SpreadsheetMarketData, ID,
 };
 
 const CELL_WIDTH: u16 = 12;
@@ -90,6 +91,7 @@ impl EditSession {
 
 pub struct SpreadsheetWorkspace {
     spreadsheet: Spreadsheet,
+    file_store: Option<Arc<dyn SpreadsheetFileStore>>,
     refresh_sender: SyncSender<MarketDataRefresh>,
     refresh_receiver: Receiver<MarketDataRefreshResult>,
     next_refresh_generation: u64,
@@ -108,6 +110,21 @@ pub struct SpreadsheetWorkspace {
 
 impl SpreadsheetWorkspace {
     pub fn new(market_data: Arc<dyn SpreadsheetMarketData>) -> Self {
+        Self::build(market_data, None, true)
+    }
+
+    pub fn empty(
+        market_data: Arc<dyn SpreadsheetMarketData>,
+        file_store: Arc<dyn SpreadsheetFileStore>,
+    ) -> Self {
+        Self::build(market_data, Some(file_store), false)
+    }
+
+    fn build(
+        market_data: Arc<dyn SpreadsheetMarketData>,
+        file_store: Option<Arc<dyn SpreadsheetFileStore>>,
+        seed_gallery: bool,
+    ) -> Self {
         let (refresh_sender, worker_receiver) = sync_channel::<MarketDataRefresh>(1);
         let (worker_sender, refresh_receiver) = sync_channel::<MarketDataRefreshResult>(1);
         std::thread::Builder::new()
@@ -128,6 +145,7 @@ impl SpreadsheetWorkspace {
             .expect("spreadsheet market-data worker should start");
         let mut workspace = Self {
             spreadsheet: Spreadsheet::new(),
+            file_store,
             refresh_sender,
             refresh_receiver,
             next_refresh_generation: 0,
@@ -141,9 +159,15 @@ impl SpreadsheetWorkspace {
             visible_rows: StateCell::new(18),
             edit: None,
             clipboard: None,
-            status: String::new(),
+            status: if seed_gallery {
+                String::new()
+            } else {
+                "EMPTY WORKBOOK · TYPE A VALUE OR USE SHEET IMPORT <FILE.CSV>".to_owned()
+            },
         };
-        workspace.seed_demo_workbook();
+        if seed_gallery {
+            workspace.seed_demo_workbook();
+        }
         workspace
     }
 
@@ -574,6 +598,53 @@ impl SpreadsheetWorkspace {
         }
     }
 
+    fn import_csv_file(&mut self, location: &str) {
+        let Some(file_store) = self.file_store.clone() else {
+            self.status = "CSV FILE ACCESS IS DISABLED IN GALLERY MODE".to_owned();
+            return;
+        };
+        if location.trim().is_empty() {
+            self.status = "ERROR · SHEET IMPORT REQUIRES A CSV PATH".to_owned();
+            return;
+        }
+        let csv = match file_store.read_csv(location) {
+            Ok(csv) => csv,
+            Err(error) => {
+                self.status = format!("IMPORT ERROR · {error}");
+                return;
+            }
+        };
+        match self.spreadsheet.import_csv(&csv) {
+            Ok(populated) => {
+                self.cursor = CellAddress::new(1, 1).expect("A1 is in bounds");
+                self.first_column = 1;
+                self.first_row = 1;
+                self.refresh_market_data();
+                self.status = format!(
+                    "IMPORTED {populated} POPULATED CELL(S) · {} · UNDO AVAILABLE",
+                    location.trim()
+                );
+            }
+            Err(error) => self.status = format!("IMPORT ERROR · {error}"),
+        }
+    }
+
+    fn export_csv_file(&mut self, location: &str, overwrite: bool) {
+        let Some(file_store) = self.file_store.clone() else {
+            self.status = "CSV FILE ACCESS IS DISABLED IN GALLERY MODE".to_owned();
+            return;
+        };
+        if location.trim().is_empty() {
+            self.status = "ERROR · SHEET EXPORT REQUIRES A CSV PATH".to_owned();
+            return;
+        }
+        let csv = self.spreadsheet.export_csv();
+        self.status = match file_store.write_csv(location, &csv, overwrite) {
+            Ok(()) => format!("EXPORTED {} BYTES · {}", csv.len(), location.trim()),
+            Err(error) => format!("EXPORT ERROR · {error}"),
+        };
+    }
+
     fn select_adjacent_sheet(&mut self, next: bool) {
         if next {
             self.spreadsheet.select_next_sheet();
@@ -730,7 +801,7 @@ impl SpreadsheetWorkspace {
                 Span::styled(format!(" {mode} "), Style::new().bg(AMBER).fg(BG).bold()),
                 Span::styled(format!(" {status}   "), INK),
                 Span::styled(
-                    "F9 REFRESH  Y COPY  P PASTE  CTRL-D/R FILL  CTRL-Z/Y UNDO/REDO  F2 EDIT",
+                    "F9 REFRESH  Y COPY  P PASTE  CTRL-D/R FILL  CTRL-Z/Y UNDO/REDO  ENTER EDIT",
                     MUTED,
                 ),
             ]))
@@ -829,6 +900,9 @@ impl Workspace for SpreadsheetWorkspace {
         let operation = first.to_ascii_uppercase();
         let name = invocation.args.get(1..).unwrap_or_default().join(" ");
         match operation.as_str() {
+            "IMPORT" | "OPEN" => self.import_csv_file(&name),
+            "EXPORT" | "SAVE" => self.export_csv_file(&name, false),
+            "EXPORT!" | "SAVE!" => self.export_csv_file(&name, true),
             "ADD" | "NEW" => self.add_sheet((!name.is_empty()).then_some(name)),
             "NEXT" => self.select_adjacent_sheet(true),
             "PREV" | "PREVIOUS" => self.select_adjacent_sheet(false),
@@ -886,7 +960,7 @@ impl Workspace for SpreadsheetWorkspace {
             KeyCode::Left | KeyCode::Char('h') => self.move_cursor(-1, 0),
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => self.move_cursor(1, 0),
             KeyCode::BackTab => self.move_cursor(-1, 0),
-            KeyCode::Enter | KeyCode::F(2) => self.begin_edit(None),
+            KeyCode::Enter => self.begin_edit(None),
             KeyCode::Char('=') => self.begin_edit(Some("=")),
             KeyCode::Delete => self.clear_selected(),
             KeyCode::F(9) => self.refresh_market_data(),
@@ -1053,8 +1127,11 @@ fn truncate(value: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::spreadsheet::{MarketDataPoint, MarketDataProvenance, MarketDataQuality};
+    use crate::features::spreadsheet::{
+        MarketDataPoint, MarketDataProvenance, MarketDataQuality, SpreadsheetFileError,
+    };
     use crossterm::event::{MouseButton, MouseEventKind};
+    use std::sync::Mutex;
 
     fn provenance() -> MarketDataProvenance {
         MarketDataProvenance {
@@ -1080,6 +1157,35 @@ mod tests {
                     Some(MarketDataPoint::ready(request.clone(), value, provenance()))
                 })
                 .collect()
+        }
+    }
+
+    struct MemoryFileStore {
+        input: String,
+        writes: Mutex<Vec<(String, String, bool)>>,
+    }
+
+    impl SpreadsheetFileStore for MemoryFileStore {
+        fn read_csv(&self, location: &str) -> Result<String, SpreadsheetFileError> {
+            if location == "input.csv" {
+                Ok(self.input.clone())
+            } else {
+                Err(SpreadsheetFileError::Io("NOT FOUND".to_owned()))
+            }
+        }
+
+        fn write_csv(
+            &self,
+            location: &str,
+            csv: &str,
+            overwrite: bool,
+        ) -> Result<(), SpreadsheetFileError> {
+            self.writes.lock().expect("writes lock").push((
+                location.to_owned(),
+                csv.to_owned(),
+                overwrite,
+            ));
+            Ok(())
         }
     }
 
@@ -1154,6 +1260,53 @@ mod tests {
             .unwrap();
         assert!((forward_revenue - 1400.0).abs() < 1e-9);
         assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 2);
+    }
+
+    #[test]
+    fn persistent_constructor_starts_with_a_truthful_empty_workbook() {
+        let files = Arc::new(MemoryFileStore {
+            input: String::new(),
+            writes: Mutex::new(Vec::new()),
+        });
+        let workspace = SpreadsheetWorkspace::empty(Arc::new(StubMarketData), files);
+
+        assert!(workspace.spreadsheet.cell("A1").unwrap().raw.is_empty());
+        assert_eq!(workspace.spreadsheet.workbook().sheet_count(), 1);
+        assert!(workspace.status.contains("EMPTY WORKBOOK"));
+        assert!(workspace.external_cells.is_empty());
+    }
+
+    #[test]
+    fn sheet_commands_import_and_export_real_csv_through_the_file_port() {
+        let files = Arc::new(MemoryFileStore {
+            input: "Security,Formula\nIBM US Equity,=PX_LAST(A2)".to_owned(),
+            writes: Mutex::new(Vec::new()),
+        });
+        let mut workspace = SpreadsheetWorkspace::empty(Arc::new(StubMarketData), files.clone());
+
+        workspace.handle_command(&CommandInvocation {
+            function: "SHEET".to_owned(),
+            args: vec!["IMPORT".to_owned(), "input.csv".to_owned()],
+        });
+        assert_eq!(
+            workspace.spreadsheet.cell("A2").unwrap().raw,
+            "IBM US Equity"
+        );
+        assert_eq!(
+            workspace.spreadsheet.cell("B2").unwrap().raw,
+            "=PX_LAST(A2)"
+        );
+        assert!(workspace.status.contains("IMPORTED 4 POPULATED CELL(S)"));
+
+        workspace.handle_command(&CommandInvocation {
+            function: "SHEET".to_owned(),
+            args: vec!["EXPORT!".to_owned(), "output.csv".to_owned()],
+        });
+        let writes = files.writes.lock().expect("writes lock");
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].0, "output.csv");
+        assert!(writes[0].1.contains("=PX_LAST(A2)"));
+        assert!(writes[0].2);
     }
 
     #[test]
@@ -1255,7 +1408,7 @@ mod tests {
     fn escape_cancels_without_changing_the_cell() {
         let mut workspace = workspace();
         let original = workspace.spreadsheet.cell("A1").unwrap().raw;
-        workspace.handle_key(key(KeyCode::F(2)));
+        workspace.handle_key(key(KeyCode::Enter));
         workspace.handle_key(key(KeyCode::Char('x')));
         assert!(workspace.handle_key(key(KeyCode::Esc)));
         assert_eq!(workspace.spreadsheet.cell("A1").unwrap().raw, original);
@@ -1275,7 +1428,7 @@ mod tests {
     fn keyboard_undo_and_redo_restore_committed_edits() {
         let mut workspace = workspace();
         let original = workspace.spreadsheet.cell("A1").unwrap().raw;
-        workspace.handle_key(key(KeyCode::F(2)));
+        workspace.handle_key(key(KeyCode::Enter));
         for _ in 0..original.chars().count() {
             workspace.handle_key(key(KeyCode::Backspace));
         }

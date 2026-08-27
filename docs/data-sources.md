@@ -87,6 +87,19 @@ retention constraints.
   returns, risk statistics, attribution, or movers from this point-in-time
   snapshot.
 
+## User workbook CSV
+
+- **Surface:** interactive Spreadsheet active sheet.
+- **Source/ownership:** a local UTF-8 CSV selected by the user; raw formulas are
+  preserved as cell text and recalculated by the local workbook engine.
+- **Bounds:** imports are capped at 10 MB, 26 columns, and 100 rows. Export uses
+  the active sheet's minimal populated range.
+- **Retention/writes:** no workbook CSV is uploaded. New exports refuse to
+  replace an existing file; `SHEET EXPORT!` is the explicit replacement form
+  and uses a same-directory temporary file before rename.
+- **Market data:** resolved `PX_LAST`/`PX_CHANGE` values are overlays and are not
+  written into the raw CSV in place of formulas.
+
 ## SEC EDGAR structured data
 
 - **Surfaces:** interactive Find instrument master and Security identity,
