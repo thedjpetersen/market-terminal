@@ -44,6 +44,8 @@ pub struct App {
     persistence: Option<Arc<dyn SessionStateRepository>>,
     persistence_error: Option<String>,
     recent_commands: Vec<String>,
+    preferences: BTreeMap<String, String>,
+    theme_name: String,
     should_quit: bool,
 }
 
@@ -72,6 +74,8 @@ impl App {
             persistence: None,
             persistence_error: None,
             recent_commands: Vec::new(),
+            preferences: BTreeMap::new(),
+            theme_name: crate::ui::theme::active_theme_name().to_owned(),
             should_quit: false,
         }
     }
@@ -98,6 +102,14 @@ impl App {
                     }
                 }
                 self.recent_commands = state.recent_commands().to_vec();
+                self.preferences = state.preferences().clone();
+                if let Some(name) = state
+                    .preferences()
+                    .get("theme")
+                    .and_then(|name| crate::ui::theme::set_theme(name))
+                {
+                    self.theme_name = name.to_owned();
+                }
             }
             Ok(None) => {
                 self.settings_visible = true;
@@ -144,6 +156,10 @@ impl App {
 
     pub fn runtime_settings(&self) -> &RuntimeSettingsSummary {
         &self.runtime_settings
+    }
+
+    pub fn theme_name(&self) -> &str {
+        &self.theme_name
     }
 
     pub fn with_runtime_settings(mut self, settings: RuntimeSettingsSummary) -> Self {
@@ -204,6 +220,17 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) {
         if input::is_force_quit(key) {
             self.should_quit = true;
+            return;
+        }
+
+        if key.code == KeyCode::F(3) {
+            let direction = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                -1
+            } else {
+                1
+            };
+            self.cycle_theme(direction);
+            self.persist_session();
             return;
         }
 
@@ -371,6 +398,14 @@ impl App {
             Some(ShellClickTarget::HelpClose) => self.help_visible = false,
             Some(ShellClickTarget::HelpOverlay) => {}
             Some(ShellClickTarget::SettingsClose) => self.close_settings(),
+            Some(ShellClickTarget::SettingsThemePrevious) => {
+                self.cycle_theme(-1);
+                self.persist_session();
+            }
+            Some(ShellClickTarget::SettingsThemeNext) => {
+                self.cycle_theme(1);
+                self.persist_session();
+            }
             Some(ShellClickTarget::SettingsOverlay) => {}
             Some(ShellClickTarget::Quit) => self.should_quit = true,
             None => {}
@@ -379,9 +414,11 @@ impl App {
 
     fn execute_command(&mut self) {
         let command = self.command.trim().to_owned();
-        let opens_help = CommandInvocation::parse(&command)
+        let invocation = CommandInvocation::parse(&command);
+        let opens_help = invocation
+            .as_ref()
             .is_some_and(|invocation| invocation.function == "HELP");
-        let opens_settings = CommandInvocation::parse(&command).is_some_and(|invocation| {
+        let opens_settings = invocation.as_ref().is_some_and(|invocation| {
             matches!(
                 invocation.function.as_str(),
                 "SETTINGS" | "CONFIG" | "SETUP"
@@ -392,6 +429,11 @@ impl App {
             self.help_visible = true;
         } else if opens_settings {
             self.open_settings();
+        } else if let Some(invocation) = invocation
+            .as_ref()
+            .filter(|invocation| invocation.function == "THEME")
+        {
+            self.apply_theme_command(invocation);
         } else if let Some(id) = self.workspaces.dispatch_command(&command) {
             if Some(id) == self.assistant_workspace {
                 self.open_assistant_drawer();
@@ -412,6 +454,30 @@ impl App {
         self.input_mode = InputMode::Navigation;
         self.reset_command_editor();
         self.persist_session();
+    }
+
+    fn apply_theme_command(&mut self, invocation: &CommandInvocation) {
+        let Some(argument) = invocation.args.first() else {
+            self.cycle_theme(1);
+            return;
+        };
+        if invocation.args.len() != 1 {
+            return;
+        }
+        match argument.trim().to_ascii_lowercase().as_str() {
+            "next" => self.cycle_theme(1),
+            "prev" | "previous" => self.cycle_theme(-1),
+            "list" => self.open_settings(),
+            name => {
+                if let Some(name) = crate::ui::theme::set_theme(name) {
+                    self.theme_name = name.to_owned();
+                }
+            }
+        }
+    }
+
+    fn cycle_theme(&mut self, direction: isize) {
+        self.theme_name = crate::ui::theme::cycle_theme(direction).to_owned();
     }
 
     fn open_command(&mut self) {
@@ -746,6 +812,8 @@ impl App {
         let Some(repository) = self.persistence.clone() else {
             return;
         };
+        self.preferences
+            .insert("theme".to_owned(), self.theme_name.clone());
         let state = SessionState::new(
             Some(self.active_workspace.as_str().to_owned()),
             self.workspaces
@@ -754,7 +822,7 @@ impl App {
                 .map(|id| id.as_str().to_owned())
                 .collect(),
             self.recent_commands.clone(),
-            BTreeMap::new(),
+            self.preferences.clone(),
         );
         self.persistence_error = match state {
             Ok(state) => repository.save(&state).err().map(|error| error.to_string()),
@@ -1160,10 +1228,58 @@ mod tests {
         assert!(rendered.contains("ACTIVE PROCESS"));
         assert!(rendered.contains("Secrets are never displayed"));
 
+        let initial_theme = app.theme_name().to_owned();
+        let next_theme =
+            crate::ui::settings_theme_next_area(crate::ui::ShellLayout::new(frame_area).workspace);
+        app.handle_mouse(left_click(next_theme.x + 1, next_theme.y), frame_area);
+        assert_ne!(app.theme_name(), initial_theme);
+        let previous_theme = crate::ui::settings_theme_previous_area(
+            crate::ui::ShellLayout::new(frame_area).workspace,
+        );
+        app.handle_mouse(
+            left_click(previous_theme.x + 1, previous_theme.y),
+            frame_area,
+        );
+        assert_eq!(app.theme_name(), initial_theme);
+
         let close =
             crate::ui::settings_close_area(crate::ui::ShellLayout::new(frame_area).workspace);
         app.handle_mouse(left_click(close.x + 1, close.y), frame_area);
         assert!(!app.settings_visible());
+    }
+
+    #[test]
+    fn theme_command_and_function_keys_select_and_persist_presets() {
+        let repository = Arc::new(MemorySessionRepository {
+            state: Mutex::new(Some(
+                SessionState::new(None, Vec::new(), Vec::new(), BTreeMap::new())
+                    .expect("valid session"),
+            )),
+        });
+        let mut app = bootstrap::demo_app().with_session_repository(repository.clone());
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "THEME NORD".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(app.theme_name(), "nord");
+        assert_eq!(
+            repository
+                .state
+                .lock()
+                .expect("session lock")
+                .as_ref()
+                .and_then(|state| state.preferences().get("theme"))
+                .map(String::as_str),
+            Some("nord")
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE));
+        assert_eq!(app.theme_name(), "catppuccin-latte");
+        app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::SHIFT));
+        assert_eq!(app.theme_name(), "nord");
+        crate::ui::theme::set_theme("default").expect("restore default theme");
     }
 
     #[test]

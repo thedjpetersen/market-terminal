@@ -118,12 +118,12 @@ impl AssistantWorkspace {
 
     fn render_status(&self) -> Line<'_> {
         let (label, style) = match &self.status {
-            AssistantStatus::Ready => ("READY", Style::new().fg(GREEN)),
-            AssistantStatus::Thinking => ("THINKING", Style::new().fg(AMBER).bold()),
-            AssistantStatus::Error(_) => ("CONFIG", Style::new().fg(RED).bold()),
+            AssistantStatus::Ready => ("READY", Style::new().fg(GREEN.into())),
+            AssistantStatus::Thinking => ("THINKING", Style::new().fg(AMBER.into()).bold()),
+            AssistantStatus::Error(_) => ("CONFIG", Style::new().fg(RED.into()).bold()),
         };
         Line::from(vec![
-            Span::styled(" AI COMMAND PLANE  ", Style::new().fg(AMBER).bold()),
+            Span::styled(" AI COMMAND PLANE  ", Style::new().fg(AMBER.into()).bold()),
             Span::styled(label, style),
             Span::styled(format!("  MODEL {}", self.model_label), MUTED),
         ])
@@ -263,9 +263,9 @@ impl Workspace for AssistantWorkspace {
         let mut transcript = Vec::new();
         for message in &self.messages {
             let (label, style) = match message.role {
-                AssistantRole::User => ("YOU", Style::new().fg(CYAN).bold()),
-                AssistantRole::Assistant => ("AI", Style::new().fg(AMBER).bold()),
-                AssistantRole::System => ("SYS", Style::new().fg(MUTED)),
+                AssistantRole::User => ("YOU", Style::new().fg(CYAN.into()).bold()),
+                AssistantRole::Assistant => ("AI", Style::new().fg(AMBER.into()).bold()),
+                AssistantRole::System => ("SYS", Style::new().fg(MUTED.into())),
             };
             transcript.push(Line::from(vec![
                 Span::styled(format!("{label:<4}"), style),
@@ -297,11 +297,11 @@ impl Workspace for AssistantWorkspace {
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" > ", Style::new().fg(CYAN).bold()),
+                Span::styled(" > ", Style::new().fg(CYAN.into()).bold()),
                 Span::styled(input, if self.composing { INK } else { MUTED }),
                 Span::styled(cursor, AMBER),
             ]))
-            .style(Style::new().bg(BG))
+            .style(Style::new().bg(BG.into()))
             .block(terminal_block("ASK", "NATURAL-LANGUAGE COMMAND")),
             rows[2],
         );
@@ -313,7 +313,7 @@ impl Workspace for AssistantWorkspace {
         };
         frame.render_widget(
             Paragraph::new(help)
-                .style(Style::new().fg(MUTED))
+                .style(Style::new().fg(MUTED.into()))
                 .wrap(Wrap { trim: true }),
             rows[3],
         );

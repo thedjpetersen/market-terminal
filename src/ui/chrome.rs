@@ -20,9 +20,9 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     .split(area);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(" MT ", Style::new().bg(AMBER).fg(BG).bold()),
-            Span::styled(" MARKET TERMINAL ", Style::new().fg(AMBER).bold()),
-            Span::styled("RUST", Style::new().fg(MUTED)),
+            Span::styled(" MT ", Style::new().bg(AMBER.into()).fg(BG.into()).bold()),
+            Span::styled(" MARKET TERMINAL ", Style::new().fg(AMBER.into()).bold()),
+            Span::styled("RUST", Style::new().fg(MUTED.into())),
         ]))
         .block(Block::new().borders(Borders::BOTTOM).border_style(MUTED)),
         columns[0],
@@ -67,17 +67,20 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
             Paragraph::new(Span::styled(
                 command,
                 if app.command.is_empty() {
-                    Style::new().fg(MUTED)
+                    Style::new().fg(MUTED.into())
                 } else {
-                    Style::new().fg(INK)
+                    Style::new().fg(INK.into())
                 },
             )),
             command_parts[1],
         );
     }
     frame.render_widget(
-        Paragraph::new(Span::styled(" GO ", Style::new().bg(CYAN).fg(BG).bold()))
-            .alignment(Alignment::Center),
+        Paragraph::new(Span::styled(
+            " GO ",
+            Style::new().bg(CYAN.into()).fg(BG.into()).bold(),
+        ))
+        .alignment(Alignment::Center),
         command_parts[2],
     );
 
@@ -96,8 +99,8 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
 
 fn command_editor_line(app: &App) -> Line<'_> {
     let mode_style = match app.command_edit_mode() {
-        CommandEditMode::Insert => Style::new().bg(GREEN).fg(BG).bold(),
-        CommandEditMode::Normal => Style::new().bg(AMBER).fg(BG).bold(),
+        CommandEditMode::Insert => Style::new().bg(GREEN.into()).fg(BG.into()).bold(),
+        CommandEditMode::Normal => Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
     };
     let mode = match app.command_edit_mode() {
         CommandEditMode::Insert => " INSERT ",
@@ -112,8 +115,8 @@ fn command_editor_line(app: &App) -> Line<'_> {
         .map(|character| rest.split_at(character.len_utf8()))
         .unwrap_or((" ", ""));
     let cursor_style = match app.command_edit_mode() {
-        CommandEditMode::Insert => Style::new().bg(CYAN).fg(BG),
-        CommandEditMode::Normal => Style::new().bg(AMBER).fg(BG),
+        CommandEditMode::Insert => Style::new().bg(CYAN.into()).fg(BG.into()),
+        CommandEditMode::Normal => Style::new().bg(AMBER.into()).fg(BG.into()),
     };
     let mut spans = vec![
         Span::styled(mode, mode_style),
@@ -132,11 +135,11 @@ pub fn render_navigation(frame: &mut Frame, area: Rect, app: &App) {
     for (index, item) in app.workspaces.navigation_items().enumerate() {
         let text = navigation_item_text(index, item);
         let style = if item.id == app.active_workspace {
-            Style::new().bg(CYAN).fg(BG).bold()
+            Style::new().bg(CYAN.into()).fg(BG.into()).bold()
         } else if app.assistant_drawer_visible() && Some(item.id) == app.assistant_workspace() {
-            Style::new().bg(AMBER).fg(BG).bold()
+            Style::new().bg(AMBER.into()).fg(BG.into()).bold()
         } else {
-            Style::new().fg(INK)
+            Style::new().fg(INK.into())
         };
         spans.push(Span::styled(text, style));
     }
@@ -147,7 +150,7 @@ pub fn render_navigation(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled("+1.00%", GREEN),
     ]);
     frame.render_widget(
-        Paragraph::new(Line::from(spans)).style(Style::new().bg(NAV_BG)),
+        Paragraph::new(Line::from(spans)).style(Style::new().bg(NAV_BG.into())),
         area,
     );
 }
@@ -171,7 +174,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled("F1 ", AMBER),
                 Span::raw("HELP"),
             ]))
-            .style(Style::new().bg(FOOTER_BG)),
+            .style(Style::new().bg(FOOTER_BG.into())),
             area,
         );
         return;
@@ -186,7 +189,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled("CLICK ", AMBER),
                 Span::raw("WORKSPACE TAB TO LEAVE"),
             ]))
-            .style(Style::new().bg(FOOTER_BG)),
+            .style(Style::new().bg(FOOTER_BG.into())),
             area,
         );
         return;
@@ -194,10 +197,13 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     if app.assistant_drawer_visible() {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" AI DRAWER ", Style::new().bg(CYAN).fg(BG).bold()),
+                Span::styled(
+                    " AI DRAWER ",
+                    Style::new().bg(CYAN.into()).fg(BG.into()).bold(),
+                ),
                 Span::raw("  TYPE PROMPT   ENTER SEND   ESC CLOSE   CLICK OUTSIDE CLOSES"),
             ]))
-            .style(Style::new().bg(FOOTER_BG)),
+            .style(Style::new().bg(FOOTER_BG.into())),
             area,
         );
         return;
@@ -205,10 +211,13 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     if app.tmux_prefix_pending() {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" TMUX PREFIX ", Style::new().bg(CYAN).fg(BG).bold()),
+                Span::styled(
+                    " TMUX PREFIX ",
+                    Style::new().bg(CYAN.into()).fg(BG.into()).bold(),
+                ),
                 Span::raw("  ←/→ N/P PREV/NEXT   1–9/0 SELECT   ? HELP   ESC CANCEL"),
             ]))
-            .style(Style::new().bg(FOOTER_BG)),
+            .style(Style::new().bg(FOOTER_BG.into())),
             area,
         );
         return;
@@ -226,10 +235,10 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(mode, Style::new().bg(CYAN).fg(BG).bold()),
+                Span::styled(mode, Style::new().bg(CYAN.into()).fg(BG.into()).bold()),
                 Span::raw(format!("  {bindings}")),
             ]))
-            .style(Style::new().bg(FOOTER_BG)),
+            .style(Style::new().bg(FOOTER_BG.into())),
             area,
         );
         return;
@@ -277,7 +286,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
             Span::raw("MOVE"),
             Span::styled(format!("   {provenance}"), MUTED),
         ]))
-        .style(Style::new().bg(FOOTER_BG)),
+        .style(Style::new().bg(FOOTER_BG.into())),
         area,
     );
 }

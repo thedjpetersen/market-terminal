@@ -168,7 +168,10 @@ impl Workspace for InstrumentSearchWorkspace {
         };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" QUERY  ", Style::new().bg(AMBER).fg(BG).bold()),
+                Span::styled(
+                    " QUERY  ",
+                    Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
+                ),
                 Span::styled(format!(" {query}"), INK),
                 Span::styled(format!("   {} MATCHES", self.results.len()), MUTED),
                 Span::styled(format!("   {}", self.query.status()), MUTED),
@@ -179,9 +182,9 @@ impl Workspace for InstrumentSearchWorkspace {
 
         let result_rows = self.results.iter().enumerate().map(|(index, instrument)| {
             let style = if index == self.selected {
-                Style::new().bg(CYAN).fg(BG).bold()
+                Style::new().bg(CYAN.into()).fg(BG.into()).bold()
             } else {
-                Style::new().fg(INK)
+                Style::new().fg(INK.into())
             };
             Row::new(vec![
                 Cell::from(instrument.symbol.clone()),
@@ -207,7 +210,7 @@ impl Workspace for InstrumentSearchWorkspace {
             )
             .header(
                 Row::new(["SYMBOL", "NAME", "TYPE", "VENUE", "CCY", "CANONICAL ID"])
-                    .style(Style::new().fg(AMBER).bold())
+                    .style(Style::new().fg(AMBER.into()).bold())
                     .bottom_margin(1),
             )
             .column_spacing(1)

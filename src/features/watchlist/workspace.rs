@@ -483,7 +483,7 @@ impl Workspace for WatchlistWorkspace {
             Paragraph::new(Line::from(vec![
                 Span::styled(
                     format!(" {} ", self.definition.name),
-                    Style::new().bg(AMBER).fg(BG).bold(),
+                    Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
                 ),
                 Span::styled(format!(" {} INSTRUMENTS  ", self.rows.len()), INK),
                 Span::styled(
@@ -505,7 +505,7 @@ impl Workspace for WatchlistWorkspace {
             .map(|column| column_width(*column))
             .collect::<Vec<_>>();
         let header = Row::new(columns.iter().map(|column| column.label()))
-            .style(Style::new().fg(AMBER).bold())
+            .style(Style::new().fg(AMBER.into()).bold())
             .bottom_margin(1);
         let rows = self.rows.iter().enumerate().map(|(index, row)| {
             let selected = index == self.selected;
@@ -515,7 +515,7 @@ impl Workspace for WatchlistWorkspace {
                     .map(|column| render_cell(row, *column, selected)),
             )
             .style(if selected {
-                Style::new().bg(CYAN).fg(BG).bold()
+                Style::new().bg(CYAN.into()).fg(BG.into()).bold()
             } else {
                 Style::new()
             })
@@ -640,7 +640,7 @@ fn render_cell(row: &MonitorRow, column: MonitorColumn, selected: bool) -> Cell<
             .unwrap_or_else(|| "--".to_owned()),
     };
     let style = if selected {
-        Style::new().bg(CYAN).fg(BG).bold()
+        Style::new().bg(CYAN.into()).fg(BG.into()).bold()
     } else {
         cell_style(quote, column, &value)
     };
@@ -650,11 +650,11 @@ fn render_cell(row: &MonitorRow, column: MonitorColumn, selected: bool) -> Cell<
 fn cell_style(quote: Option<&QuoteSnapshot>, column: MonitorColumn, value: &str) -> Style {
     if matches!(column, MonitorColumn::Quality) {
         return match quote.map(|quote| quote.quality) {
-            Some(DataQuality::RealTime) => Style::new().fg(GREEN),
+            Some(DataQuality::RealTime) => Style::new().fg(GREEN.into()),
             Some(
                 DataQuality::Delayed { .. } | DataQuality::Stale { .. } | DataQuality::Derived,
-            ) => Style::new().fg(YELLOW),
-            _ => Style::new().fg(RED),
+            ) => Style::new().fg(YELLOW.into()),
+            _ => Style::new().fg(RED.into()),
         };
     }
     if matches!(
@@ -674,14 +674,14 @@ fn cell_style(quote: Option<&QuoteSnapshot>, column: MonitorColumn, value: &str)
             0.0
         };
         return if direction > 0.0 {
-            Style::new().fg(GREEN)
+            Style::new().fg(GREEN.into())
         } else if direction < 0.0 {
-            Style::new().fg(RED)
+            Style::new().fg(RED.into())
         } else {
-            Style::new().fg(INK)
+            Style::new().fg(INK.into())
         };
     }
-    Style::new().fg(INK)
+    Style::new().fg(INK.into())
 }
 
 fn column_width(column: MonitorColumn) -> Constraint {

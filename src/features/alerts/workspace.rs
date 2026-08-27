@@ -370,7 +370,10 @@ impl Workspace for AlertsWorkspace {
         let (triggered, acknowledged, disabled) = status_counts(&self.rules);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" ALERTS ", Style::new().bg(AMBER).fg(BG).bold()),
+                Span::styled(
+                    " ALERTS ",
+                    Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
+                ),
                 Span::styled(format!(" {} RULES  ", self.rules.len()), INK),
                 Span::styled(format!("TRIGGERED {triggered}  "), RED),
                 Span::styled(format!("ACK {acknowledged}  "), GREEN),
@@ -390,7 +393,7 @@ impl Workspace for AlertsWorkspace {
             "DEBOUNCE",
             "DELIVERY",
         ])
-        .style(Style::new().fg(AMBER).bold())
+        .style(Style::new().fg(AMBER.into()).bold())
         .bottom_margin(1);
         let rows = self.rules.iter().enumerate().map(|(index, rule)| {
             let selected = index == self.selected;
@@ -414,7 +417,7 @@ impl Workspace for AlertsWorkspace {
                 Cell::from(rule.delivery.label()),
             ])
             .style(if selected {
-                Style::new().bg(CYAN).fg(BG).bold()
+                Style::new().bg(CYAN.into()).fg(BG.into()).bold()
             } else {
                 Style::new()
             })
@@ -523,7 +526,7 @@ fn display_status(rule: &AlertRule) -> &'static str {
 
 fn rule_status_style(rule: &AlertRule, selected: bool) -> Style {
     if rule.lifecycle == AlertLifecycle::Disabled && !selected {
-        Style::new().fg(MUTED)
+        Style::new().fg(MUTED.into())
     } else {
         status_style(&rule.status, selected)
     }
@@ -531,13 +534,13 @@ fn rule_status_style(rule: &AlertRule, selected: bool) -> Style {
 
 fn status_style(status: &AlertStatus, selected: bool) -> Style {
     if selected {
-        return Style::new().bg(CYAN).fg(BG).bold();
+        return Style::new().bg(CYAN.into()).fg(BG.into()).bold();
     }
     match status {
-        AlertStatus::Armed => Style::new().fg(INK),
-        AlertStatus::Pending { .. } => Style::new().fg(YELLOW),
-        AlertStatus::Triggered { .. } => Style::new().fg(RED).bold(),
-        AlertStatus::Acknowledged { .. } => Style::new().fg(GREEN),
+        AlertStatus::Armed => Style::new().fg(INK.into()),
+        AlertStatus::Pending { .. } => Style::new().fg(YELLOW.into()),
+        AlertStatus::Triggered { .. } => Style::new().fg(RED.into()).bold(),
+        AlertStatus::Acknowledged { .. } => Style::new().fg(GREEN.into()),
     }
 }
 

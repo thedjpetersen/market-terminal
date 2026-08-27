@@ -29,6 +29,7 @@ use crate::{
 };
 
 pub fn demo_app() -> App {
+    crate::ui::theme::set_theme("default").expect("built-in default theme");
     let data = Arc::new(DemoData);
     let portfolio_query: Arc<dyn PortfolioRepository> = data.clone();
     let news_query: Arc<dyn NewsFeed> = data;
@@ -179,6 +180,11 @@ fn build_app(providers: AppProviders) -> App {
 
 /// Builds the interactive application with durable shell state enabled.
 pub fn persistent_app() -> App {
+    let configured_theme =
+        std::env::var("MARKET_TERMINAL_THEME").unwrap_or_else(|_| "default".to_owned());
+    if crate::ui::theme::set_theme(&configured_theme).is_none() {
+        crate::ui::theme::set_theme("default").expect("built-in default theme");
+    }
     let repository = Arc::new(LocalPersistence::new(default_state_directory()));
     let portfolio_query: Arc<dyn PortfolioRepository> =
         Arc::new(CsvPortfolioRepository::from_env());

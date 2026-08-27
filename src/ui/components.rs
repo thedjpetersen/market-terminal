@@ -13,7 +13,10 @@ pub fn terminal_block(code: &'static str, title: &'static str) -> Block<'static>
         .borders(Borders::ALL)
         .border_style(AMBER)
         .title(Line::from(vec![
-            Span::styled(format!(" {code} "), Style::new().bg(AMBER).fg(BG).bold()),
+            Span::styled(
+                format!(" {code} "),
+                Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
+            ),
             Span::styled(format!(" {title} "), AMBER),
         ]))
 }
@@ -39,7 +42,7 @@ pub fn render_pairs<const N: usize, S: AsRef<str>>(
                         if is_value {
                             theme::value(value)
                         } else {
-                            Style::new().fg(INK)
+                            Style::new().fg(INK.into())
                         },
                     )
                 })
@@ -65,7 +68,7 @@ pub fn render_table<const N: usize, S: Into<String>>(
     let table = Table::new(rows, widths)
         .header(
             Row::new(header.map(Into::into))
-                .style(Style::new().fg(AMBER).add_modifier(Modifier::BOLD))
+                .style(Style::new().fg(AMBER.into()).add_modifier(Modifier::BOLD))
                 .bottom_margin(1),
         )
         .column_spacing(1)

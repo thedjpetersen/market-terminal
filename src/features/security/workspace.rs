@@ -419,7 +419,10 @@ impl Workspace for SecurityWorkspace {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(format!(" {} · {}  ", snapshot.symbol, snapshot.name), AMBER),
-                Span::styled(format!("{}  ", snapshot.last), Style::new().fg(CYAN).bold()),
+                Span::styled(
+                    format!("{}  ", snapshot.last),
+                    Style::new().fg(CYAN.into()).bold(),
+                ),
                 Span::styled(
                     format!(
                         "{}  {}  ",
@@ -490,9 +493,12 @@ impl Workspace for SecurityWorkspace {
             .enumerate()
             .map(|(index, view)| {
                 let style = if view == self.research_view {
-                    Style::new().bg(CYAN).fg(crate::ui::theme::BG).bold()
+                    Style::new()
+                        .bg(CYAN.into())
+                        .fg(crate::ui::theme::BG.into())
+                        .bold()
                 } else {
-                    Style::new().fg(MUTED)
+                    Style::new().fg(MUTED.into())
                 };
                 Span::styled(format!(" {} {} ", index + 1, view.label()), style)
             })
@@ -708,7 +714,7 @@ fn render_research(
                             .unwrap_or_else(|| "—".to_owned()),
                     ]);
                     if index == selected_insider {
-                        row.style(Style::new().bg(CYAN).fg(BG).bold())
+                        row.style(Style::new().bg(CYAN.into()).fg(BG.into()).bold())
                     } else {
                         row
                     }

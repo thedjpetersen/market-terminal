@@ -5,7 +5,7 @@ pub(crate) mod theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
@@ -83,6 +83,8 @@ pub(crate) enum ShellClickTarget {
     HelpClose,
     HelpOverlay,
     SettingsClose,
+    SettingsThemePrevious,
+    SettingsThemeNext,
     SettingsOverlay,
     Quit,
 }
@@ -91,6 +93,14 @@ pub(crate) fn hit_test(app: &App, area: Rect, column: u16, row: u16) -> Option<S
     let layout = ShellLayout::for_app(app, area);
     if app.settings_visible() && contains(settings_close_area(layout.workspace), column, row) {
         return Some(ShellClickTarget::SettingsClose);
+    }
+    if app.settings_visible()
+        && contains(settings_theme_previous_area(layout.workspace), column, row)
+    {
+        return Some(ShellClickTarget::SettingsThemePrevious);
+    }
+    if app.settings_visible() && contains(settings_theme_next_area(layout.workspace), column, row) {
+        return Some(ShellClickTarget::SettingsThemeNext);
     }
     if app.settings_visible() && contains(layout.workspace, column, row) {
         return Some(ShellClickTarget::SettingsOverlay);
@@ -234,6 +244,26 @@ pub(crate) fn settings_close_area(workspace: Rect) -> Rect {
     )
 }
 
+pub(crate) fn settings_theme_previous_area(workspace: Rect) -> Rect {
+    let panel = help_panel_area(workspace);
+    Rect::new(
+        panel.x.saturating_add(panel.width.saturating_sub(31)),
+        panel.y.saturating_add(panel.height.saturating_sub(2)),
+        14.min(panel.width),
+        1.min(panel.height),
+    )
+}
+
+pub(crate) fn settings_theme_next_area(workspace: Rect) -> Rect {
+    let panel = help_panel_area(workspace);
+    Rect::new(
+        panel.x.saturating_add(panel.width.saturating_sub(16)),
+        panel.y.saturating_add(panel.height.saturating_sub(2)),
+        14.min(panel.width),
+        1.min(panel.height),
+    )
+}
+
 pub(crate) const fn contains(area: Rect, column: u16, row: u16) -> bool {
     column >= area.x
         && column < area.x.saturating_add(area.width)
@@ -287,7 +317,7 @@ fn uses_immersive_shell(app: &App) -> bool {
 
 pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(
-        Block::new().style(Style::new().bg(theme::BG).fg(theme::INK)),
+        Block::new().style(Style::new().bg(theme::BG.into()).fg(theme::INK.into())),
         frame.area(),
     );
     if uses_immersive_shell(app) {
@@ -326,14 +356,25 @@ fn render_assistant_drawer(frame: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(theme::CYAN)
         .title(Line::from(vec![
-            Span::styled(" AI ", Style::new().bg(theme::CYAN).fg(theme::BG).bold()),
+            Span::styled(
+                " AI ",
+                Style::new()
+                    .bg(theme::CYAN.into())
+                    .fg(theme::BG.into())
+                    .bold(),
+            ),
             Span::styled(" ASSISTANT DRAWER ", theme::CYAN),
         ]));
     let inner = block.inner(drawer);
     frame.render_widget(block, drawer);
     app.workspaces.render(assistant, frame, inner);
     frame.render_widget(
-        Paragraph::new(" [ CLOSE ] ").style(Style::new().bg(theme::CYAN).fg(theme::BG).bold()),
+        Paragraph::new(" [ CLOSE ] ").style(
+            Style::new()
+                .bg(theme::CYAN.into())
+                .fg(theme::BG.into())
+                .bold(),
+        ),
         assistant_close_area(area),
     );
 }
@@ -345,7 +386,13 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(theme::CYAN)
         .title(Line::from(vec![
-            Span::styled(" HELP ", Style::new().bg(theme::CYAN).fg(theme::BG).bold()),
+            Span::styled(
+                " HELP ",
+                Style::new()
+                    .bg(theme::CYAN.into())
+                    .fg(theme::BG.into())
+                    .bold(),
+            ),
             Span::styled(" MARKET TERMINAL GUIDE ", theme::CYAN),
         ]));
     let inner = block.inner(panel);
@@ -361,7 +408,7 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(vec![
             Line::styled(
                 "COMMANDS, KEYS, AND MOUSE CONTROLS",
-                Style::new().fg(theme::INK).bold(),
+                Style::new().fg(theme::INK.into()).bold(),
             ),
             Line::styled(
                 "Your current workspace stays open behind this guide.",
@@ -397,6 +444,7 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw("[KEY]      Open labeled workspace"),
             Line::raw("A          Toggle AI drawer; Esc closes"),
             Line::raw("F2         Effective settings / setup"),
+            Line::raw("F3/Shift+F3  Next / previous color theme"),
             Line::raw("Ctrl+B     tmux-style panel prefix"),
             Line::raw("  ←/→ N/P  Previous / next panel"),
             Line::raw("  1–9/0    Select numbered panel"),
@@ -418,6 +466,7 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::styled("USEFUL COMMANDS", theme::AMBER),
             Line::raw("HELP                 This guide"),
             Line::raw("SETTINGS             Effective configuration"),
+            Line::raw("THEME [NAME]         Set or cycle color theme"),
             Line::raw("DESK                 Monitor + Chart + News"),
             Line::raw("PORT IMPORT <CSV>    Import positions"),
             Line::raw("PORT RELOAD          Reload positions"),
@@ -440,7 +489,10 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(Line::from(vec![
             Span::styled(
                 " ESC / Q / F1 ",
-                Style::new().bg(theme::AMBER).fg(theme::BG).bold(),
+                Style::new()
+                    .bg(theme::AMBER.into())
+                    .fg(theme::BG.into())
+                    .bold(),
             ),
             Span::styled(
                 " CLOSE HELP   ·   CLICK A WORKSPACE TAB TO LEAVE",
@@ -450,7 +502,12 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
         rows[2],
     );
     frame.render_widget(
-        Paragraph::new(" [ CLOSE ] ").style(Style::new().bg(theme::CYAN).fg(theme::BG).bold()),
+        Paragraph::new(" [ CLOSE ] ").style(
+            Style::new()
+                .bg(theme::CYAN.into())
+                .fg(theme::BG.into())
+                .bold(),
+        ),
         help_close_area(area),
     );
 }
@@ -462,7 +519,13 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
         .borders(Borders::ALL)
         .border_style(theme::CYAN)
         .title(Line::from(vec![
-            Span::styled(" SETUP ", Style::new().bg(theme::CYAN).fg(theme::BG).bold()),
+            Span::styled(
+                " SETUP ",
+                Style::new()
+                    .bg(theme::CYAN.into())
+                    .fg(theme::BG.into())
+                    .bold(),
+            ),
             Span::styled(" EFFECTIVE SETTINGS ", theme::CYAN),
         ]));
     let inner = block.inner(panel);
@@ -478,14 +541,14 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
         vec![
             Line::styled(
                 "WELCOME TO MARKET TERMINAL",
-                Style::new().fg(theme::INK).bold(),
+                Style::new().fg(theme::INK.into()).bold(),
             ),
             Line::styled(
                 "This is a secret-free view of the providers and local inputs selected for this process.",
                 theme::MUTED,
             ),
             Line::styled(
-                "Alpha Vantage demo data and live public feeds work immediately; configure the rest when useful.",
+                "No-key Yahoo market data and live public feeds work immediately; configure an official provider when useful.",
                 theme::MUTED,
             ),
         ]
@@ -493,7 +556,7 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
         vec![
             Line::styled(
                 "EFFECTIVE STARTUP CONFIGURATION",
-                Style::new().fg(theme::INK).bold(),
+                Style::new().fg(theme::INK.into()).bold(),
             ),
             Line::styled(
                 "Values are resolved at startup from exported variables and the ignored .env file.",
@@ -530,6 +593,7 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
             setting_line("MARKETS", &settings.market_symbols, theme::INK),
             setting_line("CHART SYMBOL", &settings.chart_symbol, theme::INK),
             setting_line("AI", &settings.ai_provider, theme::CYAN),
+            setting_line("THEME", app.theme_name(), theme::CYAN),
             setting_line("PORTFOLIO", &settings.portfolio_import, theme::INK),
             setting_line("NEWS", &settings.news_sources, theme::INK),
             setting_line("IRC", &settings.irc, theme::INK),
@@ -542,14 +606,19 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(vec![
             Line::styled("FAST START", theme::AMBER),
             Line::raw("1  cp .env.example .env"),
-            Line::raw("2  Choose alpha-vantage or alpaca"),
-            Line::raw("3  Set the provider credentials in .env"),
+            Line::raw("2  Keep Yahoo, or choose Finnhub / Alpha Vantage / Alpaca"),
+            Line::raw("3  Set credentials only for official API providers"),
             Line::raw("4  Run `codex login` for ChatGPT Pro"),
             Line::raw("5  Set watchlist / chart symbol / portfolio CSV"),
             Line::raw("6  Restart the terminal to apply provider changes"),
             Line::raw(""),
             Line::styled("USE NOW", theme::AMBER),
             Line::raw("PORT IMPORT \"~/Downloads/positions.csv\""),
+            Line::raw("THEME NORD  ·  F3 cycle  ·  Shift+F3 reverse"),
+            Line::raw(format!(
+                "PRESETS  {}",
+                theme::preset_names().collect::<Vec<_>>().join(" · ")
+            )),
             Line::raw("HELP  ·  F1 command and interaction guide"),
             Line::raw(""),
             Line::styled(
@@ -565,7 +634,10 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(Line::from(vec![
             Span::styled(
                 " ESC / Q / F2 ",
-                Style::new().bg(theme::AMBER).fg(theme::BG).bold(),
+                Style::new()
+                    .bg(theme::AMBER.into())
+                    .fg(theme::BG.into())
+                    .bold(),
             ),
             Span::styled(
                 " CLOSE SETTINGS   ·   / COMMAND   ·   F1 HELP",
@@ -575,12 +647,35 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
         rows[2],
     );
     frame.render_widget(
-        Paragraph::new(" [ CLOSE ] ").style(Style::new().bg(theme::CYAN).fg(theme::BG).bold()),
+        Paragraph::new(" [ CLOSE ] ").style(
+            Style::new()
+                .bg(theme::CYAN.into())
+                .fg(theme::BG.into())
+                .bold(),
+        ),
         settings_close_area(area),
+    );
+    frame.render_widget(
+        Paragraph::new(" [ ◀ THEME ] ").style(
+            Style::new()
+                .bg(theme::AMBER.into())
+                .fg(theme::BG.into())
+                .bold(),
+        ),
+        settings_theme_previous_area(area),
+    );
+    frame.render_widget(
+        Paragraph::new(" [ THEME ▶ ] ").style(
+            Style::new()
+                .bg(theme::AMBER.into())
+                .fg(theme::BG.into())
+                .bold(),
+        ),
+        settings_theme_next_area(area),
     );
 }
 
-fn setting_line<'a>(label: &'a str, value: &'a str, value_color: Color) -> Line<'a> {
+fn setting_line<'a>(label: &'a str, value: &'a str, value_color: theme::ThemeColor) -> Line<'a> {
     Line::from(vec![
         Span::styled(format!("{label:<14}"), theme::AMBER),
         Span::styled(value, value_color),

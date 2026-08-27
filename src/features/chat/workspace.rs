@@ -20,7 +20,7 @@ use crate::{
 
 use super::{
     ChatConnectionState, ChatEndpoint, ChatEvent, ChatGateway, ChatMessage, ChatMessageKind, ID,
-    MAX_CHAT_MESSAGE_BYTES, MAX_CHAT_MESSAGES,
+    MAX_CHAT_MESSAGES, MAX_CHAT_MESSAGE_BYTES,
 };
 
 pub struct ChatWorkspace {
@@ -111,7 +111,9 @@ impl Workspace for ChatWorkspace {
         }
     }
 
-    fn is_favorite(&self) -> bool { true }
+    fn is_favorite(&self) -> bool {
+        true
+    }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
         if !invocation.args.is_empty() {
@@ -174,7 +176,9 @@ impl Workspace for ChatWorkspace {
         false
     }
 
-    fn on_blur(&mut self) { self.composing = false; }
+    fn on_blur(&mut self) {
+        self.composing = false;
+    }
 
     fn poll_intents(&mut self) -> Vec<crate::app::AppIntent> {
         self.poll_gateway();
@@ -197,7 +201,7 @@ impl Workspace for ChatWorkspace {
             Paragraph::new(Line::from(vec![
                 Span::styled(
                     format!(" {} ", self.endpoint.channel),
-                    Style::new().bg(AMBER).fg(BG).bold(),
+                    Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
                 ),
                 Span::styled(format!(" {}  ", self.connection.label()), connection_style),
                 Span::styled(
@@ -205,7 +209,11 @@ impl Workspace for ChatWorkspace {
                         "{}:{} · {} · {}",
                         self.endpoint.server,
                         self.endpoint.port,
-                        if self.endpoint.tls { "TLS" } else { "PLAINTEXT" },
+                        if self.endpoint.tls {
+                            "TLS"
+                        } else {
+                            "PLAINTEXT"
+                        },
                         self.endpoint.nickname,
                     ),
                     MUTED,
@@ -271,7 +279,14 @@ impl Workspace for ChatWorkspace {
         let prompt_style = if self.composing { CYAN } else { MUTED };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(if self.composing { " MESSAGE › " } else { " I/ENTER " }, AMBER),
+                Span::styled(
+                    if self.composing {
+                        " MESSAGE › "
+                    } else {
+                        " I/ENTER "
+                    },
+                    AMBER,
+                ),
                 Span::styled(
                     if self.draft.is_empty() && !self.composing {
                         "COMPOSE · R RECONNECT"
@@ -282,7 +297,10 @@ impl Workspace for ChatWorkspace {
                 ),
                 Span::styled(if self.composing { "█" } else { "" }, CYAN),
             ]))
-            .block(terminal_block("SEND", "IRC MESSAGE · ENTER SEND · ESC EXIT INPUT")),
+            .block(terminal_block(
+                "SEND",
+                "IRC MESSAGE · ENTER SEND · ESC EXIT INPUT",
+            )),
             sections[2],
         );
     }
@@ -300,18 +318,29 @@ mod tests {
     }
 
     impl ChatGateway for StubGateway {
-        fn endpoint(&self) -> ChatEndpoint { ChatEndpoint::offline() }
-        fn drain_events(&self) -> Vec<ChatEvent> { Vec::new() }
+        fn endpoint(&self) -> ChatEndpoint {
+            ChatEndpoint::offline()
+        }
+        fn drain_events(&self) -> Vec<ChatEvent> {
+            Vec::new()
+        }
         fn send_message(&self, message: &str) -> Result<(), ChatGatewayError> {
-            self.sent.lock().expect("sent lock").push(message.to_owned());
+            self.sent
+                .lock()
+                .expect("sent lock")
+                .push(message.to_owned());
             Ok(())
         }
-        fn reconnect(&self) -> Result<(), ChatGatewayError> { Ok(()) }
+        fn reconnect(&self) -> Result<(), ChatGatewayError> {
+            Ok(())
+        }
     }
 
     #[test]
     fn composer_captures_keys_and_sends_without_shell_access() {
-        let gateway = Arc::new(StubGateway { sent: Mutex::new(Vec::new()) });
+        let gateway = Arc::new(StubGateway {
+            sent: Mutex::new(Vec::new()),
+        });
         let mut workspace = ChatWorkspace::new(gateway.clone());
         assert!(workspace.handle_key(KeyEvent::new(
             KeyCode::Char('i'),

@@ -87,9 +87,9 @@ impl OverviewWorkspace {
         let mut period_spans = vec![Span::raw(" ")];
         for (index, period) in periods.iter().enumerate() {
             let style = if index == self.selected_period {
-                Style::new().bg(CYAN).fg(BG).bold()
+                Style::new().bg(CYAN.into()).fg(BG.into()).bold()
             } else {
-                Style::new().fg(CYAN)
+                Style::new().fg(CYAN.into())
             };
             period_spans.push(Span::styled(format!("  {period}  "), style));
         }
@@ -172,9 +172,9 @@ impl OverviewWorkspace {
         frame.render_widget(chart, area);
 
         let legend = Line::from(vec![
-            Span::styled(" ━ 001 ", Style::new().fg(YELLOW).bold()),
+            Span::styled(" ━ 001 ", Style::new().fg(YELLOW.into()).bold()),
             Span::styled("H +17.1% L −1.6%    ", MUTED),
-            Span::styled("━ 002 ", Style::new().fg(CYAN).bold()),
+            Span::styled("━ 002 ", Style::new().fg(CYAN.into()).bold()),
             Span::styled("H +14.3% L −3.0%", MUTED),
         ]);
         frame.render_widget(
@@ -283,7 +283,7 @@ impl OverviewWorkspace {
                 Span::styled("q ", AMBER),
                 Span::styled("Quit", INK),
             ]))
-            .style(Style::new().bg(NAV_BG)),
+            .style(Style::new().bg(NAV_BG.into())),
             area,
         );
     }
@@ -293,7 +293,10 @@ impl OverviewWorkspace {
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(vec![
-                    Span::styled(" IMPORTED PORTFOLIO ", Style::new().bg(CYAN).fg(BG).bold()),
+                    Span::styled(
+                        " IMPORTED PORTFOLIO ",
+                        Style::new().bg(CYAN.into()).fg(BG.into()).bold(),
+                    ),
                     Span::styled(format!(" {} ", snapshot.portfolio_source), INK),
                 ]),
                 Line::from(vec![
@@ -333,7 +336,7 @@ impl OverviewWorkspace {
                 Span::styled("F9/R ", AMBER),
                 Span::styled("REFRESH NEWS", INK),
             ]))
-            .style(Style::new().bg(NAV_BG)),
+            .style(Style::new().bg(NAV_BG.into())),
             rows[5],
         );
     }
@@ -484,7 +487,7 @@ fn render_live_holdings(frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSn
 
     let rows = snapshot.holdings.iter().map(|holding| {
         Row::new([
-            Cell::from(holding.symbol.clone()).style(Style::new().fg(CYAN).bold()),
+            Cell::from(holding.symbol.clone()).style(Style::new().fg(CYAN.into()).bold()),
             Cell::from(Line::from(holding.quantity.clone()).alignment(Alignment::Right)),
             Cell::from(Line::from(holding.market_value.clone()).alignment(Alignment::Right)),
             Cell::from(Line::from(holding.pnl.clone()).alignment(Alignment::Right))
@@ -505,7 +508,7 @@ fn render_live_holdings(frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSn
         )
         .header(
             Row::new(["SYMBOL", "QUANTITY", "MARKET VALUE", "P&L", "WEIGHT"])
-                .style(Style::new().fg(INK).bold())
+                .style(Style::new().fg(INK.into()).bold())
                 .bottom_margin(1),
         )
         .column_spacing(1)
@@ -571,7 +574,7 @@ fn render_live_headlines(frame: &mut Frame, area: Rect, snapshot: &LiveOverviewS
         )
         .header(
             Row::new(["TIME", "TOPIC", "HEADLINE", "REGION"])
-                .style(Style::new().fg(INK).bold())
+                .style(Style::new().fg(INK.into()).bold())
                 .bottom_margin(1),
         )
         .column_spacing(1)
@@ -586,7 +589,7 @@ fn reference_block(title: &'static str) -> Block<'static> {
         .border_style(AMBER)
         .title(Span::styled(
             format!(" {title} "),
-            Style::new().fg(AMBER).bold(),
+            Style::new().fg(AMBER.into()).bold(),
         ))
 }
 
@@ -607,18 +610,18 @@ fn stepped_points(points: &[(f64, f64)]) -> Vec<(f64, f64)> {
 
 fn render_risk_table(frame: &mut Frame, area: Rect) {
     let header = Row::new(["Portfolio", "Return", "Max DD", "Std dev (ann.)", "Sharpe"])
-        .style(Style::new().fg(INK))
+        .style(Style::new().fg(INK.into()))
         .bottom_margin(1);
     let rows = vec![
         Row::new([
-            Cell::from("001").style(Style::new().fg(INK)),
+            Cell::from("001").style(Style::new().fg(INK.into())),
             metric_cell("+17.02%", true),
             metric_cell("−6.3%", true),
             metric_cell("13.2%", false),
             metric_cell("2.79", true),
         ]),
         Row::new([
-            Cell::from("002").style(Style::new().fg(INK)),
+            Cell::from("002").style(Style::new().fg(INK.into())),
             metric_cell("+13.87%", false),
             metric_cell("−6.6%", false),
             metric_cell("12.8%", true),
@@ -662,7 +665,7 @@ fn render_metric_pairs(
             value_style = value_style.bg(METRIC_HIGHLIGHT);
         }
         Row::new([
-            Cell::from(*label).style(Style::new().fg(INK)),
+            Cell::from(*label).style(Style::new().fg(INK.into())),
             Cell::from(Line::from(*value).alignment(Alignment::Right)).style(value_style),
         ])
     });
@@ -681,7 +684,7 @@ fn render_countries(frame: &mut Frame, area: Rect) {
     frame.render_widget(
         Paragraph::new("Largest country exposure")
             .alignment(Alignment::Center)
-            .style(Style::new().fg(INK).add_modifier(Modifier::ITALIC)),
+            .style(Style::new().fg(INK.into()).add_modifier(Modifier::ITALIC)),
         rows[0],
     );
     frame.render_widget(
@@ -703,7 +706,7 @@ fn render_holdings(frame: &mut Frame, area: Rect) {
     frame.render_widget(
         Paragraph::new("Top holdings")
             .alignment(Alignment::Center)
-            .style(Style::new().fg(INK).add_modifier(Modifier::ITALIC)),
+            .style(Style::new().fg(INK.into()).add_modifier(Modifier::ITALIC)),
         rows[0],
     );
     let columns = Layout::horizontal([
@@ -752,7 +755,7 @@ fn render_movers(
     frame.render_widget(
         Paragraph::new(title)
             .alignment(Alignment::Center)
-            .style(Style::new().fg(INK).add_modifier(Modifier::ITALIC)),
+            .style(Style::new().fg(INK.into()).add_modifier(Modifier::ITALIC)),
         rows[0],
     );
     frame.render_widget(
@@ -776,7 +779,7 @@ fn render_headlines(frame: &mut Frame, area: Rect) {
     frame.render_widget(
         Paragraph::new("Market headlines")
             .alignment(Alignment::Center)
-            .style(Style::new().fg(INK).add_modifier(Modifier::ITALIC)),
+            .style(Style::new().fg(INK.into()).add_modifier(Modifier::ITALIC)),
         rows[0],
     );
     frame.render_widget(

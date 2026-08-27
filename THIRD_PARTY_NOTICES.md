@@ -46,6 +46,11 @@ The log-value scatter, collision nudge, selected-mark emphasis, and two-sided
 weekly value bars in `src/features/security/insider_chart.rs` adapt the
 upstream Insider chart renderer to the bounded raw SEC transaction sample.
 
+The named Catppuccin, Dracula, Gruvbox, and Nord palette mappings and their
+dark-before-light cycle order in `src/ui/theme.rs` adapt the upstream preset
+table. Market Terminal maps those colors into its own semantic shell slots and
+adds session persistence, command handling, and clickable settings controls.
+
 MIT License
 
 Copyright (c) 2026 Mikhail Makeev

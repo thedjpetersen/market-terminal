@@ -681,15 +681,15 @@ impl SpreadsheetWorkspace {
         let line = Line::from(vec![
             Span::styled(
                 format!(" {:<5} ", self.cursor),
-                Style::new().bg(AMBER).fg(BG).bold(),
+                Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
             ),
             Span::styled(" ƒx  ", CYAN),
             Span::styled(
                 cursor,
                 if editing {
-                    Style::new().fg(CYAN)
+                    Style::new().fg(CYAN.into())
                 } else {
-                    Style::new().fg(INK)
+                    Style::new().fg(INK.into())
                 },
             ),
         ]);
@@ -722,24 +722,24 @@ impl SpreadsheetWorkspace {
         let mut widths = vec![Constraint::Length(ROW_HEADER_WIDTH)];
         widths.extend((0..columns).map(|_| Constraint::Length(CELL_WIDTH)));
 
-        let mut header_cells = vec![TableCell::from("").style(Style::new().bg(NAV_BG))];
+        let mut header_cells = vec![TableCell::from("").style(Style::new().bg(NAV_BG.into()))];
         for column in self.first_column..self.first_column + columns {
             let name = char::from(b'A' + column - 1).to_string();
             let style = if column == self.cursor.column() {
-                Style::new().bg(AMBER).fg(BG).bold()
+                Style::new().bg(AMBER.into()).fg(BG.into()).bold()
             } else {
-                Style::new().fg(AMBER).add_modifier(Modifier::BOLD)
+                Style::new().fg(AMBER.into()).add_modifier(Modifier::BOLD)
             };
             header_cells.push(TableCell::from(name).style(style));
         }
-        let header = Row::new(header_cells).style(Style::new().bg(NAV_BG));
+        let header = Row::new(header_cells).style(Style::new().bg(NAV_BG.into()));
 
         let table_rows = (self.first_row..self.first_row + rows)
             .map(|row| {
                 let row_style = if row == self.cursor.row() {
-                    Style::new().fg(AMBER).add_modifier(Modifier::BOLD)
+                    Style::new().fg(AMBER.into()).add_modifier(Modifier::BOLD)
                 } else {
-                    Style::new().fg(MUTED)
+                    Style::new().fg(MUTED.into())
                 };
                 let mut cells = vec![TableCell::from(format!("{row:>4}")).style(row_style)];
                 for column in self.first_column..self.first_column + columns {
@@ -753,13 +753,16 @@ impl SpreadsheetWorkspace {
                     });
                     let selected = address == self.cursor;
                     let style = if selected {
-                        Style::new().bg(CYAN).fg(BG).add_modifier(Modifier::BOLD)
+                        Style::new()
+                            .bg(CYAN.into())
+                            .fg(BG.into())
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         value_style(&value)
                     };
                     cells.push(TableCell::from(truncate(&value, CELL_WIDTH as usize)).style(style));
                 }
-                Row::new(cells).style(Style::new().bg(BG))
+                Row::new(cells).style(Style::new().bg(BG.into()))
             })
             .collect::<Vec<_>>();
 
@@ -772,12 +775,12 @@ impl SpreadsheetWorkspace {
 
     fn render_tabs(&self, frame: &mut Frame, area: Rect) {
         let workbook = self.spreadsheet.workbook();
-        let mut tabs = vec![Span::styled(" + ", Style::new().fg(AMBER).bold())];
+        let mut tabs = vec![Span::styled(" + ", Style::new().fg(AMBER.into()).bold())];
         for (index, sheet) in workbook.sheets().iter().enumerate() {
             let style = if index == workbook.active_sheet_index() {
-                Style::new().bg(CYAN).fg(BG).bold()
+                Style::new().bg(CYAN.into()).fg(BG.into()).bold()
             } else {
-                Style::new().fg(MUTED)
+                Style::new().fg(MUTED.into())
             };
             tabs.push(Span::styled(
                 format!(" {}:{} ", index + 1, sheet.name()),
@@ -786,7 +789,7 @@ impl SpreadsheetWorkspace {
             tabs.push(Span::raw(" "));
         }
         frame.render_widget(
-            Paragraph::new(Line::from(tabs)).style(Style::new().bg(NAV_BG)),
+            Paragraph::new(Line::from(tabs)).style(Style::new().bg(NAV_BG.into())),
             area,
         );
     }
@@ -798,14 +801,17 @@ impl SpreadsheetWorkspace {
             .unwrap_or_else(|| self.status.clone());
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(format!(" {mode} "), Style::new().bg(AMBER).fg(BG).bold()),
+                Span::styled(
+                    format!(" {mode} "),
+                    Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
+                ),
                 Span::styled(format!(" {status}   "), INK),
                 Span::styled(
                     "F9 REFRESH  Y COPY  P PASTE  CTRL-D/R FILL  CTRL-Z/Y UNDO/REDO  ENTER EDIT",
                     MUTED,
                 ),
             ]))
-            .style(Style::new().bg(FOOTER_BG)),
+            .style(Style::new().bg(FOOTER_BG.into())),
             area,
         );
     }
@@ -1097,13 +1103,13 @@ fn format_value(value: &CellValue) -> String {
 
 fn value_style(value: &str) -> Style {
     if value.starts_with('#') {
-        Style::new().fg(RED)
+        Style::new().fg(RED.into())
     } else if value.starts_with('…') {
-        Style::new().fg(YELLOW)
+        Style::new().fg(YELLOW.into())
     } else if value.starts_with('~') {
-        Style::new().fg(AMBER)
+        Style::new().fg(AMBER.into())
     } else {
-        Style::new().fg(INK)
+        Style::new().fg(INK.into())
     }
 }
 

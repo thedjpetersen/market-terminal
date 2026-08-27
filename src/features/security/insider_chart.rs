@@ -213,7 +213,7 @@ fn render_log_labels(buffer: &mut Buffer, plot: Rect, low_exp: i32, high_exp: i3
     for (exponent, row) in labels {
         let label = decade_label(exponent);
         let x = plot.x.saturating_sub(label.chars().count() as u16 + 1);
-        buffer.set_string(x, row, label, Style::new().fg(MUTED));
+        buffer.set_string(x, row, label, Style::new().fg(MUTED.into()));
     }
 }
 
@@ -253,12 +253,12 @@ fn render_marks(
             "DISP" => ('▼', RED),
             _ => ('·', MUTED),
         };
-        let mut style = Style::new().fg(color);
+        let mut style = Style::new().fg(color.into());
         if transaction.plan_10b5_1 {
             style = style.add_modifier(Modifier::DIM);
         }
         if mark.index == selected {
-            style = style.bg(CYAN).fg(BG).bold();
+            style = style.bg(CYAN.into()).fg(BG.into()).bold();
         }
         if let Some(cell) = buffer.cell_mut((x, plot.y.saturating_add(row))) {
             cell.set_char(glyph).set_style(style);
@@ -308,7 +308,7 @@ fn render_weekly_bars(
             area.y,
             half,
             filled_rows(week.acquisitions, week.acquisition_count, maximum, half),
-            GREEN,
+            GREEN.into(),
             true,
         );
         draw_vertical_bar(
@@ -322,7 +322,7 @@ fn render_weekly_bars(
                 maximum,
                 area.height.saturating_sub(half),
             ),
-            RED,
+            RED.into(),
             false,
         );
     }
@@ -363,7 +363,7 @@ fn draw_vertical_bar(
 fn render_axis(buffer: &mut Buffer, row: u16, plot: Rect, first: NaiveDate, last: NaiveDate) {
     let first_label = first.format("%b %d").to_string();
     let last_label = last.format("%b %d").to_string();
-    buffer.set_string(plot.x, row, &first_label, Style::new().fg(MUTED));
+    buffer.set_string(plot.x, row, &first_label, Style::new().fg(MUTED.into()));
     let last_x = plot
         .x
         .saturating_add(plot.width)
@@ -373,7 +373,7 @@ fn render_axis(buffer: &mut Buffer, row: u16, plot: Rect, first: NaiveDate, last
             .x
             .saturating_add(first_label.chars().count() as u16 + 1)
     {
-        buffer.set_string(last_x, row, &last_label, Style::new().fg(MUTED));
+        buffer.set_string(last_x, row, &last_label, Style::new().fg(MUTED.into()));
     }
 }
 

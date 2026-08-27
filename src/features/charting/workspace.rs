@@ -26,7 +26,7 @@ use crate::{
     ui::{
         components::terminal_block,
         contains, is_primary_click,
-        theme::{AMBER, BG, CYAN, GREEN, INK, MUTED, RED, YELLOW},
+        theme::{ThemeColor, AMBER, BG, CYAN, GREEN, INK, MUTED, RED, YELLOW},
     },
 };
 
@@ -37,7 +37,7 @@ use super::{
     HistoryRequest, HistorySeries, Normalization, Study, ID,
 };
 
-const SERIES_COLORS: [Color; 4] = [CYAN, YELLOW, GREEN, RED];
+const SERIES_COLORS: [ThemeColor; 4] = [CYAN, YELLOW, GREEN, RED];
 const CANDLE_RIGHT_MARGIN_PERCENT: u16 = 18;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -439,11 +439,11 @@ impl ChartingWorkspace {
             Paragraph::new(Line::from(vec![
                 Span::styled(
                     format!(" {}  ", self.specification.primary.symbol),
-                    Style::new().bg(AMBER).fg(BG).bold(),
+                    Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
                 ),
                 Span::styled(
                     format!(" {:.2}  ", chart.last),
-                    Style::new().fg(CYAN).bold(),
+                    Style::new().fg(CYAN.into()).bold(),
                 ),
                 Span::styled(format!("{:+.2}%  ", chart.change_percent), change_style),
                 Span::styled(
@@ -958,7 +958,7 @@ impl Workspace for ChartingWorkspace {
                     Paragraph::new(Line::from(vec![
                         Span::styled(
                             format!(" {}  ", self.specification.primary.symbol),
-                            Style::new().bg(AMBER).fg(BG).bold(),
+                            Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
                         ),
                         Span::styled(self.status.as_str(), MUTED),
                     ]))
@@ -996,7 +996,7 @@ impl Workspace for ChartingWorkspace {
                 Span::styled(" F9/CLICK HEADER ", AMBER),
                 Span::styled("REFRESH", MUTED),
             ]))
-            .style(Style::new().fg(INK)),
+            .style(Style::new().fg(INK.into())),
             sections[2],
         );
     }
@@ -1052,7 +1052,7 @@ fn prepare_chart(
                     .enumerate()
                     .map(|(point, value)| (point as f64, value))
                     .collect(),
-                color: SERIES_COLORS[index % SERIES_COLORS.len()],
+                color: SERIES_COLORS[index % SERIES_COLORS.len()].into(),
             }
         })
         .collect::<Vec<_>>();
@@ -1069,7 +1069,7 @@ fn prepare_chart(
                 rsi_lines.push(PreparedLine {
                     name: format!("RSI {period}"),
                     points,
-                    color: CYAN,
+                    color: CYAN.into(),
                 });
             }
             continue;
@@ -1080,7 +1080,7 @@ fn prepare_chart(
                 sma(&primary_closes, window),
                 format!("SMA {window}"),
                 if window == MOVING_AVERAGE_FAST {
-                    AMBER
+                    AMBER.into()
                 } else {
                     Color::LightMagenta
                 },
@@ -1089,7 +1089,7 @@ fn prepare_chart(
                 ema(&primary_closes, window),
                 format!("EMA {window}"),
                 if window == MOVING_AVERAGE_FAST {
-                    AMBER
+                    AMBER.into()
                 } else {
                     Color::LightMagenta
                 },
@@ -1268,7 +1268,7 @@ fn render_candlesticks(
     let cursor_x = candle_center(selected_display);
     for row in plot.y..plot.y + plot.height {
         if let Some(cell) = buffer.cell_mut((cursor_x, row)) {
-            cell.set_char('┊').set_fg(AMBER);
+            cell.set_char('┊').set_fg(AMBER.into());
         }
     }
 
@@ -1325,7 +1325,7 @@ fn render_candlesticks(
             + (candle_scale(chart.last, y_low, y_high, usize::from(plot.height) * 2) / 2) as u16;
         for column in plot.x + usable..plot.x + plot.width {
             if let Some(cell) = buffer.cell_mut((column, row)) {
-                cell.set_char('─').set_fg(CYAN);
+                cell.set_char('─').set_fg(CYAN.into());
             }
         }
         let tag = format!("{:.2}", chart.last);
@@ -1335,7 +1335,7 @@ fn render_candlesticks(
                 plot.x + plot.width - tag_width,
                 row,
                 tag,
-                Style::new().fg(CYAN).bold(),
+                Style::new().fg(CYAN.into()).bold(),
             );
         }
     }
@@ -1445,15 +1445,15 @@ fn candle_body_only(glyph: char) -> char {
 
 fn candle_color(candle: &Candle, previous_close: Option<f64>) -> Color {
     if candle.close > candle.open {
-        return GREEN;
+        return GREEN.into();
     }
     if candle.close < candle.open {
-        return RED;
+        return RED.into();
     }
     match previous_close {
-        Some(previous) if candle.close < previous => RED,
-        Some(_) => GREEN,
-        None => YELLOW,
+        Some(previous) if candle.close < previous => RED.into(),
+        Some(_) => GREEN.into(),
+        None => YELLOW.into(),
     }
 }
 

@@ -2,11 +2,11 @@ use std::{collections::HashSet, sync::Arc};
 
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::{
-    Frame,
     layout::{Constraint, Layout, Rect},
     style::Style,
     text::{Line, Span},
     widgets::{Cell, List, ListItem, Paragraph, Row, Table, Wrap},
+    Frame,
 };
 
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
     },
 };
 
-use super::{ID, NewsArticleOpener, NewsFeed, NewsFilter, NewsStory, NewsWorkbench};
+use super::{NewsArticleOpener, NewsFeed, NewsFilter, NewsStory, NewsWorkbench, ID};
 
 pub struct NewsWorkspace {
     query: Arc<dyn NewsFeed>,
@@ -292,7 +292,7 @@ impl Workspace for NewsWorkspace {
         );
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(format!(" {} RESULTS  {unread} UNREAD  ", visible.len()), Style::new().bg(AMBER).fg(BG).bold()),
+                Span::styled(format!(" {} RESULTS  {unread} UNREAD  ", visible.len()), Style::new().bg(AMBER.into()).fg(BG.into()).bold()),
                 Span::styled(filter_label, INK),
                 Span::styled("  O OPEN · R READ · 0 RESET · 1/2/3 REGION · U UNREAD · M SAVED · E EVENTS · S SECURITY · F9 REFRESH  ", MUTED),
                 Span::styled(feed_status, YELLOW),
@@ -325,9 +325,9 @@ impl Workspace for NewsWorkspace {
                     Span::styled(
                         story.headline.title.as_str(),
                         if selected {
-                            Style::new().bg(CYAN).fg(BG)
+                            Style::new().bg(CYAN.into()).fg(BG.into())
                         } else {
-                            Style::new().fg(INK)
+                            Style::new().fg(INK.into())
                         },
                     ),
                     Span::styled(format!(" {}", story.headline.region), MUTED),
@@ -392,7 +392,10 @@ fn render_story(frame: &mut Frame, area: Rect, story: &NewsStory, article_status
         ),
         Line::styled(story.byline.as_str(), MUTED),
         Line::raw(""),
-        Line::styled(story.headline.title.as_str(), Style::new().fg(INK).bold()),
+        Line::styled(
+            story.headline.title.as_str(),
+            Style::new().fg(INK.into()).bold(),
+        ),
         Line::raw(""),
         Line::styled(story.summary.as_str(), YELLOW),
         Line::raw(""),
@@ -418,13 +421,16 @@ fn render_story(frame: &mut Frame, area: Rect, story: &NewsStory, article_status
         vec![
             Line::styled(
                 " [ OPEN ARTICLE · O / ENTER ] ",
-                Style::new().bg(AMBER).fg(BG).bold(),
+                Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
             ),
             Line::styled(article_status, MUTED),
         ]
     } else {
         vec![
-            Line::styled(" NO PUBLISHER LINK AVAILABLE ", Style::new().fg(MUTED)),
+            Line::styled(
+                " NO PUBLISHER LINK AVAILABLE ",
+                Style::new().fg(MUTED.into()),
+            ),
             Line::styled(article_status, MUTED),
         ]
     };

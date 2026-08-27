@@ -238,7 +238,7 @@ impl Workspace for DeskWorkspace {
                     Span::styled(" NEWS HIDDEN ", AMBER),
                     Span::styled("terminal is too short · use NEWS for full view", MUTED),
                 ]))
-                .style(Style::new().bg(NAV_BG)),
+                .style(Style::new().bg(NAV_BG.into())),
                 Rect::new(
                     area.x,
                     area.y.saturating_add(area.height.saturating_sub(1)),
@@ -288,16 +288,16 @@ fn render_pane(
     workspace: &dyn Workspace,
 ) {
     let style = if focused {
-        Style::new().bg(CYAN).fg(BG).bold()
+        Style::new().bg(CYAN.into()).fg(BG.into()).bold()
     } else {
-        Style::new().bg(NAV_BG).fg(INK)
+        Style::new().bg(NAV_BG.into()).fg(INK.into())
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(format!(" {label} "), style),
             Span::styled(" TAB CYCLES PANES ", MUTED),
         ]))
-        .style(Style::new().bg(NAV_BG)),
+        .style(Style::new().bg(NAV_BG.into())),
         Rect::new(area.frame.x, area.frame.y, area.frame.width, 1),
     );
     workspace.render(frame, area.body);

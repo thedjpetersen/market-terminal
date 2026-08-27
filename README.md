@@ -81,6 +81,13 @@ recent commands from crash-safe, versioned local state. Set
 `MARKET_TERMINAL_STATE_DIR` to override the platform default. Corrupt current
 state falls back to the previous valid generation and never blocks startup.
 
+Press `F3`/`Shift+F3`, click the theme controls in Settings, or run `THEME`
+and `THEME PREV` to cycle the color presets live. `THEME NORD` selects a
+specific preset; the choices are `default`, Catppuccin Mocha/Macchiato/Frappé/
+Latte, Dracula, Gruvbox Dark/Light, and Nord. The selection is persisted with
+the shell session. `MARKET_TERMINAL_THEME=catppuccin-mocha` supplies the initial
+theme before a saved interactive selection exists.
+
 ## Live news
 
 The interactive app fetches real RSS/Atom feeds on a background thread; network
@@ -405,8 +412,8 @@ HawaiianNinja pointed us to
 integrated the selected MIT-licensed pieces we care about—indicator math,
 chart and watchlist-density ideas, the responsive split desk,
 provider-selection patterns, Yahoo/Finnhub/Alpaca adapter behavior, the fast
-first-run/settings flow, and the Form 4 insider workflow—into this project's
-bounded, provider-aware
+first-run/settings flow, named theme presets, and the Form 4 insider
+workflow—into this project's bounded, provider-aware
 architecture. `alphai-tui` is Copyright (c) 2026 Mikhail Makeev and licensed
 under MIT. The copied-code provenance and complete upstream license text are in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
