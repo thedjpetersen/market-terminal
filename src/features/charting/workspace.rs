@@ -23,13 +23,13 @@ use crate::{
 };
 
 use super::{
-    domain::{percent_change, simple_moving_average},
+    domain::percent_change,
+    indicators::{ema, rsi, sma, MOVING_AVERAGE_FAST, MOVING_AVERAGE_SLOW, RSI_PERIOD},
     ChartHistoryQuery, ChartInstrument, ChartPeriod, ChartSpecification, HistoryError,
     HistoryRequest, HistorySeries, Normalization, Study, ID,
 };
 
 const SERIES_COLORS: [Color; 4] = [CYAN, YELLOW, GREEN, RED];
-const DEFAULT_MOVING_AVERAGE: Study = Study::SimpleMovingAverage { window: 20 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ChartLineMode {
@@ -68,6 +68,7 @@ struct PreparedLine {
 
 struct PreparedChart {
     lines: Vec<PreparedLine>,
+    rsi_lines: Vec<PreparedLine>,
     primary_values: Vec<f64>,
     primary_closes: Vec<f64>,
     volume_bars: Vec<u64>,
@@ -81,6 +82,52 @@ struct PreparedChart {
     change_percent: f64,
     quality: &'static str,
     source: String,
+}
+
+#[derive(Clone, Copy)]
+struct PlotAreas {
+    price: Rect,
+    rsi: Option<Rect>,
+    volume: Option<Rect>,
+}
+
+fn plot_areas(area: Rect, has_rsi: bool, has_volume: bool) -> PlotAreas {
+    if has_rsi && has_volume && area.height >= 20 {
+        let areas = Layout::vertical([
+            Constraint::Percentage(60),
+            Constraint::Percentage(18),
+            Constraint::Percentage(22),
+        ])
+        .split(area);
+        return PlotAreas {
+            price: areas[0],
+            rsi: Some(areas[1]),
+            volume: Some(areas[2]),
+        };
+    }
+    if has_rsi && area.height >= 14 {
+        let areas =
+            Layout::vertical([Constraint::Percentage(72), Constraint::Percentage(28)]).split(area);
+        return PlotAreas {
+            price: areas[0],
+            rsi: Some(areas[1]),
+            volume: None,
+        };
+    }
+    if has_volume && area.height >= 12 {
+        let areas =
+            Layout::vertical([Constraint::Percentage(72), Constraint::Percentage(28)]).split(area);
+        return PlotAreas {
+            price: areas[0],
+            rsi: None,
+            volume: Some(areas[1]),
+        };
+    }
+    PlotAreas {
+        price: area,
+        rsi: None,
+        volume: None,
+    }
 }
 
 struct ChartRefresh {
@@ -140,7 +187,7 @@ impl ChartingWorkspace {
             .expect("chart history worker should start");
         let mut workspace = Self {
             specification: ChartSpecification::new(primary),
-            status: "READY · [/] PERIOD · N NORMALIZE · V VOLUME · S SMA".to_owned(),
+            status: "READY · [/] PERIOD · M MA · E SMA/EMA · I RSI · V VOLUME".to_owned(),
             cursor_offset: 0,
             line_mode: ChartLineMode::Smooth,
             refresh_sender,
@@ -156,6 +203,64 @@ impl ChartingWorkspace {
 
     pub fn specification(&self) -> &ChartSpecification {
         &self.specification
+    }
+
+    fn toggle_default_moving_averages(&mut self) {
+        let has_average = self.specification.studies.iter().any(|study| {
+            matches!(
+                study,
+                Study::SimpleMovingAverage { .. } | Study::ExponentialMovingAverage { .. }
+            )
+        });
+        if has_average {
+            self.specification.studies.retain(|study| {
+                !matches!(
+                    study,
+                    Study::SimpleMovingAverage { .. } | Study::ExponentialMovingAverage { .. }
+                )
+            });
+            self.status = "MOVING AVERAGES HIDDEN".to_owned();
+        } else {
+            self.specification.studies.push(Study::SimpleMovingAverage {
+                window: MOVING_AVERAGE_FAST,
+            });
+            self.specification.studies.push(Study::SimpleMovingAverage {
+                window: MOVING_AVERAGE_SLOW,
+            });
+            self.status = "SMA 20/100 SHOWN".to_owned();
+        }
+    }
+
+    fn toggle_moving_average_kind(&mut self) {
+        let mut changed = false;
+        for study in &mut self.specification.studies {
+            *study = match *study {
+                Study::SimpleMovingAverage { window } => {
+                    changed = true;
+                    Study::ExponentialMovingAverage { window }
+                }
+                Study::ExponentialMovingAverage { window } => {
+                    changed = true;
+                    Study::SimpleMovingAverage { window }
+                }
+                unchanged => unchanged,
+            };
+        }
+        if changed {
+            self.status = "MOVING AVERAGE KIND SWITCHED".to_owned();
+        } else {
+            self.specification
+                .studies
+                .push(Study::ExponentialMovingAverage {
+                    window: MOVING_AVERAGE_FAST,
+                });
+            self.specification
+                .studies
+                .push(Study::ExponentialMovingAverage {
+                    window: MOVING_AVERAGE_SLOW,
+                });
+            self.status = "EMA 20/100 SHOWN".to_owned();
+        }
     }
 
     fn toggle_default_comparison(&mut self) {
@@ -401,6 +506,62 @@ impl ChartingWorkspace {
         frame.render_widget(volume, area);
     }
 
+    fn render_rsi_chart(&self, frame: &mut Frame, area: Rect, chart: &PreparedChart) {
+        let lower_threshold = [(0.0, 30.0), (chart.x_max, 30.0)];
+        let upper_threshold = [(0.0, 70.0), (chart.x_max, 70.0)];
+        let selected_index = chart.primary_values.len().saturating_sub(1).saturating_sub(
+            self.cursor_offset
+                .min(chart.primary_values.len().saturating_sub(1)),
+        );
+        let selected_x = selected_index as f64;
+        let cursor = [(selected_x, 0.0), (selected_x, 100.0)];
+        let mut datasets = chart
+            .rsi_lines
+            .iter()
+            .map(|line| {
+                Dataset::default()
+                    .name(line.name.clone())
+                    .marker(self.line_mode.marker())
+                    .graph_type(GraphType::Line)
+                    .style(line.color)
+                    .data(&line.points)
+            })
+            .collect::<Vec<_>>();
+        datasets.extend([
+            Dataset::default()
+                .name("30")
+                .marker(symbols::Marker::Dot)
+                .graph_type(GraphType::Line)
+                .style(MUTED)
+                .data(&lower_threshold),
+            Dataset::default()
+                .name("70")
+                .marker(symbols::Marker::Dot)
+                .graph_type(GraphType::Line)
+                .style(MUTED)
+                .data(&upper_threshold),
+            Dataset::default()
+                .name("INSPECT")
+                .marker(symbols::Marker::Dot)
+                .graph_type(GraphType::Line)
+                .style(AMBER)
+                .data(&cursor),
+        ]);
+
+        frame.render_widget(
+            Chart::new(datasets)
+                .block(terminal_block("RSI", "WILDER RELATIVE STRENGTH"))
+                .x_axis(Axis::default().bounds([0.0, chart.x_max]).style(MUTED))
+                .y_axis(
+                    Axis::default()
+                        .bounds([0.0, 100.0])
+                        .labels(["0", "30", "50", "70", "100"])
+                        .style(AMBER),
+                ),
+            area,
+        );
+    }
+
     fn render_statistics(
         &self,
         frame: &mut Frame,
@@ -467,6 +628,23 @@ impl ChartingWorkspace {
                 ),
             ])
         }));
+        lines.extend(chart.rsi_lines.iter().map(|line| {
+            let value = line
+                .points
+                .iter()
+                .find(|point| point.0 as usize == selected_index)
+                .map(|point| point.1);
+            Line::from(vec![
+                Span::styled("■ ", line.color),
+                Span::styled(format!("{:<7}", line.name), MUTED),
+                Span::styled(
+                    value
+                        .map(|value| format!("{value:.2}"))
+                        .unwrap_or_else(|| "—".to_owned()),
+                    line.color,
+                ),
+            ])
+        }));
         frame.render_widget(
             Paragraph::new(lines).block(terminal_block("STAT", "MARKET PROFILE")),
             area,
@@ -522,13 +700,13 @@ impl Workspace for ChartingWorkspace {
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Right | KeyCode::Char(']') => {
+            KeyCode::Right | KeyCode::Char(']') | KeyCode::Char('t') => {
                 self.specification.period = self.specification.period.next();
                 self.cursor_offset = 0;
                 self.queue_history();
                 true
             }
-            KeyCode::Left | KeyCode::Char('[') => {
+            KeyCode::Left | KeyCode::Char('[') | KeyCode::Char('T') => {
                 self.specification.period = self.specification.period.previous();
                 self.cursor_offset = 0;
                 self.queue_history();
@@ -539,14 +717,24 @@ impl Workspace for ChartingWorkspace {
                 self.status = format!("MODE · {}", self.specification.normalization.label());
                 true
             }
-            KeyCode::Char('v') => {
+            KeyCode::Char('v') | KeyCode::Char('b') => {
                 let _ = self.specification.toggle_study(Study::Volume);
                 self.status = "VOLUME TOGGLED".to_owned();
                 true
             }
-            KeyCode::Char('s') => {
-                let _ = self.specification.toggle_study(DEFAULT_MOVING_AVERAGE);
-                self.status = "SMA 20 TOGGLED".to_owned();
+            KeyCode::Char('s') | KeyCode::Char('m') => {
+                self.toggle_default_moving_averages();
+                true
+            }
+            KeyCode::Char('e') => {
+                self.toggle_moving_average_kind();
+                true
+            }
+            KeyCode::Char('i') => {
+                let _ = self
+                    .specification
+                    .toggle_study(Study::RelativeStrengthIndex { period: RSI_PERIOD });
+                self.status = "RSI 14 TOGGLED".to_owned();
                 true
             }
             KeyCode::Char('c') => {
@@ -569,7 +757,7 @@ impl Workspace for ChartingWorkspace {
                 self.status = format!("INSPECT · {} OBSERVATION(S) BACK", self.cursor_offset);
                 true
             }
-            KeyCode::Char('e') => {
+            KeyCode::Home | KeyCode::Char('E') => {
                 self.cursor_offset = 0;
                 self.status = "INSPECT · LATEST OBSERVATION".to_owned();
                 true
@@ -612,11 +800,13 @@ impl Workspace for ChartingWorkspace {
             let controls = [
                 (" [/] PERIOD  ", KeyCode::Right),
                 (" N NORMALIZE  ", KeyCode::Char('n')),
-                (" V VOLUME  ", KeyCode::Char('v')),
-                (" S SMA  ", KeyCode::Char('s')),
+                (" M MA  ", KeyCode::Char('m')),
+                (" E SMA/EMA  ", KeyCode::Char('e')),
+                (" I RSI  ", KeyCode::Char('i')),
+                (" B/V VOLUME  ", KeyCode::Char('v')),
                 (" C COMPARE SPY  ", KeyCode::Char('c')),
                 (" ,/. INSPECT  ", KeyCode::Char(',')),
-                (" E LATEST  ", KeyCode::Char('e')),
+                (" HOME LATEST  ", KeyCode::Home),
                 (" L LINE MODE", KeyCode::Char('l')),
             ];
             let mut x = sections[2].x;
@@ -638,12 +828,12 @@ impl Workspace for ChartingWorkspace {
         if chart.primary_values.is_empty() {
             return true;
         }
-        let price_area = if self.specification.has_study(Study::Volume) {
-            Layout::vertical([Constraint::Percentage(72), Constraint::Percentage(28)])
-                .split(sections[1])[0]
-        } else {
-            sections[1]
-        };
+        let areas = plot_areas(
+            sections[1],
+            !chart.rsi_lines.is_empty(),
+            self.specification.has_study(Study::Volume),
+        );
+        let price_area = areas.price;
         let chart_area = if price_area.width >= 110 {
             Layout::horizontal([Constraint::Percentage(78), Constraint::Percentage(22)])
                 .split(price_area)[0]
@@ -682,14 +872,17 @@ impl Workspace for ChartingWorkspace {
         match self.prepared_chart() {
             Ok(chart) => {
                 self.render_header(frame, sections[0], &chart);
-                if self.specification.has_study(Study::Volume) {
-                    let plots =
-                        Layout::vertical([Constraint::Percentage(72), Constraint::Percentage(28)])
-                            .split(sections[1]);
-                    self.render_price_chart(frame, plots[0], &chart);
-                    self.render_volume_chart(frame, plots[1], &chart);
-                } else {
-                    self.render_price_chart(frame, sections[1], &chart);
+                let areas = plot_areas(
+                    sections[1],
+                    !chart.rsi_lines.is_empty(),
+                    self.specification.has_study(Study::Volume),
+                );
+                self.render_price_chart(frame, areas.price, &chart);
+                if let Some(rsi_area) = areas.rsi {
+                    self.render_rsi_chart(frame, rsi_area, &chart);
+                }
+                if let Some(volume_area) = areas.volume {
+                    self.render_volume_chart(frame, volume_area, &chart);
                 }
             }
             Err(error) => {
@@ -714,15 +907,19 @@ impl Workspace for ChartingWorkspace {
                 Span::styled("PERIOD  ", MUTED),
                 Span::styled(" N ", AMBER),
                 Span::styled("NORMALIZE  ", MUTED),
-                Span::styled(" V ", AMBER),
+                Span::styled(" M ", AMBER),
+                Span::styled("MA  ", MUTED),
+                Span::styled(" E ", AMBER),
+                Span::styled("SMA/EMA  ", MUTED),
+                Span::styled(" I ", AMBER),
+                Span::styled("RSI  ", MUTED),
+                Span::styled(" B/V ", AMBER),
                 Span::styled("VOLUME  ", MUTED),
-                Span::styled(" S ", AMBER),
-                Span::styled("SMA  ", MUTED),
                 Span::styled(" C ", AMBER),
                 Span::styled("COMPARE SPY  ", MUTED),
                 Span::styled(" ,/. ", AMBER),
                 Span::styled("INSPECT  ", MUTED),
-                Span::styled(" E ", AMBER),
+                Span::styled(" HOME ", AMBER),
                 Span::styled("LATEST  ", MUTED),
                 Span::styled(" L ", AMBER),
                 Span::styled("LINE MODE  ", MUTED),
@@ -789,12 +986,45 @@ fn prepare_chart(
         })
         .collect::<Vec<_>>();
 
+    let mut rsi_lines = Vec::new();
     for study in &specification.studies {
-        let Study::SimpleMovingAverage { window } = *study else {
+        if let Study::RelativeStrengthIndex { period } = *study {
+            let points = rsi(&primary_closes, period)
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, value)| value.map(|value| (index as f64, value)))
+                .collect::<Vec<_>>();
+            if !points.is_empty() {
+                rsi_lines.push(PreparedLine {
+                    name: format!("RSI {period}"),
+                    points,
+                    color: CYAN,
+                });
+            }
             continue;
+        }
+
+        let (moving_average, name, color) = match *study {
+            Study::SimpleMovingAverage { window } => (
+                sma(&primary_closes, window),
+                format!("SMA {window}"),
+                if window == MOVING_AVERAGE_FAST {
+                    AMBER
+                } else {
+                    Color::LightMagenta
+                },
+            ),
+            Study::ExponentialMovingAverage { window } => (
+                ema(&primary_closes, window),
+                format!("EMA {window}"),
+                if window == MOVING_AVERAGE_FAST {
+                    AMBER
+                } else {
+                    Color::LightMagenta
+                },
+            ),
+            Study::RelativeStrengthIndex { .. } | Study::Volume => continue,
         };
-        let closes = primary.bars.iter().map(|bar| bar.close).collect::<Vec<_>>();
-        let moving_average = simple_moving_average(&closes, window);
         let points = moving_average
             .into_iter()
             .enumerate()
@@ -809,11 +1039,13 @@ fn prepare_chart(
                 })
             })
             .collect::<Vec<_>>();
-        lines.push(PreparedLine {
-            name: format!("SMA {window}"),
-            points,
-            color: AMBER,
-        });
+        if !points.is_empty() {
+            lines.push(PreparedLine {
+                name,
+                points,
+                color,
+            });
+        }
     }
 
     let x_max = lines
@@ -857,6 +1089,7 @@ fn prepare_chart(
 
     Ok(PreparedChart {
         lines,
+        rsi_lines,
         primary_values,
         primary_closes,
         volume_bars,
@@ -982,9 +1215,44 @@ fn apply_chart_command(
                 }
                 index += usize::from(parsed_window.is_some()) + 1;
             }
+            "EMA" => {
+                let parsed_window = args
+                    .get(index + 1)
+                    .and_then(|value| parse_ema_window(value));
+                let window = parsed_window.unwrap_or(MOVING_AVERAGE_FAST);
+                if let Err(error) =
+                    specification.toggle_study(Study::ExponentialMovingAverage { window })
+                {
+                    *status = format!("CHART ERROR · {error}");
+                }
+                index += usize::from(parsed_window.is_some()) + 1;
+            }
+            "RSI" => {
+                let parsed_period = args
+                    .get(index + 1)
+                    .and_then(|value| parse_rsi_period(value));
+                let period = parsed_period.unwrap_or(RSI_PERIOD);
+                let study = Study::RelativeStrengthIndex { period };
+                if !specification.has_study(study) {
+                    if let Err(error) = specification.toggle_study(study) {
+                        *status = format!("CHART ERROR · {error}");
+                    }
+                }
+                index += usize::from(parsed_period.is_some()) + 1;
+            }
             _ => {
                 if let Some(period) = ChartPeriod::parse(&token) {
                     specification.period = period;
+                } else if let Some(window) = parse_ema_window(&token) {
+                    let study = Study::ExponentialMovingAverage { window };
+                    if !specification.has_study(study) {
+                        let _ = specification.toggle_study(study);
+                    }
+                } else if let Some(period) = parse_rsi_period(&token) {
+                    let study = Study::RelativeStrengthIndex { period };
+                    if !specification.has_study(study) {
+                        let _ = specification.toggle_study(study);
+                    }
                 } else if let Some(window) = parse_sma_window(&token) {
                     let study = Study::SimpleMovingAverage { window };
                     if !specification.has_study(study) {
@@ -1020,9 +1288,13 @@ fn is_option_token(token: &str) -> bool {
             | "ABSOLUTE"
             | "VOLUME"
             | "SMA"
+            | "EMA"
+            | "RSI"
             | "STUDY"
     ) || ChartPeriod::parse(&upper).is_some()
         || parse_sma_window(&upper).is_some()
+        || parse_ema_window(&upper).is_some()
+        || parse_rsi_period(&upper).is_some()
 }
 
 fn parse_sma_window(value: &str) -> Option<usize> {
@@ -1033,6 +1305,32 @@ fn parse_sma_window(value: &str) -> Option<usize> {
         .unwrap_or(&upper);
     let window = digits.parse::<usize>().ok()?;
     (window >= 2).then_some(window)
+}
+
+fn parse_ema_window(value: &str) -> Option<usize> {
+    let upper = value.to_ascii_uppercase();
+    let digits = if let Some(digits) = upper.strip_prefix("EMA") {
+        digits
+    } else if upper.chars().all(|character| character.is_ascii_digit()) {
+        &upper
+    } else {
+        return None;
+    };
+    let window = digits.parse::<usize>().ok()?;
+    (window >= 2).then_some(window)
+}
+
+fn parse_rsi_period(value: &str) -> Option<usize> {
+    let upper = value.to_ascii_uppercase();
+    let digits = if let Some(digits) = upper.strip_prefix("RSI") {
+        digits
+    } else if upper.chars().all(|character| character.is_ascii_digit()) {
+        &upper
+    } else {
+        return None;
+    };
+    let period = digits.parse::<usize>().ok()?;
+    (period >= 2).then_some(period)
 }
 
 #[cfg(test)]
@@ -1070,7 +1368,7 @@ mod tests {
         let mut workspace = ChartingWorkspace::new(Arc::new(StubHistory));
         workspace.handle_command(&CommandInvocation {
             function: "CHART".to_owned(),
-            args: ["MSFT", "COMPARE", "SPY,QQQ", "6M", "SMA50"]
+            args: ["MSFT", "COMPARE", "SPY,QQQ", "6M", "SMA50", "EMA12", "RSI7"]
                 .into_iter()
                 .map(ToOwned::to_owned)
                 .collect(),
@@ -1086,6 +1384,12 @@ mod tests {
         assert!(workspace
             .specification
             .has_study(Study::SimpleMovingAverage { window: 50 }));
+        assert!(workspace
+            .specification
+            .has_study(Study::ExponentialMovingAverage { window: 12 }));
+        assert!(workspace
+            .specification
+            .has_study(Study::RelativeStrengthIndex { period: 7 }));
     }
 
     #[test]
@@ -1102,6 +1406,16 @@ mod tests {
         );
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE)));
         assert!(!workspace.specification.has_study(Study::Volume));
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)));
+        assert!(workspace
+            .specification
+            .has_study(Study::ExponentialMovingAverage {
+                window: MOVING_AVERAGE_FAST
+            }));
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE)));
+        assert!(!workspace
+            .specification
+            .has_study(Study::RelativeStrengthIndex { period: RSI_PERIOD }));
     }
 
     #[test]
@@ -1112,8 +1426,66 @@ mod tests {
         assert_eq!(workspace.cursor_offset, 2);
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('.'), KeyModifiers::NONE)));
         assert_eq!(workspace.cursor_offset, 1);
-        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)));
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)));
         assert_eq!(workspace.cursor_offset, 0);
+    }
+
+    #[test]
+    fn prepared_chart_keeps_ema_and_rsi_on_their_own_scales() {
+        let instrument = ChartInstrument::from_terminal_subject("AAPL");
+        let mut specification = ChartSpecification::new(instrument.clone());
+        specification.studies = vec![
+            Study::ExponentialMovingAverage { window: 5 },
+            Study::RelativeStrengthIndex { period: 3 },
+        ];
+        let bars = (0..12)
+            .map(|index| {
+                let close = 100.0 + f64::from(index) + f64::from(index % 3);
+                PriceBar {
+                    timestamp: i64::from(index),
+                    open: close,
+                    high: close + 1.0,
+                    low: close - 1.0,
+                    close,
+                    volume: 1_000 + index as u64,
+                }
+            })
+            .collect();
+        let chart = prepare_chart(
+            &specification,
+            &[HistorySeries {
+                instrument,
+                bars,
+                quality: HistoryQuality::Delayed,
+                source: "TEST".to_owned(),
+            }],
+        )
+        .unwrap();
+
+        assert!(chart.lines.iter().any(|line| line.name == "EMA 5"));
+        assert_eq!(chart.rsi_lines.len(), 1);
+        assert_eq!(chart.rsi_lines[0].name, "RSI 3");
+        assert!(chart.rsi_lines[0]
+            .points
+            .iter()
+            .all(|(_, value)| (0.0..=100.0).contains(value)));
+        assert!(chart.y_bounds[0] > 90.0);
+    }
+
+    #[test]
+    fn responsive_plot_layout_prioritizes_rsi_when_height_is_tight() {
+        let roomy = plot_areas(Rect::new(0, 0, 120, 30), true, true);
+        assert!(roomy.rsi.is_some());
+        assert!(roomy.volume.is_some());
+
+        let tight = plot_areas(Rect::new(0, 0, 120, 16), true, true);
+        assert!(tight.rsi.is_some());
+        assert!(tight.volume.is_none());
+
+        let tiny = plot_areas(Rect::new(0, 0, 120, 10), true, true);
+        assert!(tiny.rsi.is_none());
+        assert!(tiny.volume.is_none());
+        assert_eq!(tiny.price.height, 10);
     }
 
     #[test]

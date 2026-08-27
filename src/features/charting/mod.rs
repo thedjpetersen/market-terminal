@@ -1,4 +1,5 @@
 mod domain;
+mod indicators;
 mod port;
 mod workspace;
 

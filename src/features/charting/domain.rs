@@ -67,12 +67,18 @@ impl ChartPeriod {
     }
 
     pub fn next(self) -> Self {
-        let index = Self::ALL.iter().position(|candidate| *candidate == self).unwrap_or(0);
+        let index = Self::ALL
+            .iter()
+            .position(|candidate| *candidate == self)
+            .unwrap_or(0);
         Self::ALL[(index + 1) % Self::ALL.len()]
     }
 
     pub fn previous(self) -> Self {
-        let index = Self::ALL.iter().position(|candidate| *candidate == self).unwrap_or(0);
+        let index = Self::ALL
+            .iter()
+            .position(|candidate| *candidate == self)
+            .unwrap_or(0);
         Self::ALL[(index + Self::ALL.len() - 1) % Self::ALL.len()]
     }
 
@@ -90,10 +96,7 @@ impl ChartPeriod {
     pub const fn sample_interval_seconds(self) -> i64 {
         match self {
             Self::OneDay => 300,
-            Self::OneMonth
-            | Self::SixMonths
-            | Self::YearToDate
-            | Self::OneYear => 86_400,
+            Self::OneMonth | Self::SixMonths | Self::YearToDate | Self::OneYear => 86_400,
             Self::FiveYears => 604_800,
         }
     }
@@ -124,6 +127,8 @@ impl Normalization {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Study {
     SimpleMovingAverage { window: usize },
+    ExponentialMovingAverage { window: usize },
+    RelativeStrengthIndex { period: usize },
     Volume,
 }
 
@@ -131,6 +136,8 @@ impl Study {
     pub fn label(self) -> String {
         match self {
             Self::SimpleMovingAverage { window } => format!("SMA {window}"),
+            Self::ExponentialMovingAverage { window } => format!("EMA {window}"),
+            Self::RelativeStrengthIndex { period } => format!("RSI {period}"),
             Self::Volume => "VOLUME".to_owned(),
         }
     }
@@ -150,7 +157,7 @@ impl fmt::Display for ChartSpecError {
             Self::PrimaryCannotBeComparison => "the primary instrument cannot compare with itself",
             Self::DuplicateComparison => "the comparison is already present",
             Self::ComparisonLimitReached => "the chart supports at most three comparisons",
-            Self::InvalidStudyWindow => "moving-average windows must be greater than one",
+            Self::InvalidStudyWindow => "indicator windows must be greater than one",
         };
         formatter.write_str(message)
     }
@@ -175,7 +182,12 @@ impl ChartSpecification {
             period: ChartPeriod::OneYear,
             normalization: Normalization::Price,
             comparisons: Vec::new(),
-            studies: vec![Study::Volume],
+            studies: vec![
+                Study::SimpleMovingAverage { window: 20 },
+                Study::SimpleMovingAverage { window: 100 },
+                Study::RelativeStrengthIndex { period: 14 },
+                Study::Volume,
+            ],
         }
     }
 
@@ -185,10 +197,7 @@ impl ChartSpecification {
         self.primary = primary;
     }
 
-    pub fn add_comparison(
-        &mut self,
-        comparison: ChartInstrument,
-    ) -> Result<(), ChartSpecError> {
+    pub fn add_comparison(&mut self, comparison: ChartInstrument) -> Result<(), ChartSpecError> {
         if comparison.canonical_id == self.primary.canonical_id {
             return Err(ChartSpecError::PrimaryCannotBeComparison);
         }
@@ -207,7 +216,13 @@ impl ChartSpecification {
     }
 
     pub fn toggle_study(&mut self, study: Study) -> Result<(), ChartSpecError> {
-        if matches!(study, Study::SimpleMovingAverage { window } if window < 2) {
+        if matches!(
+            study,
+            Study::SimpleMovingAverage { window }
+                | Study::ExponentialMovingAverage { window }
+                if window < 2
+        ) || matches!(study, Study::RelativeStrengthIndex { period } if period < 2)
+        {
             return Err(ChartSpecError::InvalidStudyWindow);
         }
         if let Some(index) = self.studies.iter().position(|current| *current == study) {
@@ -218,7 +233,9 @@ impl ChartSpecification {
         Ok(())
     }
 
-    pub fn has_study(&self, study: Study) -> bool { self.studies.contains(&study) }
+    pub fn has_study(&self, study: Study) -> bool {
+        self.studies.contains(&study)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -257,31 +274,15 @@ pub struct HistorySeries {
 }
 
 pub(crate) fn percent_change(values: &[f64]) -> Vec<f64> {
-    let Some(base) = values.first().copied() else { return Vec::new() };
+    let Some(base) = values.first().copied() else {
+        return Vec::new();
+    };
     if base.abs() < f64::EPSILON {
         return vec![0.0; values.len()];
     }
     values
         .iter()
         .map(|value| ((value / base) - 1.0) * 100.0)
-        .collect()
-}
-
-pub(crate) fn simple_moving_average(values: &[f64], window: usize) -> Vec<Option<f64>> {
-    if window < 2 || values.is_empty() {
-        return vec![None; values.len()];
-    }
-    let mut sum = 0.0;
-    values
-        .iter()
-        .enumerate()
-        .map(|(index, value)| {
-            sum += value;
-            if index >= window {
-                sum -= values[index - window];
-            }
-            (index + 1 >= window).then_some(sum / window as f64)
-        })
         .collect()
 }
 
@@ -320,14 +321,6 @@ mod tests {
         assert!((normalized[1] - 5.0).abs() < 1e-10);
         assert!((normalized[2] + 5.0).abs() < 1e-10);
         assert_eq!(percent_change(&[0.0, 2.0]), vec![0.0, 0.0]);
-    }
-
-    #[test]
-    fn moving_average_preserves_time_alignment() {
-        assert_eq!(
-            simple_moving_average(&[1.0, 2.0, 3.0, 6.0], 3),
-            vec![None, None, Some(2.0), Some(11.0 / 3.0)]
-        );
     }
 
     #[test]

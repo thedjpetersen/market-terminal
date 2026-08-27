@@ -29,7 +29,7 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 - Monitor — configurable watchlists, bounded quote streams, sorting,
   data-quality states, last-known-good fallback, and replay
 - Chart — comparative performance, zero baselines, inspection cursor, market
-  profile statistics, volume histograms, and moving averages
+  profile statistics, volume histograms, SMA/EMA overlays, and Wilder RSI
 - Chat — TLS-capable IRC market rooms with bounded queues, background reconnect,
   participant presence, notices, actions, and an inline composer
 - Alerts — idempotent, debounced local rules with acknowledgement and audit state
@@ -101,6 +101,13 @@ show unavailable/permission-denied state; the app never fills them with
 generated prices or replayed bars. Press `F9` or click the Chart header to
 refresh. See [the data-source register](docs/data-sources.md) for freshness,
 attribution, caching, and retention details.
+
+Charts start with SMA 20/100, Wilder RSI 14, and volume. Press `M` to show or
+hide both moving averages, `E` to switch them between SMA and EMA, `I` to
+toggle RSI, and `B` or `V` to toggle volume. `T`/`Shift+T` and `]`/`[` cycle
+periods; `Home` returns the inspection cursor to the latest observation. The
+same studies can be requested from the command bar, for example
+`CHART AAPL 1Y EMA20 RSI14`.
 
 ## Live security research
 
@@ -283,6 +290,16 @@ reconnect.
 - keyboard-first navigation
 - no proprietary Bloomberg code, assets, trademarks, or data
 - native Rust architecture with no browser assets
+
+## Acknowledgements and third-party code
+
+HawaiianNinja pointed us to
+[`makeev/alphai-tui`](https://github.com/makeev/alphai-tui). Codex then
+integrated the selected MIT-licensed pieces we care about—currently indicator
+math and chart interaction ideas—into this project's bounded, provider-aware
+architecture. `alphai-tui` is Copyright (c) 2026 Mikhail Makeev and licensed
+under MIT. The copied-code provenance and complete upstream license text are in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Architecture
 
