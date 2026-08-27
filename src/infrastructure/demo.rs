@@ -343,30 +343,58 @@ fn demo_security_research(symbol: &str) -> SecurityResearch {
 impl PortfolioRepository for DemoData {
     fn load_portfolio(&self) -> PortfolioSnapshot {
         let usd = Currency::new("USD").expect("USD is valid");
+        let mut positions = POSITIONS
+            .iter()
+            .map(|position| Position {
+                instrument_id: InstrumentId::new(format!(
+                    "demo:instrument:{}",
+                    position.0.to_ascii_lowercase()
+                )),
+                account_id: PortfolioAccountId::new("DEMO ACCOUNT"),
+                symbol: position.0.to_owned(),
+                currency: usd,
+                quantity: PositionQuantity::from_scaled_units(demo_decimal(position.1, 6)),
+                average_cost: Some(Money::from_minor_units(demo_decimal(position.2, 2), usd)),
+                market_value: Some(Money::from_minor_units(demo_decimal(position.3, 2), usd)),
+                unrealized_return_bps: Some(demo_decimal(position.4, 2) as i32),
+                weight_bps: Some(demo_decimal(position.5, 2) as i32),
+                cash: false,
+            })
+            .collect::<Vec<_>>();
+        positions.extend([
+            Position {
+                instrument_id: InstrumentId::new("cash:usd"),
+                account_id: PortfolioAccountId::new("DEMO ACCOUNT"),
+                symbol: "CASH".to_owned(),
+                currency: usd,
+                quantity: PositionQuantity::from_scaled_units(127_834_000_000),
+                average_cost: Some(Money::from_minor_units(100, usd)),
+                market_value: Some(Money::from_minor_units(12_783_400, usd)),
+                unrealized_return_bps: Some(0),
+                weight_bps: Some(1_223),
+                cash: true,
+            },
+            Position {
+                instrument_id: InstrumentId::new("demo:instrument:other"),
+                account_id: PortfolioAccountId::new("DEMO ACCOUNT"),
+                symbol: "OTHER".to_owned(),
+                currency: usd,
+                quantity: PositionQuantity::from_scaled_units(1_000_000),
+                average_cost: None,
+                market_value: Some(Money::from_minor_units(2_157_900, usd)),
+                unrealized_return_bps: None,
+                weight_bps: Some(206),
+                cash: false,
+            },
+        ]);
+        let priced_positions = positions.len();
         PortfolioSnapshot {
-            positions: POSITIONS
-                .iter()
-                .map(|position| Position {
-                    instrument_id: InstrumentId::new(format!(
-                        "demo:instrument:{}",
-                        position.0.to_ascii_lowercase()
-                    )),
-                    account_id: PortfolioAccountId::new("DEMO ACCOUNT"),
-                    symbol: position.0.to_owned(),
-                    currency: usd,
-                    quantity: PositionQuantity::from_scaled_units(demo_decimal(position.1, 6)),
-                    average_cost: Some(Money::from_minor_units(demo_decimal(position.2, 2), usd)),
-                    market_value: Some(Money::from_minor_units(demo_decimal(position.3, 2), usd)),
-                    unrealized_return_bps: Some(demo_decimal(position.4, 2) as i32),
-                    weight_bps: Some(demo_decimal(position.5, 2) as i32),
-                    cash: false,
-                })
-                .collect(),
+            positions,
             currency_totals: vec![PortfolioCurrencyTotal {
                 currency: usd,
                 net_asset_value: Money::from_minor_units(104_522_800, usd),
                 available_cash: Money::from_minor_units(12_783_400, usd),
-                priced_positions: POSITIONS.len(),
+                priced_positions,
                 unpriced_positions: 0,
             }],
             ytd_return_bps: Some(1_702),

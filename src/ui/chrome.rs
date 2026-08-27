@@ -30,6 +30,8 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
 
     let command = if app.tmux_prefix_pending() {
         "TMUX PREFIX · ←/→ OR N/P · 1–9/0 SELECT · ? HELP"
+    } else if let Some(feedback) = app.command_feedback() {
+        feedback
     } else if app.command.is_empty() {
         "PRESS / FOR COMMAND"
     } else {
@@ -66,7 +68,7 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         frame.render_widget(
             Paragraph::new(Span::styled(
                 command,
-                if app.command.is_empty() {
+                if app.command.is_empty() && app.command_feedback().is_none() {
                     Style::new().fg(MUTED.into())
                 } else {
                     Style::new().fg(INK.into())

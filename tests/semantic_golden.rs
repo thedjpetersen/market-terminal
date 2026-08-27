@@ -18,27 +18,32 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "spreadsheet",
         prepare: prepare_spreadsheet,
-        hashes: [0xad1bc4ee81ae2cfe, 0x4d20ca09a3d22f4c, 0x46cc83cf62018dee],
+        hashes: [0xad1bc4ee81ae2cfe, 0x4d20ca09a3d22f4c, 0xd0e190e8afc5a282],
     },
     Golden {
         name: "instrument-find",
         prepare: prepare_find,
-        hashes: [0xf3034720659b3376, 0x22352acf1570e01d, 0x6e445058c09e01e6],
+        hashes: [0xf3034720659b3376, 0x22352acf1570e01d, 0x0365978e6ccaabc2],
     },
     Golden {
         name: "help",
         prepare: prepare_help,
-        hashes: [0xa8d3eaac702baf6e, 0xa38286539f15469e, 0x6eb9e8623cf96568],
+        hashes: [0xa8d3eaac702baf6e, 0x55cb8ba3134d6786, 0x9f35f0a15b746dc5],
     },
     Golden {
         name: "spreadsheet-error",
         prepare: prepare_spreadsheet_error,
-        hashes: [0x41f72239d704a8df, 0xa813ee830550ef95, 0xe84105388a50d901],
+        hashes: [0x41f72239d704a8df, 0xa813ee830550ef95, 0xbfb9d82710c0884d],
     },
     Golden {
         name: "formula-editor",
         prepare: prepare_formula_editor,
-        hashes: [0x49878e462c384b06, 0xd4ba18ca262ec3b0, 0x712066c23fb8f077],
+        hashes: [0x49878e462c384b06, 0xd4ba18ca262ec3b0, 0xb3674bef15fa7a9b],
+    },
+    Golden {
+        name: "risk",
+        prepare: prepare_risk,
+        hashes: [0x9bd087033e7bd7c7, 0x7f2840bdfcfe8647, 0xfa7908ae7d2649e8],
     },
 ];
 
@@ -96,6 +101,10 @@ fn prepare_find(app: &mut App) {
 
 fn prepare_help(app: &mut App) {
     dispatch(app, "HELP");
+}
+
+fn prepare_risk(app: &mut App) {
+    dispatch(app, "RISK");
 }
 
 fn prepare_spreadsheet_error(app: &mut App) {

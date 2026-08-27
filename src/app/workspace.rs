@@ -331,6 +331,14 @@ impl WorkspaceRegistry {
             .collect()
     }
 
+    pub fn command_aliases(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .flat_map(|workspace| workspace.descriptor().commands.iter().copied())
+            .map(str::to_owned)
+            .collect()
+    }
+
     pub fn resolve_hotkey(&self, hotkey: char) -> Option<WorkspaceId> {
         self.hotkeys.get(&hotkey.to_ascii_lowercase()).copied()
     }

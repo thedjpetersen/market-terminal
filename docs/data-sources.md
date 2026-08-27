@@ -159,7 +159,10 @@ endorsed by, or sponsored by Yahoo.
   Unpriced positions remain visible and excluded from an explicitly incomplete
   NAV. Each snapshot carries a deterministic input version, valuation time,
   methodology, and missing-data disclosures. Overview does not infer returns,
-  risk statistics, attribution, or movers from this point-in-time snapshot.
+  attribution, movers, volatility, or drawdown from this point-in-time
+  snapshot. Risk uses only explicit market values for per-currency
+  concentration and a labeled parallel non-cash shock; it does not infer an FX
+  rate, historical distribution, or executable price.
 
 ## User workbook and CSV
 

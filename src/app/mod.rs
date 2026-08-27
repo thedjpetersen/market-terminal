@@ -1,3 +1,4 @@
+mod command_inference;
 mod desk;
 mod events;
 mod input;
@@ -5,7 +6,11 @@ mod keymap;
 mod settings;
 mod workspace;
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{mpsc, Arc},
+    thread,
+};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -15,6 +20,9 @@ use crate::{
     ui::{self, ShellClickTarget},
 };
 
+pub use command_inference::{
+    CommandInference, CommandInferenceError, CommandInferenceRequest, InferredCommand,
+};
 pub use desk::{DeskWorkspace, DESK_ID};
 pub use events::{
     CommandDispatched, EventBus, EventEnvelope, EventTopic, SubscriptionId, SubscriptionMetrics,
@@ -27,6 +35,11 @@ pub use workspace::{
     AppIntent, CommandArgument, CommandInvocation, CommandParseError, ShellChrome, ShellContext,
     Workspace, WorkspaceDescriptor, WorkspaceId, WorkspaceNavigationItem, WorkspaceRegistry,
 };
+
+struct PendingCommandInference {
+    input: String,
+    result: mpsc::Receiver<Result<InferredCommand, CommandInferenceError>>,
+}
 
 pub struct App {
     pub(crate) active_workspace: WorkspaceId,
@@ -47,6 +60,9 @@ pub struct App {
     pub(crate) ticks: u64,
     pub(crate) workspaces: WorkspaceRegistry,
     events: EventBus,
+    command_inference: Option<Arc<dyn CommandInference>>,
+    pending_command_inference: Option<PendingCommandInference>,
+    command_feedback: Option<String>,
     persistence: Option<Arc<dyn SessionStateRepository>>,
     persistence_error: Option<String>,
     recent_commands: Vec<String>,
@@ -78,6 +94,9 @@ impl App {
             ticks: 0,
             workspaces,
             events: EventBus::default(),
+            command_inference: None,
+            pending_command_inference: None,
+            command_feedback: None,
             persistence: None,
             persistence_error: None,
             recent_commands: Vec::new(),
@@ -149,6 +168,14 @@ impl App {
         self.command_cursor
     }
 
+    pub fn command_feedback(&self) -> Option<&str> {
+        self.command_feedback.as_deref()
+    }
+
+    pub fn command_inference_pending(&self) -> bool {
+        self.pending_command_inference.is_some()
+    }
+
     pub fn help_visible(&self) -> bool {
         self.help_visible
     }
@@ -171,6 +198,11 @@ impl App {
 
     pub fn with_runtime_settings(mut self, settings: RuntimeSettingsSummary) -> Self {
         self.runtime_settings = settings;
+        self
+    }
+
+    pub fn with_command_inference(mut self, inference: Arc<dyn CommandInference>) -> Self {
+        self.command_inference = Some(inference);
         self
     }
 
@@ -221,6 +253,7 @@ impl App {
 
     pub fn advance_tick(&mut self) {
         self.ticks = self.ticks.wrapping_add(1);
+        self.poll_command_inference();
         self.workspaces.update_shell_context(self.active_workspace);
         let intents = self.workspaces.poll_intents();
         for intent in intents {
@@ -514,6 +547,7 @@ impl App {
         let command = self.command.trim().to_owned();
         let invocation = CommandInvocation::parse(&command);
         let mut command_target = None;
+        let mut inference_pending = false;
         let opens_help = invocation
             .as_ref()
             .is_some_and(|invocation| invocation.function == "HELP");
@@ -533,21 +567,12 @@ impl App {
             .filter(|invocation| invocation.function == "THEME")
         {
             self.apply_theme_command(invocation);
-        } else if let Some(id) = self.workspaces.dispatch_command(&command) {
-            command_target = Some(id);
-            if Some(id) == self.assistant_workspace {
-                self.open_assistant_drawer();
-            } else {
-                self.close_assistant_drawer();
-            }
-            if Some(id) != self.assistant_workspace && self.active_workspace != id {
-                let previous = self.active_workspace;
-                self.workspaces.on_blur(previous);
-                self.active_workspace = id;
-                self.publish_workspace_activation(previous);
-            }
+        } else if self.workspaces.resolve_command(&command).is_some() {
+            command_target = self.dispatch_workspace_command(&command);
+        } else if !command.is_empty() {
+            inference_pending = self.start_command_inference(command.clone());
         }
-        if !command.is_empty() {
+        if !command.is_empty() && !inference_pending {
             self.events.publish(CommandDispatched {
                 command: command.clone(),
                 target: command_target,
@@ -569,6 +594,125 @@ impl App {
         self.input_mode = InputMode::Navigation;
         self.reset_command_editor();
         self.persist_session();
+    }
+
+    fn dispatch_workspace_command(&mut self, command: &str) -> Option<WorkspaceId> {
+        let id = self.workspaces.dispatch_command(command)?;
+        if Some(id) == self.assistant_workspace {
+            self.open_assistant_drawer();
+        } else {
+            self.close_assistant_drawer();
+        }
+        if Some(id) != self.assistant_workspace && self.active_workspace != id {
+            let previous = self.active_workspace;
+            self.workspaces.on_blur(previous);
+            self.active_workspace = id;
+            self.publish_workspace_activation(previous);
+        }
+        Some(id)
+    }
+
+    fn start_command_inference(&mut self, input: String) -> bool {
+        let Some(inference) = self.command_inference.clone() else {
+            self.command_feedback = Some("AI INFERENCE IS NOT CONFIGURED".to_owned());
+            return false;
+        };
+        if input.len() > 512
+            || input
+                .chars()
+                .any(|character| matches!(character, '\r' | '\n'))
+        {
+            self.command_feedback = Some("AI INFERENCE REJECTED UNBOUNDED INPUT".to_owned());
+            return false;
+        }
+        let request = CommandInferenceRequest {
+            input: input.clone(),
+            active_workspace: self.active_workspace.as_str().to_owned(),
+            available_workspaces: self
+                .workspaces
+                .workspace_order()
+                .into_iter()
+                .map(|id| id.as_str().to_owned())
+                .collect(),
+            available_commands: self.workspaces.command_aliases(),
+        };
+        let (sender, result) = mpsc::channel();
+        let worker = thread::Builder::new()
+            .name("market-terminal-command-inference".to_owned())
+            .spawn(move || {
+                let _ = sender.send(inference.infer(request));
+            });
+        if worker.is_err() {
+            self.command_feedback = Some("AI INFERENCE WORKER COULD NOT START".to_owned());
+            return false;
+        }
+        self.pending_command_inference = Some(PendingCommandInference {
+            input: input.clone(),
+            result,
+        });
+        self.command_feedback = Some(format!("AI INFERRING · {input}"));
+        true
+    }
+
+    fn poll_command_inference(&mut self) {
+        let outcome = self.pending_command_inference.as_ref().and_then(|pending| {
+            match pending.result.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => Some(Err(
+                    CommandInferenceError::Provider("AI inference worker stopped".to_owned()),
+                )),
+            }
+        });
+        let Some(outcome) = outcome else {
+            return;
+        };
+        let original = self
+            .pending_command_inference
+            .take()
+            .expect("completed inference is pending")
+            .input;
+        let command_target = match outcome {
+            Ok(inferred)
+                if inferred.command().len() <= 512
+                    && !inferred
+                        .command()
+                        .chars()
+                        .any(|character| matches!(character, '\r' | '\n'))
+                    && self
+                        .workspaces
+                        .resolve_command(inferred.command())
+                        .is_some() =>
+            {
+                let target = self.dispatch_workspace_command(inferred.command());
+                self.command_feedback = Some(format!(
+                    "AI · {} → {}",
+                    inferred.model(),
+                    inferred.command()
+                ));
+                tracing::debug!(
+                    input = original,
+                    command = inferred.command(),
+                    model = inferred.model(),
+                    target = target.map(WorkspaceId::as_str),
+                    "AI command inference dispatched"
+                );
+                target
+            }
+            Ok(inferred) => {
+                self.command_feedback =
+                    Some(format!("AI INFERENCE REJECTED · {}", inferred.command()));
+                None
+            }
+            Err(error) => {
+                self.command_feedback = Some(format!("AI INFERENCE FAILED · {error}"));
+                None
+            }
+        };
+        self.events.publish(CommandDispatched {
+            command: original,
+            target: command_target,
+        });
     }
 
     fn apply_theme_command(&mut self, invocation: &CommandInvocation) {
@@ -596,6 +740,7 @@ impl App {
     }
 
     fn open_command(&mut self) {
+        self.command_feedback = None;
         self.input_mode = InputMode::Command;
         self.command_edit_mode = CommandEditMode::Insert;
         self.command_cursor = self.command.len();
@@ -1029,7 +1174,7 @@ fn next_word_start(value: &str, cursor: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     use crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -1056,6 +1201,22 @@ mod tests {
             column,
             row,
             modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    struct FixedCommandInference;
+
+    impl CommandInference for FixedCommandInference {
+        fn infer(
+            &self,
+            request: CommandInferenceRequest,
+        ) -> Result<InferredCommand, CommandInferenceError> {
+            assert_eq!(request.input, "$meta");
+            assert!(request
+                .available_commands
+                .iter()
+                .any(|command| command == "SEC"));
+            Ok(InferredCommand::new("SEC META", "test-ai"))
         }
     }
 
@@ -1181,6 +1342,34 @@ mod tests {
 
         assert_eq!(app.active_workspace, PORTFOLIO);
         assert_eq!(app.input_mode, InputMode::Navigation);
+    }
+
+    #[test]
+    fn cashtag_command_infers_security_navigation() {
+        let mut app = bootstrap::demo_app().with_command_inference(Arc::new(FixedCommandInference));
+        let subscription = app.events_mut().subscribe(["shell.command.dispatched"], 2);
+
+        app.command = "$meta".to_owned();
+        app.execute_command();
+
+        assert!(app.command_inference_pending());
+        assert_eq!(app.active_workspace, OVERVIEW);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while app.command_inference_pending() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            app.advance_tick();
+        }
+
+        assert!(!app.command_inference_pending());
+        assert_eq!(app.active_workspace, SECURITY);
+        assert_eq!(app.recent_commands(), ["$meta"]);
+        assert_eq!(app.command_feedback(), Some("AI · test-ai → SEC META"));
+        let events = app.events_mut().drain(subscription);
+        let command = events[0]
+            .downcast_ref::<CommandDispatched>()
+            .expect("command dispatch event");
+        assert_eq!(command.command, "$meta");
+        assert_eq!(command.target, Some(SECURITY));
     }
 
     #[test]

@@ -1,4 +1,8 @@
-use std::{error::Error, fs, path::{Path, PathBuf}};
+use std::{
+    error::Error,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use ab_glyph::{point, Font, FontArc, PxScale, ScaleFont};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -48,6 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         app.handle_key(key(KeyCode::Char('r')));
         app.handle_key(key(KeyCode::Char('r')));
     })?;
+    capture(&output, &font, "risk", |app| command(app, "RISK"))?;
     capture(&output, &font, "assistant", |app| {
         command(app, "AI");
         app.handle_key(key(KeyCode::Enter));
@@ -180,15 +185,11 @@ fn draw_symbol(
 
 /// Rasterizes Unicode Braille directly so generated captures do not depend on
 /// whether the selected text font happens to contain the Braille block.
-fn draw_braille(
-    image: &mut RgbaImage,
-    symbol: &str,
-    x: u32,
-    y: u32,
-    color: Rgba<u8>,
-) -> bool {
+fn draw_braille(image: &mut RgbaImage, symbol: &str, x: u32, y: u32, color: Rgba<u8>) -> bool {
     let mut characters = symbol.chars();
-    let Some(character) = characters.next() else { return false };
+    let Some(character) = characters.next() else {
+        return false;
+    };
     if characters.next().is_some() || !(('\u{2800}'..='\u{28ff}').contains(&character)) {
         return false;
     }
@@ -273,10 +274,22 @@ fn terminal_color(color: Color, fallback: Rgba<u8>) -> Rgba<u8> {
 fn indexed_color(index: u8) -> [u8; 3] {
     if index < 16 {
         const ANSI: [[u8; 3]; 16] = [
-            [0, 0, 0], [205, 49, 49], [13, 188, 121], [229, 229, 16],
-            [36, 114, 200], [188, 63, 188], [17, 168, 205], [229, 229, 229],
-            [102, 102, 102], [241, 76, 76], [35, 209, 139], [245, 245, 67],
-            [59, 142, 234], [214, 112, 214], [41, 184, 219], [255, 255, 255],
+            [0, 0, 0],
+            [205, 49, 49],
+            [13, 188, 121],
+            [229, 229, 16],
+            [36, 114, 200],
+            [188, 63, 188],
+            [17, 168, 205],
+            [229, 229, 229],
+            [102, 102, 102],
+            [241, 76, 76],
+            [35, 209, 139],
+            [245, 245, 67],
+            [59, 142, 234],
+            [214, 112, 214],
+            [41, 184, 219],
+            [255, 255, 255],
         ];
         return ANSI[usize::from(index)];
     }

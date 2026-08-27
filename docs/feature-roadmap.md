@@ -20,6 +20,10 @@ move to its own crate later without changing its public vocabulary.
 - **Complete:** first AI command-plane slice with an OpenRouter adapter,
   non-blocking requests, conversation workspace, and a closed set of validated
   UI intents for focus, navigation promotion, command dispatch, and layout reset.
+- **Complete:** AI-backed inference for unmatched command-bar text, with exact
+  commands taking precedence, background execution, command-only structured
+  output, no portfolio context, and a second exact-registry validation before
+  dispatch.
 - **Complete:** first Instrument Master/Search slice with canonical IDs, ranked
   symbol and company lookup, typed instrument kinds, and navigation from search
   results into Security Research.
@@ -86,6 +90,10 @@ move to its own crate later without changing its public vocabulary.
 - **Complete:** restart-safe local Alert register with bounded rule and audit
   retention, full lifecycle/debounce/acknowledgement persistence, asynchronous
   crash-safe writes, and live-provider idempotency verification across restart.
+- **Complete:** first Stage 2 Risk slice over the versioned Portfolio boundary,
+  with exact per-currency reconciliation, concentration, an explicit non-cash
+  shock, missing-price disclosures, clickable drill-through, and actual
+  configured-portfolio render verification.
 - **Next:** the remaining Stage 2 portfolio/performance, risk, screening, and
   expanded alert-rule families. Provider availability extends the deployment
   surface; deterministic fixtures remain the Stage 1 acceptance baseline and
@@ -342,12 +350,12 @@ ALERT core.drawdown > 8% -> preview -> enable
 - Alerts are idempotent, debounced, auditable, restart-safe, and visibly marked
   as simulated/local until an external notification channel is configured.
 
-**Status: in progress.** Position-snapshot ingestion now supplies the versioned
-Portfolio boundary that downstream Risk can consume without storage access.
-Transaction/cash ledgers, splits, dividends, performance, contribution, and
-attribution remain the next Portfolio work; screening and the additional
-news/topic, portfolio-threshold, calendar, and spreadsheet-expression alert
-rule families remain separate Stage 2 slices.
+**Status: in progress.** Position-snapshot ingestion supplies the versioned
+Portfolio boundary, and the first Risk slice consumes it without storage
+access. Transaction/cash ledgers, splits, dividends, performance, contribution,
+attribution, historical/factor risk, and stress libraries remain; screening and
+the additional news/topic, portfolio-threshold, calendar, and
+spreadsheet-expression alert rule families remain separate Stage 2 slices.
 
 ## Stage 3 — Advanced analytics and paper workflows
 

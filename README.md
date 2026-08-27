@@ -44,14 +44,19 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 
 Use the labeled navigation keys, click a visible workspace tab, or type a
 function such as `MON`, `CHART`, `SHEET`, `CHAT`, `FIND`, or `ASK` into the
-command bar. Mouse input is enabled in the interactive terminal: click the
-command box and `GO`, select table rows and spreadsheet cells, activate chart
-controls and research tabs, focus AI/chat composers, and scroll navigable
-lists. News uses live source feeds, Portfolio uses your imported snapshot, and
-Overview composes those same real snapshots without performing I/O while
-rendering. Persistent workspaces do not substitute deterministic gallery
-analytics when an external source is missing; the separate gallery host remains
-available for screenshots and tests.
+command bar. Exact functions always take precedence; otherwise the configured
+AI command plane infers one command through a bounded, background request.
+Cashtags such as `$META`, company names, and requests such as `show me Meta`
+can therefore resolve to `SEC META`; ambiguous requests resolve to `FIND`.
+Model output cannot dispatch until its function passes the same exact command
+registry as typed commands. Mouse input is enabled in the interactive terminal:
+click the command box and `GO`, select table rows and spreadsheet cells,
+activate chart controls and research tabs, focus AI/chat composers, and scroll
+navigable lists. News uses live source feeds, Portfolio uses your imported
+snapshot, and Overview composes those same real snapshots without performing
+I/O while rendering. Persistent workspaces do not substitute deterministic
+gallery analytics when an external source is missing; the separate gallery
+host remains available for screenshots and tests.
 
 `DESK` (aliases `SPLIT` and `DASHBOARD`) opens the combined workspace adapted
 from `alphai-tui`. Press `Tab`/`Shift+Tab` or `1`/`2`/`3` to focus Monitor,
@@ -332,6 +337,16 @@ movers unavailable instead of manufacturing them. Click a position to open
 Security or a headline to open its News topic; press `F9` or `R` to request a
 news refresh.
 
+Run `RISK` to open the storage-independent risk view derived from that same
+versioned portfolio snapshot. It reconciles every priced and unpriced row back
+to Portfolio's exact per-currency totals, shows per-currency position weights
+and largest non-cash concentration, and applies an explicit parallel `-10%`
+shock only to priced non-cash market value. Cash stays flat, unpriced holdings
+remain excluded and disclosed, and unlike currencies are never combined with
+an invented FX rate. The panel carries the import version, valuation time,
+methodology, and inherited missing-data disclosures; click a non-cash row or
+press Enter to open Security Research.
+
 ## Spreadsheet CSV files
 
 The persistent Spreadsheet starts empty; the IBM model is reserved for the
@@ -405,8 +420,8 @@ mockups.
 | ![Native IRC market chat with channel conversation and participant presence](docs/screenshots/chat.png) | ![OpenRouter assistant for analysis and validated workspace control](docs/screenshots/assistant.png) |
 | **Alerts register** | **Security research** |
 | ![Debounced local alert rules with lifecycle and audit state](docs/screenshots/alerts.png) | ![Single-security quote, chart, fundamentals, estimates, and news](docs/screenshots/security.png) |
-| **Instrument discovery** | |
-| ![Ranked canonical instrument search results](docs/screenshots/find.png) | |
+| **Instrument discovery** | **Portfolio risk** |
+| ![Ranked canonical instrument search results](docs/screenshots/find.png) | ![Versioned per-currency portfolio concentration and non-cash shock analysis](docs/screenshots/risk.png) |
 
 ## Run locally
 
@@ -466,6 +481,13 @@ panel for a held symbol. Portfolio reads use the same repository as the
 Portfolio panel, so a CSV imported there is the snapshot the assistant sees on
 its next request. Position data never enters the Codex process environment; it
 is returned only in response to the read-only portfolio tool.
+
+The same configured gateway handles unmatched command-bar text. Exact commands
+remain immediate; an unknown input such as `$meta` shows an `AI INFERRING`
+status while a background turn chooses one command through the constrained
+run-command tool. These short inference turns receive the command/workspace
+catalog but no portfolio snapshot, and the selected function must pass the
+exact registry again before Market Terminal dispatches it.
 
 OpenRouter remains available as an API-key fallback:
 

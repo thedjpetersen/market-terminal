@@ -1,3 +1,4 @@
+mod ai_commands;
 mod alert_state;
 mod alerts_demo;
 mod alpaca;
@@ -20,12 +21,14 @@ mod local_persistence;
 mod market_data_demo;
 mod openrouter;
 mod portfolio_csv;
+mod portfolio_risk;
 mod sec_instruments;
 mod spreadsheet_demo;
 mod spreadsheet_files;
 mod watchlist_config;
 mod yahoo;
 
+pub use ai_commands::AiCommandInference;
 pub use alerts_demo::DemoAlertsReplay;
 pub use alpaca::AlpacaMarketData;
 pub use alpha_vantage::AlphaVantageMarketData;
@@ -47,6 +50,7 @@ pub use local_persistence::LocalPersistence;
 pub use market_data_demo::{DemoMarketDataReplay, DemoWatchlistCatalog};
 pub use openrouter::{OpenRouterConfig, OpenRouterGateway};
 pub use portfolio_csv::CsvPortfolioRepository;
+pub use portfolio_risk::PortfolioRiskQuery;
 pub use sec_instruments::SecInstrumentSearch;
 pub use spreadsheet_demo::DemoSpreadsheetMarketData;
 pub use spreadsheet_files::LocalSpreadsheetFiles;

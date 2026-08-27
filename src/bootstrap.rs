@@ -13,18 +13,20 @@ use crate::{
         news::{NewsArticleOpener, NewsFeed, NewsWorkspace},
         overview::{OverviewQuery, OverviewWorkspace, ID as OVERVIEW},
         portfolio::{PortfolioRepository, PortfolioWorkspace},
+        risk::{RiskQuery, RiskWorkspace},
         security::{SecurityDocumentOpener, SecurityQuery, SecurityWorkspace},
         spreadsheet::{SpreadsheetMarketData, SpreadsheetWorkbookStore, SpreadsheetWorkspace},
         watchlist::{WatchlistCatalog, WatchlistWorkspace},
     },
     infrastructure::{
-        AlpacaMarketData, AlphaVantageMarketData, CodexAppServerConfig, CodexAppServerGateway,
-        ConfiguredWatchlistCatalog, CsvPortfolioRepository, DemoAlertsReplay, DemoChartHistory,
-        DemoChatGateway, DemoData, DemoInstrumentSearch, DemoMarketDataReplay,
-        DemoSpreadsheetMarketData, DemoWatchlistCatalog, FinnhubMarketData, IrcChatGateway,
-        LiveAlertsQuery, LiveMarketsQuery, LiveNewsFeed, LiveOverviewQuery, LiveSecurityQuery,
-        LiveSpreadsheetMarketData, LocalPersistence, LocalSpreadsheetFiles, OpenRouterConfig,
-        OpenRouterGateway, SecInstrumentSearch, SystemNewsArticleOpener, YahooMarketData,
+        AiCommandInference, AlpacaMarketData, AlphaVantageMarketData, CodexAppServerConfig,
+        CodexAppServerGateway, ConfiguredWatchlistCatalog, CsvPortfolioRepository,
+        DemoAlertsReplay, DemoChartHistory, DemoChatGateway, DemoData, DemoInstrumentSearch,
+        DemoMarketDataReplay, DemoSpreadsheetMarketData, DemoWatchlistCatalog, FinnhubMarketData,
+        IrcChatGateway, LiveAlertsQuery, LiveMarketsQuery, LiveNewsFeed, LiveOverviewQuery,
+        LiveSecurityQuery, LiveSpreadsheetMarketData, LocalPersistence, LocalSpreadsheetFiles,
+        OpenRouterConfig, OpenRouterGateway, PortfolioRiskQuery, SecInstrumentSearch,
+        SystemNewsArticleOpener, YahooMarketData,
     },
 };
 
@@ -32,12 +34,14 @@ pub fn demo_app() -> App {
     crate::ui::theme::set_theme("default").expect("built-in default theme");
     let data = Arc::new(DemoData);
     let portfolio_query: Arc<dyn PortfolioRepository> = data.clone();
+    let risk_query: Arc<dyn RiskQuery> = Arc::new(PortfolioRiskQuery::new(portfolio_query.clone()));
     let news_query: Arc<dyn NewsFeed> = data;
     build_app(AppProviders {
         overview_query: Arc::new(DemoData),
         markets_query: Arc::new(DemoData),
         chat: Arc::new(DemoChatGateway::new()),
         portfolio_query,
+        risk_query,
         news_query,
         article_opener: None,
         spreadsheet_market_data: Arc::new(DemoSpreadsheetMarketData),
@@ -62,6 +66,7 @@ struct AppProviders {
     markets_query: Arc<dyn MarketsQuery>,
     chat: Arc<dyn ChatGateway>,
     portfolio_query: Arc<dyn PortfolioRepository>,
+    risk_query: Arc<dyn RiskQuery>,
     news_query: Arc<dyn NewsFeed>,
     article_opener: Option<Arc<dyn NewsArticleOpener>>,
     spreadsheet_market_data: Arc<dyn SpreadsheetMarketData>,
@@ -86,6 +91,7 @@ fn build_app(providers: AppProviders) -> App {
         markets_query,
         chat,
         portfolio_query,
+        risk_query,
         news_query,
         article_opener,
         spreadsheet_market_data,
@@ -110,6 +116,7 @@ fn build_app(providers: AppProviders) -> App {
         "codex" => Arc::new(CodexAppServerGateway::new(CodexAppServerConfig::from_env())),
         _ => Arc::new(OpenRouterGateway::new(OpenRouterConfig::from_env())),
     };
+    let command_inference = Arc::new(AiCommandInference::new(assistant_gateway.clone()));
     let spreadsheet_workspace = if runtime_settings.gallery_replay {
         SpreadsheetWorkspace::new(spreadsheet_market_data)
     } else if let Some(store) = spreadsheet_workbook_store {
@@ -156,6 +163,7 @@ fn build_app(providers: AppProviders) -> App {
                 "alerts".to_owned(),
                 "security".to_owned(),
                 "portfolio".to_owned(),
+                "risk".to_owned(),
                 "news".to_owned(),
                 "spreadsheet".to_owned(),
             ],
@@ -185,13 +193,16 @@ fn build_app(providers: AppProviders) -> App {
             None => SecurityWorkspace::with_symbol(security_query, security_symbol),
         }),
         Box::new(PortfolioWorkspace::new(portfolio_query)),
+        Box::new(RiskWorkspace::new(risk_query)),
         Box::new(match article_opener {
             Some(opener) => NewsWorkspace::with_article_opener(news_query, opener),
             None => NewsWorkspace::new(news_query),
         }),
         Box::new(spreadsheet_workspace),
     ]);
-    App::new(workspaces, OVERVIEW).with_runtime_settings(runtime_settings)
+    App::new(workspaces, OVERVIEW)
+        .with_command_inference(command_inference)
+        .with_runtime_settings(runtime_settings)
 }
 
 /// Builds the interactive application with durable shell state enabled.
@@ -205,6 +216,7 @@ pub fn persistent_app() -> App {
     let (keymap, keymap_warnings) = Keymap::from_env();
     let portfolio_query: Arc<dyn PortfolioRepository> =
         Arc::new(CsvPortfolioRepository::persistent(repository.clone()));
+    let risk_query: Arc<dyn RiskQuery> = Arc::new(PortfolioRiskQuery::new(portfolio_query.clone()));
     let news_query: Arc<dyn NewsFeed> = Arc::new(LiveNewsFeed::from_env());
     let live_market_data = configured_market_data();
     let live_security = Arc::new(LiveSecurityQuery::from_env(
@@ -237,6 +249,7 @@ pub fn persistent_app() -> App {
         markets_query,
         chat: Arc::new(IrcChatGateway::from_env()),
         portfolio_query,
+        risk_query,
         news_query,
         article_opener: Some(Arc::new(SystemNewsArticleOpener)),
         spreadsheet_market_data,

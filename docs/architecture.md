@@ -55,6 +55,14 @@ contents remain at the user-selected location. Demo news and portfolio data are
 wired only by `demo_app` for deterministic tests and gallery captures. Network
 and filesystem formats remain outside the feature packages.
 
+`PortfolioRiskQuery` is an infrastructure translation seam: it reads
+Portfolio's public versioned snapshot and maps it into Risk-owned inputs. The
+Risk feature imports neither Portfolio domain types nor its repository. Its
+pure calculator first reconciles priced NAV, cash, and missing-price counts per
+currency, then derives concentration and an explicit non-cash shock with exact
+minor-unit arithmetic. This is the boundary downstream pricing and factor
+engines can replace without gaining access to Portfolio storage.
+
 `LiveOverviewQuery` composes those two already-loaded, in-memory snapshots for
 the interactive Overview. It performs no network or filesystem work and does
 not infer performance history from a point-in-time CSV. Missing return, risk,
@@ -151,6 +159,20 @@ closed `AppIntent` vocabulary and revalidated by `WorkspaceRegistry`:
 ```text
 user prompt -> AssistantGateway -> constrained provider response
             -> UiAction -> AppIntent -> exact registry resolution -> shell update
+```
+
+The command bar also owns a consumer-side `CommandInference` port. Exact
+built-ins and workspace aliases always resolve synchronously first. Only an
+unmatched input is sent to the configured AI gateway on a background worker,
+along with the active workspace and current command catalog. That inference
+turn receives no portfolio snapshot and must select exactly one command through
+the existing run-command tool. The shell then parses the result and requires
+its function to resolve through `WorkspaceRegistry`; prose, multiple actions,
+newlines, oversized output, and invented functions fail closed.
+
+```text
+typed input -> exact registry miss -> background AI command inference
+            -> one RunCommand action -> exact registry validation -> dispatch
 ```
 
 The allowed mutations are workspace focus, navigation promotion, existing
