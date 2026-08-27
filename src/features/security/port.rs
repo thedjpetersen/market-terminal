@@ -26,3 +26,31 @@ pub trait SecurityQuery: Send + Sync {
 
     fn request_refresh(&self, _symbol: &str) {}
 }
+
+pub trait SecurityDocumentOpener: Send + Sync {
+    fn open(&self, url: &str) -> Result<(), SecurityDocumentOpenError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SecurityDocumentOpenError {
+    InvalidUrl,
+    UnsupportedScheme(String),
+    Launch(String),
+}
+
+impl fmt::Display for SecurityDocumentOpenError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidUrl => formatter.write_str("SEC document link is not a valid URL"),
+            Self::UnsupportedScheme(scheme) => {
+                write!(
+                    formatter,
+                    "SEC document link uses unsupported {scheme} scheme"
+                )
+            }
+            Self::Launch(message) => write!(formatter, "could not open SEC document: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for SecurityDocumentOpenError {}

@@ -23,6 +23,13 @@ right margin, last-bar price marker, and Braille moving-average overlay adapt
 the upstream chart implementation; the integrated code is identified in
 `src/features/charting/workspace.rs`.
 
+The selectable Form 4 insider-activity workflow and publisher-filing open
+interaction were inspired by the upstream Insider view. This project's typed
+ownership model and bounded XML adapter were independently implemented against
+official SEC submissions metadata and ownership XML; they do not copy
+AlphaAI's proprietary scoring or enrichment contract. The relevant code is in
+`src/features/security/` and `src/infrastructure/live_security.rs`.
+
 MIT License
 
 Copyright (c) 2026 Mikhail Makeev

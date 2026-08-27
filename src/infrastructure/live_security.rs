@@ -14,8 +14,8 @@ use crate::features::{
     charting::{ChartHistoryQuery, ChartInstrument, ChartPeriod, HistoryRequest},
     market_data::{CanonicalInstrumentId, MarketDataQuery, QuoteSnapshot},
     security::{
-        Filing, FinancialPeriod, SecurityError, SecurityIdentity, SecurityPage, SecurityQuery,
-        SecurityResearch, SecuritySnapshot,
+        Filing, FinancialPeriod, InsiderTransaction, SecurityError, SecurityIdentity, SecurityPage,
+        SecurityQuery, SecurityResearch, SecuritySnapshot,
     },
 };
 
@@ -23,6 +23,9 @@ const DEFAULT_TICKERS_URL: &str = "https://www.sec.gov/files/company_tickers.jso
 const DEFAULT_DATA_BASE_URL: &str = "https://data.sec.gov/";
 const DEFAULT_ARCHIVES_BASE_URL: &str = "https://www.sec.gov/Archives/edgar/data/";
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_FORM4_BYTES: usize = 1024 * 1024;
+const MAX_FORM4_FILINGS: usize = 6;
+const MAX_INSIDER_TRANSACTIONS: usize = 40;
 const CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 
 type TickerCache = Arc<Mutex<Option<(Instant, HashMap<String, SecCompany>)>>>;
@@ -134,6 +137,8 @@ impl LiveSecurityQuery {
             .to_owned();
         let filings =
             filings_from_submissions(&submissions, company.cik, &self.config.archives_base_url);
+        let (insider_transactions, insider_status) =
+            self.load_insider_transactions(&submissions, company.cik);
         let financials = financials_from_company_facts(&facts);
         let snapshot = self.market_snapshot(&ticker, &name, company.cik, &submissions, &filings);
         let page = SecurityPage {
@@ -143,6 +148,8 @@ impl LiveSecurityQuery {
                 financials,
                 estimates: Vec::new(),
                 owners: Vec::new(),
+                insider_transactions,
+                insider_status,
                 filings,
                 peers: Vec::new(),
                 source: "SEC EDGAR · COMPANYFACTS + SUBMISSIONS".to_owned(),
@@ -291,6 +298,69 @@ impl LiveSecurityQuery {
         serde_json::from_slice(&bytes)
             .map_err(|_| SecurityError::Unavailable("invalid SEC JSON response".to_owned()))
     }
+
+    fn request_form4_xml(&self, url: Url) -> Result<String, SecurityError> {
+        let response =
+            self.client.get(url).send().map_err(|_| {
+                SecurityError::Unavailable("SEC Form 4 transport failure".to_owned())
+            })?;
+        if matches!(response.status().as_u16(), 401 | 403) {
+            return Err(SecurityError::PermissionDenied(format!(
+                "SEC HTTP {}; configure MARKET_TERMINAL_SEC_USER_AGENT",
+                response.status().as_u16()
+            )));
+        }
+        if !response.status().is_success() {
+            return Err(SecurityError::Unavailable(format!(
+                "SEC Form 4 HTTP {}",
+                response.status().as_u16()
+            )));
+        }
+        let bytes = response
+            .bytes()
+            .map_err(|_| SecurityError::Unavailable("SEC Form 4 body failure".to_owned()))?;
+        if bytes.len() > MAX_FORM4_BYTES {
+            return Err(SecurityError::Unavailable(
+                "SEC Form 4 exceeded 1 MiB limit".to_owned(),
+            ));
+        }
+        String::from_utf8(bytes.to_vec())
+            .map_err(|_| SecurityError::Unavailable("SEC Form 4 was not UTF-8".to_owned()))
+    }
+
+    fn load_insider_transactions(
+        &self,
+        submissions: &Value,
+        cik: u64,
+    ) -> (Vec<InsiderTransaction>, String) {
+        let filings =
+            form4_filings_from_submissions(submissions, cik, &self.config.archives_base_url);
+        if filings.is_empty() {
+            return (Vec::new(), "NO RECENT FORM 4 FILINGS".to_owned());
+        }
+        let requested = filings.len();
+        let mut parsed = 0;
+        let mut transactions = Vec::new();
+        for filing in filings {
+            let Ok(xml) = self.request_form4_xml(filing.xml_url.clone()) else {
+                continue;
+            };
+            let Ok(mut filing_transactions) = parse_ownership_document(&xml, &filing) else {
+                continue;
+            };
+            parsed += 1;
+            transactions.append(&mut filing_transactions);
+            if transactions.len() >= MAX_INSIDER_TRANSACTIONS {
+                transactions.truncate(MAX_INSIDER_TRANSACTIONS);
+                break;
+            }
+        }
+        let status = format!(
+            "SEC FORM 4 · {parsed}/{requested} FILINGS · {} TRANSACTIONS",
+            transactions.len()
+        );
+        (transactions, status)
+    }
 }
 
 impl SecurityQuery for LiveSecurityQuery {
@@ -337,6 +407,305 @@ struct SecTickerPayload {
     cik: u64,
     ticker: String,
     title: String,
+}
+
+#[derive(Debug, Clone)]
+struct Form4Filing {
+    filed: String,
+    accession: String,
+    xml_url: Url,
+    document_url: Option<String>,
+}
+
+fn form4_filings_from_submissions(
+    payload: &Value,
+    cik: u64,
+    archives_base_url: &Url,
+) -> Vec<Form4Filing> {
+    let Some(recent) = payload.get("filings").and_then(|value| value.get("recent")) else {
+        return Vec::new();
+    };
+    let Some(forms) = recent.get("form").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    (0..forms.len())
+        .filter_map(|index| {
+            if !matches!(recent_string(recent, "form", index)?, "4" | "4/A") {
+                return None;
+            }
+            let accession = recent_string(recent, "accessionNumber", index)?.to_owned();
+            if !safe_accession(&accession) {
+                return None;
+            }
+            let primary_document = recent_string(recent, "primaryDocument", index)?;
+            let basename = primary_document.rsplit('/').next()?;
+            if basename.is_empty()
+                || !basename.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
+                })
+            {
+                return None;
+            }
+            let compact_accession = accession.replace('-', "");
+            let xml_url = archives_base_url
+                .join(&format!("{cik}/{compact_accession}/{basename}"))
+                .ok()?;
+            let document_url = archives_base_url
+                .join(&format!("{cik}/{compact_accession}/{accession}-index.htm"))
+                .ok()
+                .map(|url| url.to_string());
+            Some(Form4Filing {
+                filed: recent_string(recent, "filingDate", index)
+                    .unwrap_or("—")
+                    .to_owned(),
+                accession,
+                xml_url,
+                document_url,
+            })
+        })
+        .take(MAX_FORM4_FILINGS)
+        .collect()
+}
+
+fn safe_accession(accession: &str) -> bool {
+    !accession.is_empty()
+        && accession.len() <= 32
+        && accession
+            .chars()
+            .all(|character| character.is_ascii_digit() || character == '-')
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct OwnershipDocument {
+    document_type: Option<String>,
+    period_of_report: Option<String>,
+    reporting_owner: Vec<OwnershipReportingOwner>,
+    aff10b5_one: Option<String>,
+    non_derivative_table: Option<NonDerivativeTable>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct OwnershipReportingOwner {
+    reporting_owner_id: ReportingOwnerId,
+    reporting_owner_relationship: ReportingOwnerRelationship,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct ReportingOwnerId {
+    rpt_owner_name: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct ReportingOwnerRelationship {
+    is_director: Option<String>,
+    is_officer: Option<String>,
+    is_ten_percent_owner: Option<String>,
+    is_other: Option<String>,
+    officer_title: Option<String>,
+    other_text: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct NonDerivativeTable {
+    non_derivative_transaction: Vec<NonDerivativeTransaction>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct NonDerivativeTransaction {
+    transaction_date: XmlValue,
+    transaction_coding: TransactionCoding,
+    transaction_amounts: TransactionAmounts,
+    post_transaction_amounts: PostTransactionAmounts,
+    ownership_nature: OwnershipNature,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct TransactionCoding {
+    transaction_code: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct TransactionAmounts {
+    transaction_shares: XmlValue,
+    transaction_price_per_share: XmlValue,
+    transaction_acquired_disposed_code: XmlValue,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct PostTransactionAmounts {
+    shares_owned_following_transaction: XmlValue,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct OwnershipNature {
+    direct_or_indirect_ownership: XmlValue,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct XmlValue {
+    value: Option<String>,
+}
+
+fn parse_ownership_document(
+    xml: &str,
+    filing: &Form4Filing,
+) -> Result<Vec<InsiderTransaction>, SecurityError> {
+    let document: OwnershipDocument = quick_xml::de::from_str(xml)
+        .map_err(|_| SecurityError::Unavailable("invalid SEC ownership XML".to_owned()))?;
+    if !matches!(document.document_type.as_deref(), Some("4" | "4/A")) {
+        return Err(SecurityError::Unavailable(
+            "SEC ownership document was not Form 4".to_owned(),
+        ));
+    }
+    let owner = document
+        .reporting_owner
+        .iter()
+        .filter_map(|owner| owner.reporting_owner_id.rpt_owner_name.as_deref())
+        .filter(|name| !name.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let owner = if owner.is_empty() {
+        "UNAVAILABLE".to_owned()
+    } else {
+        bound_text(&owner, 32)
+    };
+    let role = document
+        .reporting_owner
+        .first()
+        .map(reporting_owner_role)
+        .unwrap_or_else(|| "UNAVAILABLE".to_owned());
+    let plan_10b5_1 = document.aff10b5_one.as_deref().is_some_and(xml_true);
+    let fallback_date = document.period_of_report.as_deref().unwrap_or("—");
+    let transactions = document
+        .non_derivative_table
+        .map(|table| table.non_derivative_transaction)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|transaction| {
+            let shares = xml_number(&transaction.transaction_amounts.transaction_shares)?;
+            if shares < 0.0 {
+                return None;
+            }
+            let price_per_share =
+                xml_number(&transaction.transaction_amounts.transaction_price_per_share);
+            let value_usd = price_per_share
+                .map(|price| shares * price)
+                .filter(|value| value.is_finite());
+            let acquisition_disposition = transaction
+                .transaction_amounts
+                .transaction_acquired_disposed_code
+                .value
+                .as_deref()
+                .map(str::trim)
+                .map(|value| match value {
+                    "A" => "ACQ",
+                    "D" => "DISP",
+                    other => other,
+                })
+                .unwrap_or("—")
+                .to_owned();
+            Some(InsiderTransaction {
+                filed: filing.filed.clone(),
+                transaction_date: transaction
+                    .transaction_date
+                    .value
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| fallback_date.to_owned()),
+                owner: owner.clone(),
+                role: role.clone(),
+                transaction_code: transaction
+                    .transaction_coding
+                    .transaction_code
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "—".to_owned()),
+                acquisition_disposition,
+                shares,
+                price_per_share,
+                value_usd,
+                shares_after: xml_number(
+                    &transaction
+                        .post_transaction_amounts
+                        .shares_owned_following_transaction,
+                ),
+                ownership_nature: transaction
+                    .ownership_nature
+                    .direct_or_indirect_ownership
+                    .value
+                    .as_deref()
+                    .map(str::trim)
+                    .map(|value| match value {
+                        "D" => "DIRECT",
+                        "I" => "INDIRECT",
+                        other => other,
+                    })
+                    .unwrap_or("—")
+                    .to_owned(),
+                plan_10b5_1,
+                accession: filing.accession.clone(),
+                document_url: filing.document_url.clone(),
+            })
+        })
+        .collect();
+    Ok(transactions)
+}
+
+fn reporting_owner_role(owner: &OwnershipReportingOwner) -> String {
+    let relationship = &owner.reporting_owner_relationship;
+    if xml_true_or_false(relationship.is_officer.as_deref()) {
+        if let Some(title) = relationship
+            .officer_title
+            .as_deref()
+            .filter(|title| !title.trim().is_empty())
+        {
+            return bound_text(title, 24);
+        }
+        return "OFFICER".to_owned();
+    }
+    if xml_true_or_false(relationship.is_director.as_deref()) {
+        return "DIRECTOR".to_owned();
+    }
+    if xml_true_or_false(relationship.is_ten_percent_owner.as_deref()) {
+        return "10% OWNER".to_owned();
+    }
+    if xml_true_or_false(relationship.is_other.as_deref()) {
+        return relationship
+            .other_text
+            .as_deref()
+            .filter(|text| !text.trim().is_empty())
+            .map(|text| bound_text(text, 24))
+            .unwrap_or_else(|| "OTHER".to_owned());
+    }
+    "REPORTING OWNER".to_owned()
+}
+
+fn xml_true_or_false(value: Option<&str>) -> bool {
+    value.is_some_and(xml_true)
+}
+
+fn xml_true(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes"
+    )
+}
+
+fn xml_number(value: &XmlValue) -> Option<f64> {
+    value
+        .value
+        .as_deref()
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|value| value.is_finite())
 }
 
 fn normalize_ticker(symbol: &str) -> Result<String, SecurityError> {
@@ -623,6 +992,84 @@ mod tests {
     }
 
     #[test]
+    fn form4_metadata_uses_raw_xml_and_a_publisher_index_link() {
+        let payload = json!({
+            "filings": {"recent": {
+                "form": ["4", "10-K"],
+                "filingDate": ["2026-07-30", "2026-02-01"],
+                "accessionNumber": ["0001022408-26-000070", "0000000000-26-000001"],
+                "primaryDocument": ["xslF345X06/form4.xml", "report.htm"]
+            }}
+        });
+        let base = Url::parse(DEFAULT_ARCHIVES_BASE_URL).unwrap();
+
+        let filings = form4_filings_from_submissions(&payload, 1_022_408, &base);
+
+        assert_eq!(filings.len(), 1);
+        assert_eq!(
+            filings[0].xml_url.as_str(),
+            "https://www.sec.gov/Archives/edgar/data/1022408/000102240826000070/form4.xml"
+        );
+        assert!(filings[0]
+            .document_url
+            .as_deref()
+            .is_some_and(|url| url.ends_with("0001022408-26-000070-index.htm")));
+    }
+
+    #[test]
+    fn ownership_xml_maps_non_derivative_transactions_without_scoring_them() {
+        let xml = r#"<?xml version="1.0"?>
+<ownershipDocument>
+  <documentType>4</documentType>
+  <periodOfReport>2026-07-28</periodOfReport>
+  <reportingOwner>
+    <reportingOwnerId><rptOwnerName>RAIGUEL DARREN S</rptOwnerName></reportingOwnerId>
+    <reportingOwnerRelationship>
+      <isDirector>false</isDirector><isOfficer>true</isOfficer>
+      <officerTitle>CHIEF OPERATING OFFICER</officerTitle>
+    </reportingOwnerRelationship>
+  </reportingOwner>
+  <aff10b5One>true</aff10b5One>
+  <nonDerivativeTable>
+    <nonDerivativeTransaction>
+      <transactionDate><value>2026-07-28</value></transactionDate>
+      <transactionCoding><transactionCode>S</transactionCode></transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>65</value></transactionShares>
+        <transactionPricePerShare><value>93.1050</value></transactionPricePerShare>
+        <transactionAcquiredDisposedCode><value>D</value></transactionAcquiredDisposedCode>
+      </transactionAmounts>
+      <postTransactionAmounts>
+        <sharesOwnedFollowingTransaction><value>71171</value></sharesOwnedFollowingTransaction>
+      </postTransactionAmounts>
+      <ownershipNature><directOrIndirectOwnership><value>I</value></directOrIndirectOwnership></ownershipNature>
+    </nonDerivativeTransaction>
+  </nonDerivativeTable>
+</ownershipDocument>"#;
+        let filing = Form4Filing {
+            filed: "2026-07-30".to_owned(),
+            accession: "0001022408-26-000070".to_owned(),
+            xml_url: Url::parse("https://www.sec.gov/form4.xml").unwrap(),
+            document_url: Some("https://www.sec.gov/form4-index.htm".to_owned()),
+        };
+
+        let transactions = parse_ownership_document(xml, &filing).unwrap();
+
+        assert_eq!(transactions.len(), 1);
+        let transaction = &transactions[0];
+        assert_eq!(transaction.owner, "RAIGUEL DARREN S");
+        assert_eq!(transaction.role, "CHIEF OPERATING OFFICER");
+        assert_eq!(transaction.transaction_code, "S");
+        assert_eq!(transaction.acquisition_disposition, "DISP");
+        assert_eq!(transaction.shares, 65.0);
+        assert_eq!(transaction.price_per_share, Some(93.105));
+        assert_eq!(transaction.value_usd, Some(6_051.825));
+        assert_eq!(transaction.shares_after, Some(71_171.0));
+        assert_eq!(transaction.ownership_nature, "INDIRECT");
+        assert!(transaction.plan_10b5_1);
+    }
+
+    #[test]
     #[ignore = "live SEC + Alpha Vantage security contract test"]
     fn live_ibm_security_page_has_real_market_facts_and_filings() {
         let alpha = Arc::new(AlphaVantageMarketData::from_env());
@@ -653,6 +1100,8 @@ mod tests {
             .iter()
             .filter_map(|filing| filing.document_url.as_deref())
             .all(|url| url.starts_with("https://www.sec.gov/Archives/edgar/data/")));
+        assert!(page.research.insider_status.starts_with("SEC FORM 4"));
+        assert!(!page.research.insider_transactions.is_empty());
         assert!(page.research.estimates.is_empty());
         assert!(page.research.owners.is_empty());
         assert!(page.research.peers.is_empty());

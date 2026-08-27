@@ -50,6 +50,7 @@ move to its own crate later without changing its public vocabulary.
   retry/rate-limit policies, and monitor fallback behavior.
 - **Complete:** expanded Security Research and News/Events workflows with
   canonical instrument links, financial/estimate/ownership/filing/peer views,
+  raw SEC Form 4 non-derivative transactions with official filing links,
   filters, read/bookmark state, story detail, economic calendar, and validated
   cross-workspace intents.
 - **Complete:** workbook-scoped spreadsheet evaluation with qualified and quoted

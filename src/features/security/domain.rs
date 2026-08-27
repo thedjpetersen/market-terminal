@@ -62,7 +62,7 @@ impl ResearchView {
         match self {
             Self::Financials => "FA FINANCIALS",
             Self::Estimates => "EE ESTIMATES",
-            Self::Ownership => "OWN OWNERSHIP",
+            Self::Ownership => "OWN FORM 4",
             Self::Filings => "FIL FILINGS",
             Self::Peers => "RV PEERS",
         }
@@ -103,6 +103,24 @@ pub struct OwnerPosition {
     pub quarterly_change: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct InsiderTransaction {
+    pub filed: String,
+    pub transaction_date: String,
+    pub owner: String,
+    pub role: String,
+    pub transaction_code: String,
+    pub acquisition_disposition: String,
+    pub shares: f64,
+    pub price_per_share: Option<f64>,
+    pub value_usd: Option<f64>,
+    pub shares_after: Option<f64>,
+    pub ownership_nature: String,
+    pub plan_10b5_1: bool,
+    pub accession: String,
+    pub document_url: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Filing {
     pub filed: String,
@@ -129,6 +147,8 @@ pub struct SecurityResearch {
     pub financials: Vec<FinancialPeriod>,
     pub estimates: Vec<Estimate>,
     pub owners: Vec<OwnerPosition>,
+    pub insider_transactions: Vec<InsiderTransaction>,
+    pub insider_status: String,
     pub filings: Vec<Filing>,
     pub peers: Vec<PeerComparison>,
     pub source: String,

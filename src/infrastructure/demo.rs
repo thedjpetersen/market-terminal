@@ -314,6 +314,8 @@ fn demo_security_research(symbol: &str) -> SecurityResearch {
             value: "$205.3M".to_owned(),
             quarterly_change: "+0.1%".to_owned(),
         }],
+        insider_transactions: Vec::new(),
+        insider_status: "GALLERY REPLAY · NO LIVE FORM 4 REQUEST".to_owned(),
         filings: vec![Filing {
             filed: "2025-11-01".to_owned(),
             form: "10-K".to_owned(),

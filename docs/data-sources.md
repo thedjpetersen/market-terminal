@@ -108,10 +108,12 @@ points, and the trace is neither persisted nor synthesized.
 ## SEC EDGAR structured data
 
 - **Surfaces:** interactive Find instrument master and Security identity,
-  reported financials, issuer reference fields, and recent filing metadata.
+  reported financials, issuer reference fields, recent filing metadata, and
+  recent Form 4/4-A non-derivative insider transactions.
 - **Official source:** <https://www.sec.gov/files/company_tickers.json> and the
   SEC's [submissions and company-facts APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces),
   documented through its [developer resources](https://www.sec.gov/about/developer-resources).
+  Ownership XML follows the SEC's current [Forms 3/4/5 technical specifications](https://www.sec.gov/submit-filings/technical-specifications).
 - **Identity:** each equity receives a zero-padded canonical CIK identity such
   as `sec:cik:0000320193`; ticker and legal company name remain searchable
   attributes rather than identity keys.
@@ -122,16 +124,24 @@ points, and the trace is neither persisted nor synthesized.
   retained in process for 15 minutes. Find and Security use bounded background
   workers. Security `F9` invalidates its page cache before fetching; Find `F9`
   requests a coalesced master refresh.
+- **Form 4 methodology:** Security examines at most six recent Form 4/4-A
+  entries from submissions metadata, fetches each raw ownership XML document
+  with a 1 MiB bound, and retains at most 40 non-derivative transactions. The UI
+  displays transaction code, acquisition/disposition, reported shares and
+  price-derived value, owner role, direct/indirect ownership, and filing-level
+  10b5-1 status without a relevance or trading signal. A selected row opens the
+  official SEC filing index through a validated `http(s)` URL.
 - **Failure behavior:** loading and transport/HTTP/shape failures are visible
   in the Find header. No demo identity is inserted into the interactive app.
 - **Fundamental methodology:** annual values use latest-filed comparable
   US-GAAP facts from 10-K fiscal-year durations. Values retain neither analyst
   estimates nor invented gap filling. SEC does not define peer sets; ownership
-  normalization remains visibly unavailable.
+  beyond the current Form 4 transaction slice remains visibly unavailable.
 - **Content boundary:** SEC data is issuer reference, reported facts, and filing
   metadata—not a market-price source. Master responses are limited to 2 MiB,
-  submissions/company facts to 8 MiB, and none are persisted.
+  submissions/company facts to 8 MiB, Form 4 XML to 1 MiB per filing, and none
+  are persisted.
 
 SEC/Federal Reserve RSS entries use the publisher URLs above. Structured EDGAR
-ownership forms and official economic series remain planned adapters and are
-not current market-price substitutes.
+institutional ownership forms and official economic series remain planned
+adapters and are not current market-price substitutes.

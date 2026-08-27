@@ -19,8 +19,8 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
   focus and click routing
 - Markets — external listed-instrument snapshots, with unsupported cross-asset
   and analytics datasets called out instead of mocked
-- Security — quote/chart, financials, estimates, ownership, filings, peers,
-  and linked news
+- Security — quote/chart, financials, raw SEC Form 4 insider transactions,
+  filings, explicitly unavailable estimates/peers, and linked news
 - Portfolio — imported positions, reconciled value/weights, and source status
 - News — asynchronously refreshed RSS/Atom stories, filters, unread/bookmarks,
   clickable publisher links, and linked securities
@@ -169,12 +169,17 @@ quote and recent history with the SEC's official company-ticker master,
 submissions, and company-facts APIs. Reported annual revenue, operating income,
 net income, and diluted EPS are derived only from comparable US-GAAP 10-K
 facts; recent 10-K, 10-Q, and 8-K metadata retain their accession numbers and
-official document URLs. All provider calls run on a coalescing background
-worker.
+official document URLs. The `OWN` / `FORM4` view fetches up to six recent Form
+4 or 4/A ownership documents, maps their non-derivative transactions without
+invented scores, and identifies acquisition/disposition, shares, value, role,
+ownership nature, and 10b5-1 status. Select a row with Up/Down or `j`/`k`, then
+press `O` or Enter to open the official SEC filing index. All provider calls run
+on a coalescing background worker.
 
 SEC EDGAR does not supply analyst estimates or a canonical peer set, and this
-adapter does not yet normalize institutional ownership filings. Those panels
-say so explicitly instead of showing generated values. Press `F9` or click the
+adapter does not yet normalize institutional 13F ownership. Those panels say so
+explicitly instead of showing generated values. Form 4 failures are best-effort
+and visibly report parsed/requested filing counts. Press `F9` or click the
 Security header to invalidate the page cache and fetch again.
 
 ## Live alert observations
@@ -376,8 +381,8 @@ HawaiianNinja pointed us to
 [`makeev/alphai-tui`](https://github.com/makeev/alphai-tui). Codex then
 integrated the selected MIT-licensed pieces we care about—indicator math,
 chart and watchlist-density ideas, the responsive split desk,
-provider-selection patterns, official Alpaca adapter behavior, and the fast
-first-run/settings flow—into this project's bounded, provider-aware
+provider-selection patterns, official Alpaca adapter behavior, the fast
+first-run/settings flow, and the Form 4 insider workflow—into this project's bounded, provider-aware
 architecture. `alphai-tui` is Copyright (c) 2026 Mikhail Makeev and licensed
 under MIT. The copied-code provenance and complete upstream license text are in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
