@@ -57,6 +57,12 @@ adapt the upstream keymap design. Market Terminal uses an environment format
 and a smaller shell/navigation action vocabulary while keeping its command-mode
 Vim/Emacs editor and tmux prefix contract fixed.
 
+The expanded story-card layout, wrapped-height scroll clamp, and full/detail
+toggle in `src/features/news/workspace.rs` adapt the upstream article-card
+interaction. Market Terminal renders only metadata, excerpts, and links already
+present in its RSS/Atom feed model; it does not copy AlphaAI enrichment fields
+or retrieve publisher article bodies.
+
 MIT License
 
 Copyright (c) 2026 Mikhail Makeev

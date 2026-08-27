@@ -1,11 +1,17 @@
-use std::{collections::HashSet, sync::Arc};
+//! The expanded, scrollable story card and wrapped-height clamping adapt the
+//! article-card interaction from `makeev/alphai-tui` commit
+//! `9143d2e1176d0a67a9f26960427cf370187fc2e6` (MIT, Copyright (c) 2026
+//! Mikhail Makeev). This card renders only feed-supplied metadata and excerpts;
+//! see `THIRD_PARTY_NOTICES.md`.
 
-use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
+use std::{cell::Cell as StateCell, collections::HashSet, sync::Arc};
+
+use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Style,
     text::{Line, Span},
-    widgets::{Cell, List, ListItem, Paragraph, Row, Table, Wrap},
+    widgets::{Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap},
     Frame,
 };
 
@@ -29,6 +35,9 @@ pub struct NewsWorkspace {
     read: HashSet<String>,
     bookmarks: HashSet<String>,
     show_calendar: bool,
+    detail_expanded: bool,
+    detail_scroll: u16,
+    detail_viewport: StateCell<(u16, u16)>,
     pending_intents: Vec<AppIntent>,
 }
 
@@ -43,6 +52,9 @@ impl NewsWorkspace {
             read: HashSet::new(),
             bookmarks: HashSet::new(),
             show_calendar: false,
+            detail_expanded: false,
+            detail_scroll: 0,
+            detail_viewport: StateCell::new((0, 0)),
             pending_intents: Vec::new(),
         }
     }
@@ -126,6 +138,28 @@ impl NewsWorkspace {
             Err(error) => format!("OPEN FAILED · {error}"),
         };
     }
+
+    fn toggle_expanded_detail(&mut self) {
+        self.detail_expanded = !self.detail_expanded;
+        self.detail_scroll = 0;
+    }
+
+    fn scroll_expanded_detail(&mut self, workbench: &NewsWorkbench, direction: isize) {
+        let Some(story) = self.selected_story(workbench) else {
+            self.detail_scroll = 0;
+            return;
+        };
+        let (width, height) = self.detail_viewport.get();
+        let maximum = wrapped_height(&story_detail_lines(story), width).saturating_sub(height);
+        self.detail_scroll = if direction.is_negative() {
+            self.detail_scroll
+                .saturating_sub(direction.unsigned_abs() as u16)
+        } else {
+            self.detail_scroll
+                .saturating_add(direction as u16)
+                .min(maximum)
+        };
+    }
 }
 
 impl Workspace for NewsWorkspace {
@@ -167,13 +201,32 @@ impl Workspace for NewsWorkspace {
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
         let workbench = self.query.load_workbench();
+        if self.detail_expanded {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('v' | 'V') => self.toggle_expanded_detail(),
+                KeyCode::PageUp => self.scroll_expanded_detail(&workbench, -5),
+                KeyCode::PageDown => self.scroll_expanded_detail(&workbench, 5),
+                KeyCode::Home => self.detail_scroll = 0,
+                KeyCode::End => self.scroll_expanded_detail(&workbench, isize::MAX),
+                KeyCode::Enter | KeyCode::Char('o') => self.open_selected_article(&workbench),
+                _ => return false,
+            }
+            return true;
+        }
         let length = self.visible_indices(&workbench).len();
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
                 self.selected = (self.selected + 1).min(length.saturating_sub(1));
+                self.detail_scroll = 0;
             }
-            KeyCode::Up | KeyCode::Char('k') => self.selected = self.selected.saturating_sub(1),
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.selected = self.selected.saturating_sub(1);
+                self.detail_scroll = 0;
+            }
             KeyCode::Enter | KeyCode::Char('o') => self.open_selected_article(&workbench),
+            KeyCode::Char('v' | 'V') if self.selected_story(&workbench).is_some() => {
+                self.toggle_expanded_detail()
+            }
             KeyCode::Char('r') => {
                 if let Some(story) = self.selected_story(&workbench) {
                     if !self.read.insert(story.id.clone()) {
@@ -234,6 +287,24 @@ impl Workspace for NewsWorkspace {
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
         let workbench = self.query.load_workbench();
+        if self.detail_expanded {
+            match event.kind {
+                MouseEventKind::ScrollUp => self.scroll_expanded_detail(&workbench, -3),
+                MouseEventKind::ScrollDown => self.scroll_expanded_detail(&workbench, 3),
+                MouseEventKind::Down(MouseButton::Left)
+                    if crate::ui::contains(expanded_close_area(area), event.column, event.row) =>
+                {
+                    self.toggle_expanded_detail();
+                }
+                MouseEventKind::Down(MouseButton::Left)
+                    if crate::ui::contains(expanded_open_area(area), event.column, event.row) =>
+                {
+                    self.open_selected_article(&workbench);
+                }
+                _ => {}
+            }
+            return true;
+        }
         let visible_count = self.visible_indices(&workbench).len();
         let rows = Layout::vertical([Constraint::Length(3), Constraint::Min(10)]).split(area);
         let columns = Layout::horizontal([
@@ -246,8 +317,15 @@ impl Workspace for NewsWorkspace {
             self.open_selected_article(&workbench);
             return true;
         }
+        if !self.show_calendar && is_primary_click(event, story_expand_area(columns[1])) {
+            if self.selected_story(&workbench).is_some() {
+                self.toggle_expanded_detail();
+            }
+            return true;
+        }
         if let Some(index) = list_row_at(event, columns[0], visible_count) {
             self.selected = index;
+            self.detail_scroll = 0;
             return true;
         }
         if is_primary_click(event, columns[2]) {
@@ -266,6 +344,19 @@ impl Workspace for NewsWorkspace {
 
     fn render(&self, frame: &mut Frame, area: Rect) {
         let workbench = self.query.load_workbench();
+        if self.detail_expanded {
+            if let Some(story) = self.selected_story(&workbench) {
+                render_expanded_story(
+                    frame,
+                    area,
+                    story,
+                    &self.article_status,
+                    self.detail_scroll,
+                    &self.detail_viewport,
+                );
+                return;
+            }
+        }
         let visible = self.visible_indices(&workbench);
         let unread = workbench
             .stories
@@ -294,7 +385,7 @@ impl Workspace for NewsWorkspace {
             Paragraph::new(Line::from(vec![
                 Span::styled(format!(" {} RESULTS  {unread} UNREAD  ", visible.len()), Style::new().bg(AMBER.into()).fg(BG.into()).bold()),
                 Span::styled(filter_label, INK),
-                Span::styled("  O OPEN · R READ · 0 RESET · 1/2/3 REGION · U UNREAD · M SAVED · E EVENTS · S SECURITY · F9 REFRESH  ", MUTED),
+                Span::styled("  O OPEN · V FULL · R READ · 0 RESET · 1/2/3 REGION · U UNREAD · M SAVED · E EVENTS · S SECURITY · F9 REFRESH  ", MUTED),
                 Span::styled(feed_status, YELLOW),
             ])).block(terminal_block("NEWS", "FILTERS & WORKFLOW")),
             rows[0],
@@ -377,7 +468,13 @@ impl Workspace for NewsWorkspace {
 }
 
 fn story_open_area(area: Rect) -> Rect {
-    Layout::vertical([Constraint::Min(6), Constraint::Length(4)]).split(area)[1]
+    let action = Layout::vertical([Constraint::Min(6), Constraint::Length(4)]).split(area)[1];
+    Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).split(action)[0]
+}
+
+fn story_expand_area(area: Rect) -> Rect {
+    let action = Layout::vertical([Constraint::Min(6), Constraint::Length(4)]).split(area)[1];
+    Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).split(action)[1]
 }
 
 fn render_story(frame: &mut Frame, area: Rect, story: &NewsStory, article_status: &str) {
@@ -419,18 +516,27 @@ fn render_story(frame: &mut Frame, area: Rect, story: &NewsStory, article_status
     );
     let action = if story.url.is_some() {
         vec![
-            Line::styled(
-                " [ OPEN ARTICLE · O / ENTER ] ",
-                Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
-            ),
+            Line::from(vec![
+                Span::styled(
+                    " [ OPEN ARTICLE · O / ENTER ] ",
+                    Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
+                ),
+                Span::styled(
+                    " [ FULL STORY · V ] ",
+                    Style::new().bg(CYAN.into()).fg(BG.into()).bold(),
+                ),
+            ]),
             Line::styled(article_status, MUTED),
         ]
     } else {
         vec![
-            Line::styled(
-                " NO PUBLISHER LINK AVAILABLE ",
-                Style::new().fg(MUTED.into()),
-            ),
+            Line::from(vec![
+                Span::styled(" NO PUBLISHER LINK AVAILABLE ", MUTED),
+                Span::styled(
+                    " [ FULL STORY · V ] ",
+                    Style::new().bg(CYAN.into()).fg(BG.into()).bold(),
+                ),
+            ]),
             Line::styled(article_status, MUTED),
         ]
     };
@@ -438,6 +544,134 @@ fn render_story(frame: &mut Frame, area: Rect, story: &NewsStory, article_status
         Paragraph::new(action).block(terminal_block("WEB", "PUBLISHER SOURCE")),
         rows[1],
     );
+}
+
+fn expanded_panel_area(area: Rect) -> Rect {
+    let horizontal = u16::from(area.width >= 60);
+    let vertical = u16::from(area.height >= 16);
+    Rect::new(
+        area.x.saturating_add(horizontal),
+        area.y.saturating_add(vertical),
+        area.width.saturating_sub(horizontal * 2),
+        area.height.saturating_sub(vertical * 2),
+    )
+}
+
+fn expanded_close_area(area: Rect) -> Rect {
+    let panel = expanded_panel_area(area);
+    Rect::new(
+        panel.x.saturating_add(panel.width.saturating_sub(15)),
+        panel.y,
+        14.min(panel.width),
+        1.min(panel.height),
+    )
+}
+
+fn expanded_open_area(area: Rect) -> Rect {
+    let panel = expanded_panel_area(area);
+    Rect::new(
+        panel.x.saturating_add(2),
+        panel.y.saturating_add(panel.height.saturating_sub(3)),
+        31.min(panel.width.saturating_sub(2)),
+        1.min(panel.height),
+    )
+}
+
+fn render_expanded_story(
+    frame: &mut Frame,
+    area: Rect,
+    story: &NewsStory,
+    article_status: &str,
+    scroll: u16,
+    viewport: &StateCell<(u16, u16)>,
+) {
+    let panel = expanded_panel_area(area);
+    frame.render_widget(Clear, panel);
+    let block = terminal_block("READ", "EXPANDED STORY · FEED-SUPPLIED EXCERPT");
+    let inner = block.inner(panel);
+    frame.render_widget(block, panel);
+    let rows = Layout::vertical([Constraint::Min(3), Constraint::Length(2)]).split(inner);
+    viewport.set((rows[0].width, rows[0].height));
+    frame.render_widget(
+        Paragraph::new(story_detail_lines(story))
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0)),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(
+                    " [ OPEN PUBLISHER · O / ENTER ] ",
+                    if story.url.is_some() {
+                        Style::new().bg(AMBER.into()).fg(BG.into()).bold()
+                    } else {
+                        Style::new().fg(MUTED.into())
+                    },
+                ),
+                Span::styled("  PGUP/PGDN SCROLL · V/ESC CLOSE", MUTED),
+            ]),
+            Line::styled(article_status, MUTED),
+        ]),
+        rows[1],
+    );
+    frame.render_widget(
+        Paragraph::new(" [ CLOSE · V / ESC ] ")
+            .style(Style::new().bg(CYAN.into()).fg(BG.into()).bold()),
+        expanded_close_area(area),
+    );
+}
+
+fn story_detail_lines(story: &NewsStory) -> Vec<Line<'_>> {
+    let mut lines = vec![
+        Line::styled(
+            story.headline.title.as_str(),
+            Style::new().fg(INK.into()).bold(),
+        ),
+        Line::styled(
+            format!(
+                "{} · {} · {} · {}",
+                story.headline.topic, story.headline.region, story.headline.time, story.byline
+            ),
+            MUTED,
+        ),
+        Line::raw(""),
+        Line::styled(story.summary.as_str(), YELLOW),
+    ];
+    for paragraph in &story.body {
+        lines.push(Line::raw(""));
+        lines.push(Line::raw(paragraph.as_str()));
+    }
+    lines.extend([
+        Line::raw(""),
+        Line::styled(
+            format!("RELATED  {}", story.related_symbols.join("  ")),
+            CYAN,
+        ),
+        Line::styled(
+            story.url.as_ref().map_or_else(
+                || "SOURCE   UNAVAILABLE".to_owned(),
+                |url| format!("SOURCE   {url}"),
+            ),
+            MUTED,
+        ),
+        Line::raw(""),
+        Line::styled(
+            "FEED-SUPPLIED METADATA / EXCERPT ONLY · OPEN THE PUBLISHER FOR THE FULL ARTICLE",
+            MUTED,
+        ),
+    ]);
+    lines
+}
+
+fn wrapped_height(lines: &[Line<'_>], width: u16) -> u16 {
+    if width == 0 {
+        return 0;
+    }
+    lines
+        .iter()
+        .map(|line| (line.width() as u16).div_ceil(width).max(1))
+        .sum()
 }
 
 fn render_calendar(frame: &mut Frame, area: Rect, workbench: &NewsWorkbench) {
@@ -522,6 +756,24 @@ mod tests {
         fn load_workbench(&self) -> NewsWorkbench {
             let mut workbench = NewsWorkbench::from_snapshot(self.load_news());
             workbench.stories[0].url = Some("https://example.com/markets-gain".to_owned());
+            workbench
+        }
+    }
+
+    struct LongLinkedQuery;
+    impl NewsFeed for LongLinkedQuery {
+        fn load_news(&self) -> NewsSnapshot {
+            NewsSnapshot {
+                headlines: headlines(),
+            }
+        }
+
+        fn load_workbench(&self) -> NewsWorkbench {
+            let mut workbench = NewsWorkbench::from_snapshot(self.load_news());
+            workbench.stories[0].url = Some("https://example.com/markets-gain".to_owned());
+            workbench.stories[0].body = (1..=40)
+                .map(|index| format!("Feed-supplied excerpt paragraph {index}."))
+                .collect();
             workbench
         }
     }
@@ -642,6 +894,45 @@ mod tests {
 
         assert!(opener.opened.lock().unwrap().is_empty());
         assert_eq!(workspace.article_status, "NO PUBLISHER LINK FOR THIS STORY");
+    }
+
+    #[test]
+    fn expanded_story_scrolls_opens_and_closes_by_keyboard_and_mouse() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let area = Rect::new(0, 0, 120, 30);
+        let opener = Arc::new(RecordingOpener::default());
+        let mut workspace =
+            NewsWorkspace::with_article_opener(Arc::new(LongLinkedQuery), opener.clone());
+
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE)));
+        assert!(workspace.detail_expanded);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| workspace.render(frame, area))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("EXPANDED STORY"));
+        assert!(rendered.contains("FEED-SUPPLIED"));
+
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)));
+        assert!(workspace.detail_scroll > 0);
+        let open = expanded_open_area(area);
+        assert!(workspace.handle_mouse(click(open.x + 1, open.y), area));
+        assert_eq!(opener.opened.lock().unwrap().len(), 1);
+        let close = expanded_close_area(area);
+        assert!(workspace.handle_mouse(click(close.x + 1, close.y), area));
+        assert!(!workspace.detail_expanded);
+
+        workspace.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        assert!(!workspace.detail_expanded);
     }
 
     #[test]

@@ -23,7 +23,8 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
   filings, explicitly unavailable estimates/peers, and linked news
 - Portfolio — imported positions, reconciled value/weights, and source status
 - News — asynchronously refreshed RSS/Atom stories, filters, unread/bookmarks,
-  clickable publisher links, and linked securities
+  expanded scrollable story cards, clickable publisher links, and linked
+  securities
 - Spreadsheet — workbook-scoped recalculation, cross-sheet and mixed absolute
   references, translated copy/fill, lookups, undo/redo, CSV, and asynchronously
   resolved `PX_LAST`/`PX_CHANGE` cells with explicit data-quality state
@@ -116,7 +117,11 @@ refresh immediately. Failed sources are shown as unavailable or degraded—the
 interactive app does not replace them with fabricated headlines or calendar
 events. Select a story and press `O` or Enter—or click `OPEN ARTICLE`—to open
 its original `http(s)` publisher page in your system browser. The terminal does
-not scrape or store the article body.
+not scrape or store the article body. Press `V` or click `FULL STORY` for a
+full-workspace, scrollable view of the metadata and excerpt already supplied by
+the feed; use PgUp/PgDn or the mouse wheel, and `V`, Esc, or the close button to
+return. The reader labels this copyright boundary and still directs the full
+article to its publisher.
 
 Override the defaults with comma-separated feeds:
 
@@ -431,8 +436,9 @@ HawaiianNinja pointed us to
 integrated the selected MIT-licensed pieces we care about—indicator math,
 chart and watchlist-density ideas, the responsive split desk,
 provider-selection patterns, Yahoo/Finnhub/Alpaca adapter behavior, the fast
-first-run/settings flow, named theme presets, semantic keymap parsing, and the
-Form 4 insider workflow—into this project's bounded, provider-aware
+first-run/settings flow, named theme presets, semantic keymap parsing, the
+expanded article card, and the Form 4 insider workflow—into this project's
+bounded, provider-aware
 architecture. `alphai-tui` is Copyright (c) 2026 Mikhail Makeev and licensed
 under MIT. The copied-code provenance and complete upstream license text are in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

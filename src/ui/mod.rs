@@ -496,6 +496,8 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw("  K                   Candles / line"),
             Line::raw("NEWS                 Live headlines"),
             Line::raw("  O/Enter/Click       Open publisher article"),
+            Line::raw("  V/Click             Expand feed-supplied story"),
+            Line::raw("  PgUp/PgDn/Wheel     Scroll expanded story"),
             Line::raw("  R                   Mark story read/unread"),
             Line::raw("AI <REQUEST>         Ask the assistant"),
             Line::raw(""),
