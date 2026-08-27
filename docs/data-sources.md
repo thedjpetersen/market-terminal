@@ -6,8 +6,8 @@ retention constraints.
 
 ## Alpha Vantage
 
-- **Surfaces:** interactive Monitor snapshots, Chart daily/weekly history,
-  local Alert rule observations, and Spreadsheet `PX_LAST` /
+- **Surfaces:** interactive Markets/Monitor snapshots, Chart daily/weekly
+  history, local Alert rule observations, and Spreadsheet `PX_LAST` /
   `PX_CHANGE(..., "1D")` cells.
 - **Official documentation:** <https://www.alphavantage.co/documentation/>
 - **Authentication:** `ALPHA_VANTAGE_API_KEY`; when absent, the documented
@@ -33,7 +33,7 @@ retention constraints.
 
 ## Alpaca Market Data
 
-- **Surfaces:** optional replacement provider for interactive Monitor
+- **Surfaces:** optional replacement provider for interactive Markets/Monitor
   snapshots, Chart/Security history, local Alert observations, and Spreadsheet
   `PX_LAST` / `PX_CHANGE(..., "1D")` cells.
 - **Official documentation:** [Market Data API](https://docs.alpaca.markets/us/v1.1/docs/about-market-data-api),

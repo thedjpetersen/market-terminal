@@ -522,6 +522,7 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
                 theme::INK,
             ),
             setting_line("WATCHLIST", &settings.watchlist, theme::INK),
+            setting_line("MARKETS", &settings.market_symbols, theme::INK),
             setting_line("CHART SYMBOL", &settings.chart_symbol, theme::INK),
             setting_line("AI", &settings.ai_provider, theme::CYAN),
             setting_line("PORTFOLIO", &settings.portfolio_import, theme::INK),

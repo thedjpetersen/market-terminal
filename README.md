@@ -15,7 +15,8 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 
 - Overview — imported positions and live cached headlines, with unavailable
   performance fields left explicit rather than synthesized
-- Markets — global indices, cross-asset monitor, sectors, breadth, and rates
+- Markets — external listed-instrument snapshots, with unsupported cross-asset
+  and analytics datasets called out instead of mocked
 - Security — quote/chart, financials, estimates, ownership, filings, peers,
   and linked news
 - Portfolio — imported positions, reconciled value/weights, and source status
@@ -42,8 +43,9 @@ command box and `GO`, select table rows and spreadsheet cells, activate chart
 controls and research tabs, focus AI/chat composers, and scroll navigable
 lists. News uses live source feeds, Portfolio uses your imported snapshot, and
 Overview composes those same real snapshots without performing I/O while
-rendering. Markets and any other panels that still use deterministic gallery
-analytics remain labeled as such.
+rendering. Persistent workspaces do not substitute deterministic gallery
+analytics when an external source is missing; the separate gallery host remains
+available for screenshots and tests.
 
 Run `HELP` from the command bar—or press `F1`—to open the command and controls
 guide without leaving the current workspace. Close it with `Esc`, `Q`, `F1`,
@@ -89,7 +91,7 @@ MARKET_TERMINAL_NEWS_REFRESH_SECS=300
 
 ## Live market data
 
-The interactive Monitor, Chart, Alerts, Security, and Spreadsheet resolve
+The interactive Markets, Monitor, Chart, Alerts, Security, and Spreadsheet resolve
 quote/history fields on bounded background workers; provider latency never
 runs on the input or render thread. Alpha Vantage is the default. Configure a
 personal key, comma-separated watchlist, and initial chart symbol:
@@ -97,6 +99,7 @@ personal key, comma-separated watchlist, and initial chart symbol:
 ```dotenv
 ALPHA_VANTAGE_API_KEY="your-key"
 MARKET_TERMINAL_WATCHLIST="IBM,AAPL,MSFT"
+MARKET_TERMINAL_MARKETS_SYMBOLS="IBM,AAPL,MSFT"
 MARKET_TERMINAL_CHART_SYMBOL="AAPL"
 ```
 
@@ -125,13 +128,17 @@ APCA_API_KEY_ID="your-key-id"
 APCA_API_SECRET_KEY="your-secret-key"
 ALPACA_FEED="iex"
 MARKET_TERMINAL_WATCHLIST="AAPL,MSFT,NVDA"
+MARKET_TERMINAL_MARKETS_SYMBOLS="SPY,QQQ,IWM"
 MARKET_TERMINAL_CHART_SYMBOL="AAPL"
 ```
 
 `iex` is the safe default for Alpaca Basic accounts; use `sip` only with the
-corresponding entitlement. Query-only providers refresh the Monitor every 60
-seconds by default; set `MARKET_TERMINAL_QUOTE_REFRESH_SECS` between 5 and
-3,600 seconds to change it. `R` refreshes immediately.
+corresponding entitlement. Query-only providers refresh Markets and Monitor
+every 60 seconds by default; set `MARKET_TERMINAL_QUOTE_REFRESH_SECS` between 5
+and 3,600 seconds to change it. `R` refreshes immediately. Markets uses
+`MARKET_TERMINAL_MARKETS_SYMBOLS` when set and otherwise follows the watchlist.
+It does not fill rates, currencies, commodities, breadth, sector aggregation,
+or calendars with equity proxies or gallery values.
 
 ## Live security research
 

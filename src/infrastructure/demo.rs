@@ -229,7 +229,7 @@ impl OverviewQuery for DemoData {
 
 impl MarketsQuery for DemoData {
     fn load_markets(&self) -> MarketsSnapshot {
-        MarketsSnapshot {
+        MarketsSnapshot::Gallery {
             indices: &MARKETS,
             treasury_curve: &TREASURY_CURVE,
         }

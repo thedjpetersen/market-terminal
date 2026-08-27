@@ -71,6 +71,12 @@ coalesces the Monitor and Spreadsheet's identical provider requests. Demo
 adapters remain available only to deterministic unit/gallery hosts and are not
 wired by `persistent_app` for these surfaces.
 
+`LiveMarketsQuery` applies the same rule to Markets: listed-instrument
+snapshots are loaded on a coalescing background worker and retain provider,
+observation time, and quality. Cross-asset rates, currencies, commodities,
+breadth, sectors, and calendar panels stay explicitly unavailable until
+source-specific ports exist; equity proxies are not presented as those data.
+
 ## Why there is no global data service
 
 A single `MarketDataProvider` spanning quotes, portfolios, news, analytics,
@@ -135,9 +141,8 @@ context.
 
 The next structural steps are intentionally additive:
 
-- replace the remaining `DemoData` market-analytics composition with live,
-  entitlement-aware adapters (Overview, quotes, news, portfolio, SEC instrument
-  identity, Security research, and Alert observations are independently wired);
+- add source-specific, entitlement-aware rates, currencies, commodities,
+  breadth, sector aggregation, calendar, and portfolio-history adapters;
 - connect streaming adapters to the bounded event bus with acknowledgement and
   tracing where delivery guarantees require it;
 - add caching, retries, entitlements, and observability as infrastructure

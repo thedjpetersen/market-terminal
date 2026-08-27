@@ -22,8 +22,8 @@ use crate::{
         ConfiguredWatchlistCatalog, CsvPortfolioRepository, DemoAlertsReplay, DemoChartHistory,
         DemoChatGateway, DemoData, DemoInstrumentSearch, DemoMarketDataReplay,
         DemoSpreadsheetMarketData, DemoWatchlistCatalog, IrcChatGateway, LiveAlertsQuery,
-        LiveNewsFeed, LiveOverviewQuery, LiveSecurityQuery, LocalPersistence, OpenRouterConfig,
-        OpenRouterGateway, SecInstrumentSearch, SystemNewsArticleOpener,
+        LiveMarketsQuery, LiveNewsFeed, LiveOverviewQuery, LiveSecurityQuery, LocalPersistence,
+        OpenRouterConfig, OpenRouterGateway, SecInstrumentSearch, SystemNewsArticleOpener,
     },
 };
 
@@ -33,6 +33,7 @@ pub fn demo_app() -> App {
     let news_query: Arc<dyn NewsFeed> = data;
     build_app(AppProviders {
         overview_query: Arc::new(DemoData),
+        markets_query: Arc::new(DemoData),
         chat: Arc::new(DemoChatGateway::new()),
         portfolio_query,
         news_query,
@@ -53,6 +54,7 @@ pub fn demo_app() -> App {
 
 struct AppProviders {
     overview_query: Arc<dyn OverviewQuery>,
+    markets_query: Arc<dyn MarketsQuery>,
     chat: Arc<dyn ChatGateway>,
     portfolio_query: Arc<dyn PortfolioRepository>,
     news_query: Arc<dyn NewsFeed>,
@@ -73,6 +75,7 @@ struct AppProviders {
 fn build_app(providers: AppProviders) -> App {
     let AppProviders {
         overview_query,
+        markets_query,
         chat,
         portfolio_query,
         news_query,
@@ -89,7 +92,6 @@ fn build_app(providers: AppProviders) -> App {
         snapshot_refresh_interval,
         runtime_settings,
     } = providers;
-    let markets_query: Arc<dyn MarketsQuery> = Arc::new(DemoData);
     let assistant_provider = std::env::var("MARKET_TERMINAL_AI_PROVIDER")
         .unwrap_or_else(|_| "codex".to_owned())
         .to_ascii_lowercase();
@@ -166,8 +168,14 @@ pub fn persistent_app() -> App {
         portfolio_query.clone(),
         news_query.clone(),
     ));
+    let markets_query: Arc<dyn MarketsQuery> = Arc::new(LiveMarketsQuery::new(
+        live_market_data.market_data.clone(),
+        configured_market_symbols(),
+        snapshot_refresh_interval,
+    ));
     build_app(AppProviders {
         overview_query,
+        markets_query,
         chat: Arc::new(IrcChatGateway::from_env()),
         portfolio_query,
         news_query,
@@ -293,6 +301,11 @@ fn runtime_settings_summary(
         market_credentials,
         quote_refresh_seconds: quote_refresh_interval.as_secs(),
         watchlist: bounded_env("MARKET_TERMINAL_WATCHLIST", "IBM", 96),
+        market_symbols: bounded_env(
+            "MARKET_TERMINAL_MARKETS_SYMBOLS",
+            &bounded_env("MARKET_TERMINAL_WATCHLIST", "IBM", 96),
+            96,
+        ),
         chart_symbol: chart_symbol.to_owned(),
         ai_provider,
         portfolio_import: if env_present("MARKET_TERMINAL_PORTFOLIO_CSV") {
@@ -322,6 +335,20 @@ fn bounded_env(name: &str, default: &str, maximum_chars: usize) -> String {
         .unwrap_or_else(|| default.to_owned())
         .chars()
         .take(maximum_chars)
+        .collect()
+}
+
+fn configured_market_symbols() -> Vec<String> {
+    std::env::var("MARKET_TERMINAL_MARKETS_SYMBOLS")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| std::env::var("MARKET_TERMINAL_WATCHLIST").ok())
+        .unwrap_or_else(|| "IBM".to_owned())
+        .split(',')
+        .map(str::trim)
+        .filter(|symbol| !symbol.is_empty())
+        .take(12)
+        .map(ToOwned::to_owned)
         .collect()
 }
 
