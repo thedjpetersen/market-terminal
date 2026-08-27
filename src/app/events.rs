@@ -5,8 +5,36 @@ use std::{
     sync::Arc,
 };
 
+use super::workspace::WorkspaceId;
+
 pub trait EventTopic {
     fn topic(&self) -> &'static str;
+}
+
+/// Published after the shell routes a validated command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandDispatched {
+    pub command: String,
+    pub target: Option<WorkspaceId>,
+}
+
+impl EventTopic for CommandDispatched {
+    fn topic(&self) -> &'static str {
+        "shell.command.dispatched"
+    }
+}
+
+/// Published whenever the shell's primary workspace selection changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorkspaceActivated {
+    pub previous: WorkspaceId,
+    pub current: WorkspaceId,
+}
+
+impl EventTopic for WorkspaceActivated {
+    fn topic(&self) -> &'static str {
+        "shell.workspace.activated"
+    }
 }
 
 trait ErasedEvent: Debug + Send + Sync {
@@ -18,8 +46,12 @@ impl<T> ErasedEvent for T
 where
     T: EventTopic + Debug + Send + Sync + 'static,
 {
-    fn topic(&self) -> &'static str { EventTopic::topic(self) }
-    fn as_any(&self) -> &dyn Any { self }
+    fn topic(&self) -> &'static str {
+        EventTopic::topic(self)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -29,8 +61,12 @@ pub struct EventEnvelope {
 }
 
 impl EventEnvelope {
-    pub fn sequence(&self) -> u64 { self.sequence }
-    pub fn topic(&self) -> &'static str { self.event.topic() }
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+    pub fn topic(&self) -> &'static str {
+        self.event.topic()
+    }
 
     pub fn downcast_ref<T: EventTopic + Debug + Send + Sync + 'static>(&self) -> Option<&T> {
         self.event.as_any().downcast_ref()
@@ -98,7 +134,10 @@ impl EventBus {
     {
         self.next_sequence = self.next_sequence.wrapping_add(1);
         let sequence = self.next_sequence;
-        let envelope = EventEnvelope { sequence, event: Arc::new(event) };
+        let envelope = EventEnvelope {
+            sequence,
+            event: Arc::new(event),
+        };
         for subscription in self.subscriptions.values_mut() {
             if !subscription.topics.is_empty() && !subscription.topics.contains(envelope.topic()) {
                 continue;
@@ -121,12 +160,14 @@ impl EventBus {
     }
 
     pub fn metrics(&self, id: SubscriptionId) -> Option<SubscriptionMetrics> {
-        self.subscriptions.get(&id).map(|subscription| SubscriptionMetrics {
-            pending: subscription.queue.len(),
-            capacity: subscription.capacity,
-            dropped: subscription.dropped,
-            last_sequence: subscription.last_sequence,
-        })
+        self.subscriptions
+            .get(&id)
+            .map(|subscription| SubscriptionMetrics {
+                pending: subscription.queue.len(),
+                capacity: subscription.capacity,
+                dropped: subscription.dropped,
+                last_sequence: subscription.last_sequence,
+            })
     }
 }
 
@@ -140,14 +181,18 @@ mod tests {
     }
 
     impl EventTopic for QuoteUpdated {
-        fn topic(&self) -> &'static str { "market.quote.updated" }
+        fn topic(&self) -> &'static str {
+            "market.quote.updated"
+        }
     }
 
     #[derive(Debug)]
     struct StoryArrived;
 
     impl EventTopic for StoryArrived {
-        fn topic(&self) -> &'static str { "news.story.arrived" }
+        fn topic(&self) -> &'static str {
+            "news.story.arrived"
+        }
     }
 
     #[test]
@@ -188,7 +233,11 @@ mod tests {
         let symbols = bus
             .drain(quotes)
             .into_iter()
-            .filter_map(|event| event.downcast_ref::<QuoteUpdated>().map(|quote| quote.symbol))
+            .filter_map(|event| {
+                event
+                    .downcast_ref::<QuoteUpdated>()
+                    .map(|quote| quote.symbol)
+            })
             .collect::<Vec<_>>();
         assert_eq!(symbols, vec!["MSFT", "NVDA"]);
     }

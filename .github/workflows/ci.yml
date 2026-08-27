@@ -12,3 +12,4 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo build --release
+      - run: cargo run --release --example performance_gate -- 50

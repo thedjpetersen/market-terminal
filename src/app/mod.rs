@@ -16,7 +16,10 @@ use crate::{
 };
 
 pub use desk::{DeskWorkspace, DESK_ID};
-pub use events::{EventBus, EventEnvelope, EventTopic, SubscriptionId, SubscriptionMetrics};
+pub use events::{
+    CommandDispatched, EventBus, EventEnvelope, EventTopic, SubscriptionId, SubscriptionMetrics,
+    WorkspaceActivated,
+};
 pub use input::{CommandEditMode, InputMode};
 pub(crate) use keymap::{Keymap, ShellAction};
 pub use settings::RuntimeSettingsSummary;
@@ -383,10 +386,8 @@ impl App {
                 if let Some(id) = self.workspaces.resolve_hotkey(character) {
                     if Some(id) == self.assistant_workspace {
                         self.toggle_assistant_drawer();
-                    } else if self.active_workspace != id {
-                        self.workspaces.on_blur(self.active_workspace);
-                        self.active_workspace = id;
-                        self.persist_session();
+                    } else {
+                        self.activate_workspace(id);
                     }
                 }
             }
@@ -474,11 +475,7 @@ impl App {
                     self.toggle_assistant_drawer();
                 } else {
                     self.close_assistant_drawer();
-                    if self.active_workspace != id {
-                        self.workspaces.on_blur(self.active_workspace);
-                        self.active_workspace = id;
-                        self.persist_session();
-                    }
+                    self.activate_workspace(id);
                 }
             }
             Some(ShellClickTarget::Workspace(area)) => {
@@ -516,6 +513,7 @@ impl App {
     fn execute_command(&mut self) {
         let command = self.command.trim().to_owned();
         let invocation = CommandInvocation::parse(&command);
+        let mut command_target = None;
         let opens_help = invocation
             .as_ref()
             .is_some_and(|invocation| invocation.function == "HELP");
@@ -536,15 +534,31 @@ impl App {
         {
             self.apply_theme_command(invocation);
         } else if let Some(id) = self.workspaces.dispatch_command(&command) {
+            command_target = Some(id);
             if Some(id) == self.assistant_workspace {
                 self.open_assistant_drawer();
             } else {
                 self.close_assistant_drawer();
             }
             if Some(id) != self.assistant_workspace && self.active_workspace != id {
-                self.workspaces.on_blur(self.active_workspace);
+                let previous = self.active_workspace;
+                self.workspaces.on_blur(previous);
                 self.active_workspace = id;
+                self.publish_workspace_activation(previous);
             }
+        }
+        if !command.is_empty() {
+            self.events.publish(CommandDispatched {
+                command: command.clone(),
+                target: command_target,
+            });
+            tracing::debug!(
+                command = invocation
+                    .as_ref()
+                    .map_or("INVALID", |invocation| invocation.function.as_str()),
+                target = command_target.map(WorkspaceId::as_str),
+                "command dispatched"
+            );
         }
         if !command.is_empty() && command.len() <= 512 {
             self.recent_commands.retain(|recent| recent != &command);
@@ -814,9 +828,23 @@ impl App {
         if self.active_workspace == target {
             return;
         }
-        self.workspaces.on_blur(self.active_workspace);
+        let previous = self.active_workspace;
+        self.workspaces.on_blur(previous);
         self.active_workspace = target;
+        self.publish_workspace_activation(previous);
         self.persist_session();
+    }
+
+    fn publish_workspace_activation(&mut self, previous: WorkspaceId) {
+        self.events.publish(WorkspaceActivated {
+            previous,
+            current: self.active_workspace,
+        });
+        tracing::debug!(
+            previous = previous.as_str(),
+            current = self.active_workspace.as_str(),
+            "workspace activated"
+        );
     }
 
     fn open_assistant_drawer(&mut self) {
@@ -890,6 +918,10 @@ impl App {
                     return;
                 }
                 if let Some(id) = self.workspaces.dispatch_command(&command) {
+                    self.events.publish(CommandDispatched {
+                        command: command.clone(),
+                        target: Some(id),
+                    });
                     if Some(id) == self.assistant_workspace {
                         self.open_assistant_drawer();
                     } else {
@@ -904,6 +936,7 @@ impl App {
         {
             if previous_active != self.active_workspace {
                 self.workspaces.on_blur(previous_active);
+                self.publish_workspace_activation(previous_active);
             }
             self.persist_session();
         }
@@ -929,6 +962,9 @@ impl App {
             Ok(state) => repository.save(&state).err().map(|error| error.to_string()),
             Err(error) => Some(error.to_string()),
         };
+        if let Some(error) = self.persistence_error.as_deref() {
+            tracing::warn!(error, "shell session persistence failed");
+        }
     }
 }
 
@@ -1041,6 +1077,30 @@ mod tests {
 
         assert_eq!(app.active_workspace, underlying);
         assert!(app.assistant_drawer_visible());
+    }
+
+    #[test]
+    fn routed_commands_and_workspace_changes_publish_kernel_events() {
+        let mut app = bootstrap::demo_app();
+        let subscription = app
+            .events_mut()
+            .subscribe(["shell.command.dispatched", "shell.workspace.activated"], 8);
+        let previous = app.active_workspace();
+        app.command = "CHART IBM US Equity".to_owned();
+        app.execute_command();
+
+        let events = app.events_mut().drain(subscription);
+        assert_eq!(events.len(), 2);
+        let activation = events[0]
+            .downcast_ref::<WorkspaceActivated>()
+            .expect("workspace activation event");
+        assert_eq!(activation.previous, previous);
+        assert_eq!(activation.current, CHARTING);
+        let command = events[1]
+            .downcast_ref::<CommandDispatched>()
+            .expect("command dispatch event");
+        assert_eq!(command.command, "CHART IBM US Equity");
+        assert_eq!(command.target, Some(CHARTING));
     }
 
     #[test]
