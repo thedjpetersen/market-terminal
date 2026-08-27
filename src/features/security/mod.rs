@@ -1,4 +1,5 @@
 mod domain;
+mod insider_chart;
 mod port;
 mod workspace;
 

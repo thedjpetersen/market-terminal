@@ -336,6 +336,18 @@ impl Workspace for SecurityWorkspace {
         let left = Layout::vertical([Constraint::Percentage(58), Constraint::Percentage(42)])
             .split(grid[0]);
         if is_primary_click(event, left[0]) {
+            if self.research_view == ResearchView::Ownership {
+                if let Some(index) = self.page.as_ref().and_then(|page| {
+                    super::insider_chart::selected_at_column(
+                        left[0],
+                        &page.research.insider_transactions,
+                        event.column,
+                    )
+                }) {
+                    self.selected_insider = index;
+                }
+                return true;
+            }
             self.pending_intents.push(AppIntent::DispatchCommand {
                 command: format!("CHART {}", self.symbol),
                 origin: ID,
@@ -430,38 +442,47 @@ impl Workspace for SecurityWorkspace {
         .split(rows[1]);
         let left = Layout::vertical([Constraint::Percentage(58), Constraint::Percentage(42)])
             .split(grid[0]);
-        let y_bounds = price_bounds(&snapshot.price_series);
-        let x_max = snapshot
-            .price_series
-            .last()
-            .map(|point| point.0)
-            .unwrap_or(100.0)
-            .max(1.0);
-        let y_middle = (y_bounds[0] + y_bounds[1]) / 2.0;
-        let chart = Chart::new(vec![Dataset::default()
-            .name(format!("{} {}", snapshot.symbol, snapshot.last))
-            .marker(symbols::Marker::Braille)
-            .graph_type(GraphType::Line)
-            .style(CYAN)
-            .data(&snapshot.price_series)])
-        .block(terminal_block("GP", "RECENT DAILY PRICE"))
-        .x_axis(
-            Axis::default()
-                .bounds([0.0, x_max])
-                .labels(["START", "RECENT", "LATEST"])
-                .style(MUTED),
-        )
-        .y_axis(
-            Axis::default()
-                .bounds(y_bounds)
-                .labels([
-                    format!("{:.2}", y_bounds[0]),
-                    format!("{y_middle:.2}"),
-                    format!("{:.2}", y_bounds[1]),
-                ])
-                .style(AMBER),
-        );
-        frame.render_widget(chart, left[0]);
+        if self.research_view == ResearchView::Ownership {
+            super::insider_chart::render(
+                frame,
+                left[0],
+                &research.insider_transactions,
+                self.selected_insider,
+            );
+        } else {
+            let y_bounds = price_bounds(&snapshot.price_series);
+            let x_max = snapshot
+                .price_series
+                .last()
+                .map(|point| point.0)
+                .unwrap_or(100.0)
+                .max(1.0);
+            let y_middle = (y_bounds[0] + y_bounds[1]) / 2.0;
+            let chart = Chart::new(vec![Dataset::default()
+                .name(format!("{} {}", snapshot.symbol, snapshot.last))
+                .marker(symbols::Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(CYAN)
+                .data(&snapshot.price_series)])
+            .block(terminal_block("GP", "RECENT DAILY PRICE"))
+            .x_axis(
+                Axis::default()
+                    .bounds([0.0, x_max])
+                    .labels(["START", "RECENT", "LATEST"])
+                    .style(MUTED),
+            )
+            .y_axis(
+                Axis::default()
+                    .bounds(y_bounds)
+                    .labels([
+                        format!("{:.2}", y_bounds[0]),
+                        format!("{y_middle:.2}"),
+                        format!("{:.2}", y_bounds[1]),
+                    ])
+                    .style(AMBER),
+            );
+            frame.render_widget(chart, left[0]);
+        }
         let research_areas =
             Layout::vertical([Constraint::Length(1), Constraint::Min(3)]).split(left[1]);
         let research_tabs = ResearchView::ALL
@@ -986,6 +1007,36 @@ mod tests {
         let table = Layout::vertical([Constraint::Length(1), Constraint::Min(3)]).split(left[1])[1];
 
         assert!(workspace.handle_mouse(click(table.x + 2, table.y + 4), area));
+
+        assert_eq!(workspace.selected_insider, 1);
+    }
+
+    #[test]
+    fn clicking_form4_chart_selects_the_nearest_dated_transaction() {
+        let mut workspace = SecurityWorkspace::new(Arc::new(StubQuery));
+        let mut first = insider_transaction("0000000000-26-000001");
+        first.transaction_date = "2026-06-01".to_owned();
+        let mut second = insider_transaction("0000000000-26-000002");
+        second.transaction_date = "2026-07-28".to_owned();
+        let mut page = stub_page("AAPL US");
+        page.research.insider_transactions = vec![first, second];
+        workspace.page = Some(page);
+        workspace.research_view = ResearchView::Ownership;
+        let area = Rect::new(0, 0, 160, 40);
+        let rows = Layout::vertical([Constraint::Length(4), Constraint::Min(12)]).split(area);
+        let grid = Layout::horizontal([
+            Constraint::Percentage(62),
+            Constraint::Percentage(19),
+            Constraint::Percentage(19),
+        ])
+        .split(rows[1]);
+        let chart = Layout::vertical([Constraint::Percentage(58), Constraint::Percentage(42)])
+            .split(grid[0])[0];
+
+        assert!(workspace.handle_mouse(
+            click(chart.x + chart.width.saturating_sub(2), chart.y + 2),
+            area,
+        ));
 
         assert_eq!(workspace.selected_insider, 1);
     }

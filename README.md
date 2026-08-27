@@ -191,9 +191,13 @@ facts; recent 10-K, 10-Q, and 8-K metadata retain their accession numbers and
 official document URLs. The `OWN` / `FORM4` view fetches up to six recent Form
 4 or 4/A ownership documents, maps their non-derivative transactions without
 invented scores, and identifies acquisition/disposition, shares, value, role,
-ownership nature, and 10b5-1 status. Select a row with Up/Down or `j`/`k`, then
-press `O` or Enter to open the official SEC filing index. All provider calls run
-on a coalescing background worker.
+ownership nature, and 10b5-1 status. The upper panel becomes a log-value Form 4
+scatter with acquisition/disposition marks, selected-event emphasis, and
+two-sided weekly value bars. Its rollup says `LOADED SAMPLE` because it covers
+only those bounded filings, not an invented 12-month universe. Click a chart
+mark/row or select with Up/Down or `j`/`k`, then press `O` or Enter to open the
+official SEC filing index. All provider calls run on a coalescing background
+worker.
 
 SEC EDGAR does not supply analyst estimates or a canonical peer set, and this
 adapter does not yet normalize institutional 13F ownership. Those panels say so

@@ -42,6 +42,9 @@ ownership model and bounded XML adapter were independently implemented against
 official SEC submissions metadata and ownership XML; they do not copy
 AlphaAI's proprietary scoring or enrichment contract. The relevant code is in
 `src/features/security/` and `src/infrastructure/live_security.rs`.
+The log-value scatter, collision nudge, selected-mark emphasis, and two-sided
+weekly value bars in `src/features/security/insider_chart.rs` adapt the
+upstream Insider chart renderer to the bounded raw SEC transaction sample.
 
 MIT License
 

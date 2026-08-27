@@ -185,6 +185,11 @@ endorsed by, or sponsored by Yahoo.
   price-derived value, owner role, direct/indirect ownership, and filing-level
   10b5-1 status without a relevance or trading signal. A selected row opens the
   official SEC filing index through a validated `http(s)` URL.
+- **Form 4 visualization:** the log-value scatter and weekly
+  acquisition/disposition bars use only those loaded transactions and reported
+  price-derived values. Unpriced transactions are not assigned a dollar value.
+  The chart and rollup are labeled `LOADED SAMPLE`; they do not claim complete
+  12-month coverage. Clicking the plot selects the nearest dated transaction.
 - **Failure behavior:** loading and transport/HTTP/shape failures are visible
   in the Find header. No demo identity is inserted into the interactive app.
 - **Fundamental methodology:** annual values use latest-filed comparable
