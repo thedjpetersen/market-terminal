@@ -121,7 +121,9 @@ not scrape or store the article body. Press `V` or click `FULL STORY` for a
 full-workspace, scrollable view of the metadata and excerpt already supplied by
 the feed; use PgUp/PgDn or the mouse wheel, and `V`, Esc, or the close button to
 return. The reader labels this copyright boundary and still directs the full
-article to its publisher.
+article to its publisher. Below 90 columns—including a narrow Desk pane—the
+headline list uses the full width; `V` opens detail and `E` swaps in the
+calendar rather than compressing three unreadable columns.
 
 Override the defaults with comma-separated feeds:
 

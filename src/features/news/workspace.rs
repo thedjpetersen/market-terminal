@@ -26,6 +26,8 @@ use crate::{
 
 use super::{NewsArticleOpener, NewsFeed, NewsFilter, NewsStory, NewsWorkbench, ID};
 
+const WIDE_NEWS_MIN_COLUMNS: u16 = 90;
+
 pub struct NewsWorkspace {
     query: Arc<dyn NewsFeed>,
     article_opener: Option<Arc<dyn NewsArticleOpener>>,
@@ -307,6 +309,20 @@ impl Workspace for NewsWorkspace {
         }
         let visible_count = self.visible_indices(&workbench).len();
         let rows = Layout::vertical([Constraint::Length(3), Constraint::Min(10)]).split(area);
+        if rows[1].width < WIDE_NEWS_MIN_COLUMNS {
+            if self.show_calendar {
+                return crate::ui::contains(rows[1], event.column, event.row);
+            }
+            if let Some(index) = list_row_at(event, rows[1], visible_count) {
+                self.selected = index;
+                self.detail_scroll = 0;
+                return true;
+            }
+            if let Some(key) = scroll_key(event, rows[1]) {
+                return self.handle_key(key);
+            }
+            return false;
+        }
         let columns = Layout::horizontal([
             Constraint::Percentage(39),
             Constraint::Percentage(43),
@@ -425,10 +441,16 @@ impl Workspace for NewsWorkspace {
                 ])))
             })
             .collect::<Vec<_>>();
-        frame.render_widget(
-            List::new(items).block(terminal_block("TOP", "TOP NEWS")),
-            columns[0],
-        );
+        let stories = List::new(items).block(terminal_block("TOP", "TOP NEWS"));
+        if rows[1].width < WIDE_NEWS_MIN_COLUMNS {
+            if self.show_calendar {
+                render_calendar(frame, rows[1], &workbench);
+            } else {
+                frame.render_widget(stories, rows[1]);
+            }
+            return;
+        }
+        frame.render_widget(stories, columns[0]);
 
         if self.show_calendar {
             render_calendar(frame, columns[1], &workbench);
@@ -854,6 +876,42 @@ mod tests {
         assert!(workspace.handle_mouse(click(2, 5), Rect::new(0, 0, 120, 30)));
 
         assert_eq!(workspace.selected, 1);
+    }
+
+    #[test]
+    fn narrow_news_uses_full_width_for_clickable_list_and_calendar() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let area = Rect::new(0, 0, 80, 24);
+        let mut workspace = NewsWorkspace::new(Arc::new(StubQuery));
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| workspace.render(frame, area))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("TOP NEWS"));
+        assert!(!rendered.contains("STORY DETAIL"));
+
+        assert!(workspace.handle_mouse(click(70, 5), area));
+        assert_eq!(workspace.selected, 1);
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)));
+        terminal
+            .draw(|frame| workspace.render(frame, area))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("ECONOMIC EVENT CALENDAR"));
     }
 
     #[test]
