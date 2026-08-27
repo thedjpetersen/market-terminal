@@ -23,8 +23,8 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
   filings, explicitly unavailable estimates/peers, and linked news
 - Portfolio — imported positions, reconciled value/weights, and source status
 - News — asynchronously refreshed RSS/Atom stories, filters, unread/bookmarks,
-  expanded scrollable story cards, clickable publisher links, and linked
-  securities
+  an on-demand in-terminal article reader, clickable publisher links, and
+  linked securities
 - Spreadsheet — workbook-scoped recalculation, cross-sheet and mixed absolute
   references, translated copy/fill, lookups, undo/redo, CSV, and asynchronously
   resolved `PX_LAST`/`PX_CHANGE` cells with explicit data-quality state
@@ -111,19 +111,25 @@ remain fixed escape routes.
 ## Live news
 
 The interactive app fetches real RSS/Atom feeds on a background thread; network
-latency never blocks terminal input or rendering. The defaults are CNBC Markets,
-SEC press releases, and Federal Reserve press releases. Press `F9` in News to
-refresh immediately. Failed sources are shown as unavailable or degraded—the
-interactive app does not replace them with fabricated headlines or calendar
-events. Select a story and press `O` or Enter—or click `OPEN ARTICLE`—to open
-its original `http(s)` publisher page in your system browser. The terminal does
-not scrape or store the article body. Press `V` or click `FULL STORY` for a
-full-workspace, scrollable view of the metadata and excerpt already supplied by
-the feed; use PgUp/PgDn or the mouse wheel, and `V`, Esc, or the close button to
-return. The reader labels this copyright boundary and still directs the full
-article to its publisher. Below 90 columns—including a narrow Desk pane—the
-headline list uses the full width; `V` opens detail and `E` swaps in the
-calendar rather than compressing three unreadable columns.
+latency never blocks terminal input or rendering. The defaults are Seeking
+Alpha news and investment ideas, Bloomberg Markets, MarketWatch Top Stories,
+Financial Times Markets, SEC press releases, and Federal Reserve press
+releases. Press `F9` in News to refresh immediately. Failed sources are shown as
+unavailable or degraded—the interactive app does not replace them with
+fabricated headlines or calendar events.
+
+Select a story and press Enter or `V`—or click `READ HERE`—to open the
+full-workspace reader. MarketTerm first displays publisher-provided feed content
+and, when the feed contains only an excerpt, downloads and extracts the readable
+article text on the existing background worker. Use `J`/`K`, arrow keys,
+PgUp/PgDn, Space, or the mouse wheel to scroll; use `V`, Esc, or the close button
+to return. Press `O` or click `OPEN WEB` at any time to open the original page
+in your system browser. Paywalls, sign-in requirements, robots restrictions,
+and publisher preview limits are not bypassed; those stories retain their
+excerpt and clearly direct you to the publisher. Downloaded bodies are bounded
+and transiently held in memory only. Below 90 columns—including a narrow Desk
+pane—the headline list uses the full width; Enter or `V` opens the reader and
+`E` swaps in the calendar rather than compressing three unreadable columns.
 
 Override the defaults with comma-separated feeds:
 

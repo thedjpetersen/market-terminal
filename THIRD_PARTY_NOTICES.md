@@ -59,11 +59,11 @@ Vim/Emacs editor and tmux prefix contract fixed.
 
 The expanded story-card layout, wrapped-height scroll clamp, and full/detail
 toggle in `src/features/news/workspace.rs` adapt the upstream article-card
-interaction. Market Terminal renders only metadata, excerpts, and links already
-present in its RSS/Atom feed model; it does not copy AlphaAI enrichment fields
-or retrieve publisher article bodies. The narrow-width list/detail collapse
-also adapts the upstream responsive News behavior to this workspace's own feed
-and mouse-routing model.
+interaction. Market Terminal does not copy AlphaAI enrichment fields. Its
+background publisher-page retrieval and readability extraction are independent
+implementations built on the MIT-licensed `dom_smoothie` dependency. The
+narrow-width list/detail collapse also adapts the upstream responsive News
+behavior to this workspace's own feed and mouse-routing model.
 
 MIT License
 

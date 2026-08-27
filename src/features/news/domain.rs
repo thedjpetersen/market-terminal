@@ -26,9 +26,20 @@ pub struct NewsStory {
     pub byline: String,
     pub summary: String,
     pub body: Vec<String>,
+    pub body_state: ArticleBodyState,
     pub related_symbols: Vec<String>,
     pub instruments: Vec<InstrumentId>,
     pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ArticleBodyState {
+    #[default]
+    ExcerptOnly,
+    FeedProvided,
+    Loading,
+    Downloaded,
+    Unavailable(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,6 +183,7 @@ impl NewsWorkbench {
                 byline: byline.to_owned(),
                 summary: summary.to_owned(),
                 body: body.iter().map(|paragraph| (*paragraph).to_owned()).collect(),
+                body_state: ArticleBodyState::FeedProvided,
                 related_symbols,
                 instruments,
                 url: None,

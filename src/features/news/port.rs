@@ -16,6 +16,12 @@ pub trait NewsFeed: Send + Sync {
     }
 
     fn request_refresh(&self) {}
+
+    /// Requests an on-demand, transient article-body download. Returns true
+    /// when the adapter accepted the request for background processing.
+    fn request_article(&self, _story_id: &str, _url: &str) -> bool {
+        false
+    }
 }
 
 /// Opens a publisher-owned article outside the terminal.

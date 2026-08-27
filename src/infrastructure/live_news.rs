@@ -2,27 +2,36 @@ use std::{
     collections::HashSet,
     env,
     io::Read,
-    sync::{Arc, Mutex, RwLock, mpsc},
+    sync::{mpsc, Arc, Mutex, RwLock},
     thread,
     time::Duration,
 };
 
 use chrono::{DateTime, Utc};
+use dom_smoothie::{Config as ReadabilityConfig, Readability, TextMode};
 use feed_rs::{model::Entry, parser};
 use reqwest::blocking::Client;
 
 use crate::{
-    features::news::{Headline, NewsFeed, NewsSnapshot, NewsStory, NewsWorkbench},
+    features::news::{
+        ArticleBodyState, Headline, NewsFeed, NewsSnapshot, NewsStory, NewsWorkbench,
+    },
     foundation::InstrumentId,
 };
 
 const DEFAULT_REFRESH_SECONDS: u64 = 300;
 const DEFAULT_TIMEOUT_SECONDS: u64 = 12;
 const MAX_FEED_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_ARTICLE_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_ARTICLE_CHARS: usize = 120_000;
 const MAX_STORIES: usize = 80;
 type TimestampedStory = (Option<DateTime<Utc>>, NewsStory);
-const DEFAULT_FEEDS: [&str; 3] = [
-    "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+const DEFAULT_FEEDS: [&str; 7] = [
+    "https://seekingalpha.com/market_currents.xml",
+    "https://seekingalpha.com/feed.xml",
+    "https://feeds.bloomberg.com/markets/news.rss",
+    "https://feeds.content.dowjones.io/public/rss/mw_topstories",
+    "https://www.ft.com/markets?format=rss",
     "https://www.sec.gov/news/pressreleases.rss",
     "https://www.federalreserve.gov/feeds/press_all.xml",
 ];
@@ -75,6 +84,7 @@ struct FeedState {
 
 enum WorkerCommand {
     Refresh,
+    FetchArticle { story_id: String, url: String },
     Stop,
 }
 
@@ -145,6 +155,42 @@ impl NewsFeed for LiveNewsFeed {
     fn request_refresh(&self) {
         let _ = self.commands.send(WorkerCommand::Refresh);
     }
+
+    fn request_article(&self, story_id: &str, url: &str) -> bool {
+        {
+            let mut state = self.state.write().expect("news state lock");
+            let Some(story) = state
+                .workbench
+                .stories
+                .iter_mut()
+                .find(|story| story.id == story_id)
+            else {
+                return false;
+            };
+            if matches!(
+                story.body_state,
+                ArticleBodyState::FeedProvided
+                    | ArticleBodyState::Loading
+                    | ArticleBodyState::Downloaded
+            ) {
+                return true;
+            }
+            story.body_state = ArticleBodyState::Loading;
+        }
+        if self
+            .commands
+            .send(WorkerCommand::FetchArticle {
+                story_id: story_id.to_owned(),
+                url: url.to_owned(),
+            })
+            .is_ok()
+        {
+            true
+        } else {
+            set_article_unavailable(&self.state, story_id, "news worker is unavailable");
+            false
+        }
+    }
 }
 
 impl Drop for LiveNewsFeed {
@@ -173,10 +219,15 @@ fn run_worker(
             return;
         }
     };
+    refresh_feeds(&client, &config.feeds, &state);
     loop {
-        refresh_feeds(&client, &config.feeds, &state);
         match commands.recv_timeout(config.refresh_interval) {
-            Ok(WorkerCommand::Refresh) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Ok(WorkerCommand::Refresh) | Err(mpsc::RecvTimeoutError::Timeout) => {
+                refresh_feeds(&client, &config.feeds, &state);
+            }
+            Ok(WorkerCommand::FetchArticle { story_id, url }) => {
+                fetch_and_store_article(&client, &state, &story_id, &url);
+            }
             Ok(WorkerCommand::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
@@ -203,11 +254,26 @@ fn refresh_feeds(client: &Client, feeds: &[String], state: &RwLock<FeedState>) {
 
     stories.sort_by(|left, right| right.0.cmp(&left.0));
     let mut seen = HashSet::new();
-    let stories = stories
+    let mut stories = stories
         .into_iter()
         .filter_map(|(_, story)| seen.insert(story.id.clone()).then_some(story))
         .take(MAX_STORIES)
         .collect::<Vec<_>>();
+    let downloaded = state
+        .read()
+        .expect("news state lock")
+        .workbench
+        .stories
+        .iter()
+        .filter(|story| matches!(story.body_state, ArticleBodyState::Downloaded))
+        .map(|story| (story.id.clone(), story.body.clone()))
+        .collect::<std::collections::HashMap<_, _>>();
+    for story in &mut stories {
+        if let Some(body) = downloaded.get(&story.id) {
+            story.body.clone_from(body);
+            story.body_state = ArticleBodyState::Downloaded;
+        }
+    }
     let successful = feeds.len().saturating_sub(failures.len());
     let status = if failures.is_empty() {
         format!(
@@ -277,16 +343,19 @@ fn story_from_entry(entry: Entry, source: &str) -> Option<(Option<DateTime<Utc>>
     let time = published
         .map(|timestamp| timestamp.format("%H:%M").to_string())
         .unwrap_or_else(|| "--:--".to_owned());
+    let feed_body = entry
+        .content
+        .as_ref()
+        .and_then(|content| content.body.as_deref())
+        .map(paragraphs_from_markup)
+        .unwrap_or_default();
+    let feed_body_chars = feed_body.iter().map(String::len).sum::<usize>();
+    let body_is_substantial = feed_body.len() > 1 || feed_body_chars >= 500;
     let summary = entry
         .summary
         .as_ref()
         .map(|summary| clean_text(&summary.content))
-        .or_else(|| {
-            entry
-                .content
-                .as_ref()
-                .and_then(|content| content.body.as_ref().map(|body| clean_text(body)))
-        })
+        .or_else(|| feed_body.first().cloned())
         .filter(|summary| !summary.is_empty())
         .unwrap_or_else(|| "Open the source link for the full report.".to_owned());
     let summary = truncate(&summary, 900);
@@ -308,7 +377,7 @@ fn story_from_entry(entry: Entry, source: &str) -> Option<(Option<DateTime<Utc>>
     };
     let topic = classify_topic(&title, source);
     let region = classify_region(source);
-    let related_symbols = extract_symbols(&title);
+    let related_symbols = extract_entry_symbols(&entry, &title);
     let instruments = related_symbols
         .iter()
         .map(|symbol| InstrumentId::new(format!("us:listed:{}", symbol.to_ascii_lowercase())))
@@ -330,12 +399,107 @@ fn story_from_entry(entry: Entry, source: &str) -> Option<(Option<DateTime<Utc>>
             },
             byline,
             summary,
-            body: Vec::new(),
+            body: if body_is_substantial {
+                feed_body
+            } else {
+                Vec::new()
+            },
+            body_state: if body_is_substantial {
+                ArticleBodyState::FeedProvided
+            } else {
+                ArticleBodyState::ExcerptOnly
+            },
             related_symbols,
             instruments,
             url,
         },
     ))
+}
+
+fn fetch_and_store_article(client: &Client, state: &RwLock<FeedState>, story_id: &str, url: &str) {
+    match fetch_article_body(client, url) {
+        Ok(body) => {
+            let mut state = state.write().expect("news state lock");
+            if let Some(story) = state
+                .workbench
+                .stories
+                .iter_mut()
+                .find(|story| story.id == story_id)
+            {
+                story.body = body;
+                story.body_state = ArticleBodyState::Downloaded;
+            }
+        }
+        Err(error) => set_article_unavailable(state, story_id, &error),
+    }
+}
+
+fn fetch_article_body(client: &Client, url: &str) -> Result<Vec<String>, String> {
+    let response = client
+        .get(url)
+        .header(
+            reqwest::header::ACCEPT,
+            "text/html,application/xhtml+xml;q=0.9",
+        )
+        .send()
+        .map_err(|error| format!("article request failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("publisher returned HTTP {}", response.status()));
+    }
+    if response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            !value.contains("text/html") && !value.contains("application/xhtml+xml")
+        })
+    {
+        return Err("publisher did not return an HTML article".to_owned());
+    }
+    let document_url = response.url().to_string();
+    let mut bytes = Vec::new();
+    response
+        .take(MAX_ARTICLE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("article download failed: {error}"))?;
+    if bytes.len() as u64 > MAX_ARTICLE_BYTES {
+        return Err("article exceeds the 5 MB reader limit".to_owned());
+    }
+    let html = String::from_utf8_lossy(&bytes).into_owned();
+    extract_article_body(&html, &document_url)
+}
+
+fn extract_article_body(html: &str, document_url: &str) -> Result<Vec<String>, String> {
+    let config = ReadabilityConfig {
+        max_elements_to_parse: 30_000,
+        text_mode: TextMode::Formatted,
+        ..ReadabilityConfig::default()
+    };
+    let mut readability = Readability::new(html, Some(document_url), Some(config))
+        .map_err(|error| format!("article parser rejected the page: {error}"))?;
+    let article = readability
+        .parse()
+        .map_err(|error| format!("article text was not readable: {error}"))?;
+    let body = paragraphs_from_text(&article.text_content, MAX_ARTICLE_CHARS);
+    let length = body.iter().map(String::len).sum::<usize>();
+    if body.is_empty() || length < 240 {
+        return Err(
+            "publisher exposed only a short preview; press O to read it on the web".to_owned(),
+        );
+    }
+    Ok(body)
+}
+
+fn set_article_unavailable(state: &RwLock<FeedState>, story_id: &str, error: &str) {
+    let mut state = state.write().expect("news state lock");
+    if let Some(story) = state
+        .workbench
+        .stories
+        .iter_mut()
+        .find(|story| story.id == story_id)
+    {
+        story.body_state = ArticleBodyState::Unavailable(truncate(error, 180));
+    }
 }
 
 fn classify_topic(title: &str, source: &str) -> String {
@@ -358,7 +522,11 @@ fn classify_topic(title: &str, source: &str) -> String {
 
 fn classify_region(source: &str) -> String {
     let source = source.to_ascii_uppercase();
-    if source.contains("SEC") || source.contains("FEDERAL RESERVE") || source.contains("CNBC") {
+    if source.contains("SEC")
+        || source.contains("FEDERAL RESERVE")
+        || source.contains("SEEKING ALPHA")
+        || source.contains("MARKETWATCH")
+    {
         "US".to_owned()
     } else {
         "GL".to_owned()
@@ -382,30 +550,92 @@ fn extract_symbols(title: &str) -> Vec<String> {
         .collect()
 }
 
-fn clean_text(value: &str) -> String {
-    let mut output = String::new();
-    let mut in_tag = false;
-    for character in value.chars() {
-        match character {
-            '<' => in_tag = true,
-            '>' => {
-                in_tag = false;
-                output.push(' ');
-            }
-            _ if !in_tag => output.push(character),
-            _ => {}
+fn extract_entry_symbols(entry: &Entry, title: &str) -> Vec<String> {
+    let mut symbols = extract_symbols(title);
+    for category in &entry.categories {
+        let candidate = category
+            .term
+            .trim()
+            .trim_start_matches('$')
+            .to_ascii_uppercase();
+        let looks_like_symbol = (1..=5).contains(&candidate.len())
+            && candidate
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '.');
+        if looks_like_symbol
+            && !matches!(
+                candidate.as_str(),
+                "AI" | "ETF" | "IPO" | "NEWS" | "STOCK" | "TECH"
+            )
+            && !symbols.contains(&candidate)
+        {
+            symbols.push(candidate);
         }
     }
-    output
-        .replace("&amp;", "&")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&apos;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    symbols
+}
+
+fn clean_text(value: &str) -> String {
+    normalize_whitespace(&strip_markup(value, false))
+}
+
+fn paragraphs_from_markup(value: &str) -> Vec<String> {
+    paragraphs_from_text(&strip_markup(value, true), MAX_ARTICLE_CHARS)
+}
+
+fn strip_markup(value: &str, preserve_blocks: bool) -> String {
+    let mut output = String::new();
+    let mut characters = value.chars();
+    while let Some(character) = characters.next() {
+        if character != '<' {
+            output.push(character);
+            continue;
+        }
+        let mut tag = String::new();
+        for tag_character in characters.by_ref() {
+            if tag_character == '>' {
+                break;
+            }
+            tag.push(tag_character);
+        }
+        let name = tag
+            .trim()
+            .trim_start_matches('/')
+            .split_ascii_whitespace()
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_ascii_lowercase();
+        if preserve_blocks
+            && matches!(
+                name.as_str(),
+                "p" | "br" | "div" | "li" | "h1" | "h2" | "h3" | "h4" | "blockquote"
+            )
+        {
+            output.push('\n');
+        }
+    }
+    html_escape::decode_html_entities(&output).into_owned()
+}
+
+fn normalize_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn paragraphs_from_text(value: &str, limit: usize) -> Vec<String> {
+    let mut remaining = limit;
+    value
+        .lines()
+        .filter_map(|line| {
+            let paragraph = normalize_whitespace(line);
+            if paragraph.is_empty() || remaining == 0 {
+                return None;
+            }
+            let paragraph = truncate(&paragraph, remaining);
+            remaining = remaining.saturating_sub(paragraph.chars().count());
+            Some(paragraph)
+        })
+        .collect()
 }
 
 fn truncate(value: &str, limit: usize) -> String {
@@ -465,13 +695,54 @@ mod tests {
             "Chip demand remained strong & guidance increased."
         );
         assert_eq!(story.url.as_deref(), Some("https://example.com/story-1"));
+        assert_eq!(story.body_state, ArticleBodyState::ExcerptOnly);
+    }
+
+    #[test]
+    fn keeps_feed_provided_article_content_and_category_symbols() {
+        let rss = br#"<?xml version="1.0"?>
+<rss xmlns:content="http://purl.org/rss/1.0/modules/content/" version="2.0">
+<channel><title>Investment Ideas</title><item><guid>idea-1</guid>
+<title>A durable compounder</title><link>https://example.com/idea-1</link>
+<category>AAPL</category><description>Our short investment thesis.</description>
+<content:encoded><![CDATA[
+<p>Apple has built an unusually durable installed base with recurring services demand.</p>
+<p>The balance sheet supports continued investment, repurchases, and product development over a full cycle.</p>
+]]></content:encoded></item></channel></rss>"#;
+
+        let stories = parse_feed_document(rss, "https://example.com/feed").unwrap();
+        let story = &stories[0].1;
+
+        assert_eq!(story.related_symbols, ["AAPL"]);
+        assert_eq!(story.body_state, ArticleBodyState::FeedProvided);
+        assert_eq!(story.body.len(), 2);
+    }
+
+    #[test]
+    fn extracts_readable_article_paragraphs_for_the_terminal_reader() {
+        let html = r#"
+<!doctype html><html><head><title>Markets reset expectations</title></head><body>
+<nav>Home Markets Subscribe Sign in</nav>
+<article>
+<h1>Markets reset expectations</h1>
+<p>Investors adjusted rate expectations after a broad set of economic releases changed the outlook for the coming quarters. The response moved through equities, rates, currencies, and commodities.</p>
+<p>Market breadth improved while long-duration government bonds recovered from their intraday lows. Analysts said the cross-asset response reflected positioning as much as the incoming data.</p>
+<p>The next inflation report and central-bank meeting are now the main events on the calendar. Traders will watch both the headline figures and the underlying distribution for confirmation.</p>
+</article><footer>Privacy Terms Careers</footer></body></html>"#;
+
+        let body = extract_article_body(html, "https://example.com/article").unwrap();
+
+        assert!(body
+            .join(" ")
+            .contains("Investors adjusted rate expectations"));
+        assert!(!body.join(" ").contains("Privacy Terms Careers"));
     }
 
     #[test]
     fn strips_markup_and_bounds_feed_text() {
         assert_eq!(
-            clean_text("<b>Hello</b>   world &amp; markets"),
-            "Hello world & markets"
+            clean_text("<b>Hello</b>   world &amp; markets &#x2014; today"),
+            "Hello world & markets — today"
         );
         assert_eq!(truncate("abcdef", 3), "abc…");
     }
@@ -484,12 +755,61 @@ mod tests {
             .timeout(Duration::from_secs(15))
             .build()
             .unwrap();
-        let count = DEFAULT_FEEDS
+        let results = DEFAULT_FEEDS
             .iter()
-            .filter_map(|url| fetch_feed(&client, url).ok())
-            .map(|stories| stories.len())
+            .map(|url| (*url, fetch_feed(&client, url)))
+            .collect::<Vec<_>>();
+        let successful = results
+            .iter()
+            .filter(|(_, result)| result.as_ref().is_ok_and(|stories| !stories.is_empty()))
+            .count();
+        let count = results
+            .iter()
+            .filter_map(|(_, result)| result.as_ref().ok())
+            .map(Vec::len)
             .sum::<usize>();
 
         assert!(count > 0, "default live feeds returned no stories");
+        assert!(
+            successful >= 4,
+            "fewer than four default publishers returned stories: {results:?}"
+        );
+        assert!(
+            results[0]
+                .1
+                .as_ref()
+                .is_ok_and(|stories| !stories.is_empty()),
+            "Seeking Alpha All News did not return stories: {:?}",
+            results[0].1
+        );
+    }
+
+    #[test]
+    #[ignore = "requires live network access"]
+    fn live_reader_extracts_a_current_publisher_article() {
+        let client = Client::builder()
+            .user_agent("market-terminal/0.1 (live integration test)")
+            .timeout(Duration::from_secs(15))
+            .build()
+            .unwrap();
+        let candidates = DEFAULT_FEEDS[2..5]
+            .iter()
+            .filter_map(|url| fetch_feed(&client, url).ok())
+            .flat_map(|stories| stories.into_iter().take(3))
+            .filter_map(|(_, story)| story.url)
+            .collect::<Vec<_>>();
+        let readable = candidates.iter().find_map(|url| {
+            fetch_article_body(&client, url)
+                .ok()
+                .map(|body| (url, body))
+        });
+
+        let Some((url, body)) = readable else {
+            panic!("no current Bloomberg, MarketWatch, or FT article was readable: {candidates:?}");
+        };
+        assert!(
+            body.iter().map(String::len).sum::<usize>() >= 240,
+            "reader returned a short article from {url}"
+        );
     }
 }

@@ -1,8 +1,8 @@
 //! The expanded, scrollable story card and wrapped-height clamping adapt the
 //! article-card interaction from `makeev/alphai-tui` commit
 //! `9143d2e1176d0a67a9f26960427cf370187fc2e6` (MIT, Copyright (c) 2026
-//! Mikhail Makeev). This card renders only feed-supplied metadata and excerpts;
-//! see `THIRD_PARTY_NOTICES.md`.
+//! Mikhail Makeev). The on-demand article extractor is an independent Market
+//! Terminal implementation; see `THIRD_PARTY_NOTICES.md`.
 
 use std::{cell::Cell as StateCell, collections::HashSet, sync::Arc};
 
@@ -24,7 +24,9 @@ use crate::{
     },
 };
 
-use super::{NewsArticleOpener, NewsFeed, NewsFilter, NewsStory, NewsWorkbench, ID};
+use super::{
+    ArticleBodyState, NewsArticleOpener, NewsFeed, NewsFilter, NewsStory, NewsWorkbench, ID,
+};
 
 const WIDE_NEWS_MIN_COLUMNS: u16 = 90;
 
@@ -48,7 +50,7 @@ impl NewsWorkspace {
         Self {
             query,
             article_opener: None,
-            article_status: "O / ENTER OPENS THE PUBLISHER SOURCE".to_owned(),
+            article_status: "ENTER READS HERE · O OPENS THE PUBLISHER".to_owned(),
             selected: 0,
             filter: NewsFilter::default(),
             read: HashSet::new(),
@@ -146,6 +148,32 @@ impl NewsWorkspace {
         self.detail_scroll = 0;
     }
 
+    fn open_selected_reader(&mut self, workbench: &NewsWorkbench) {
+        let Some(story) = self.selected_story(workbench) else {
+            self.article_status = "NO STORY IS SELECTED".to_owned();
+            return;
+        };
+        let story_id = story.id.clone();
+        let url = story.url.clone();
+        let should_fetch = matches!(
+            story.body_state,
+            ArticleBodyState::ExcerptOnly | ArticleBodyState::Unavailable(_)
+        );
+        self.read.insert(story_id.clone());
+        self.detail_expanded = true;
+        self.detail_scroll = 0;
+        self.article_status = "READER OPEN".to_owned();
+        if should_fetch {
+            self.article_status = match url {
+                Some(url) if self.query.request_article(&story_id, &url) => {
+                    "FETCHING ARTICLE TEXT IN THE BACKGROUND".to_owned()
+                }
+                Some(_) => "THIS NEWS ADAPTER CANNOT FETCH ARTICLE TEXT".to_owned(),
+                None => "NO PUBLISHER LINK FOR THIS STORY".to_owned(),
+            };
+        }
+    }
+
     fn scroll_expanded_detail(&mut self, workbench: &NewsWorkbench, direction: isize) {
         let Some(story) = self.selected_story(workbench) else {
             self.detail_scroll = 0;
@@ -206,11 +234,18 @@ impl Workspace for NewsWorkspace {
         if self.detail_expanded {
             match key.code {
                 KeyCode::Esc | KeyCode::Char('v' | 'V') => self.toggle_expanded_detail(),
-                KeyCode::PageUp => self.scroll_expanded_detail(&workbench, -5),
-                KeyCode::PageDown => self.scroll_expanded_detail(&workbench, 5),
-                KeyCode::Home => self.detail_scroll = 0,
-                KeyCode::End => self.scroll_expanded_detail(&workbench, isize::MAX),
-                KeyCode::Enter | KeyCode::Char('o') => self.open_selected_article(&workbench),
+                KeyCode::Up | KeyCode::Char('k') => self.scroll_expanded_detail(&workbench, -1),
+                KeyCode::Down | KeyCode::Char('j') => self.scroll_expanded_detail(&workbench, 1),
+                KeyCode::PageUp | KeyCode::Char('u') => self.scroll_expanded_detail(&workbench, -5),
+                KeyCode::PageDown | KeyCode::Enter | KeyCode::Char(' ' | 'd') => {
+                    self.scroll_expanded_detail(&workbench, 5)
+                }
+                KeyCode::Home | KeyCode::Char('g') => self.detail_scroll = 0,
+                KeyCode::End | KeyCode::Char('G') => {
+                    self.scroll_expanded_detail(&workbench, isize::MAX)
+                }
+                KeyCode::Char('o' | 'O') => self.open_selected_article(&workbench),
+                KeyCode::Char('r' | 'R') => self.open_selected_reader(&workbench),
                 _ => return false,
             }
             return true;
@@ -220,15 +255,15 @@ impl Workspace for NewsWorkspace {
             KeyCode::Down | KeyCode::Char('j') => {
                 self.selected = (self.selected + 1).min(length.saturating_sub(1));
                 self.detail_scroll = 0;
+                self.article_status = "ENTER READS HERE · O OPENS THE PUBLISHER".to_owned();
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.selected = self.selected.saturating_sub(1);
                 self.detail_scroll = 0;
+                self.article_status = "ENTER READS HERE · O OPENS THE PUBLISHER".to_owned();
             }
-            KeyCode::Enter | KeyCode::Char('o') => self.open_selected_article(&workbench),
-            KeyCode::Char('v' | 'V') if self.selected_story(&workbench).is_some() => {
-                self.toggle_expanded_detail()
-            }
+            KeyCode::Enter | KeyCode::Char('v' | 'V') => self.open_selected_reader(&workbench),
+            KeyCode::Char('o' | 'O') => self.open_selected_article(&workbench),
             KeyCode::Char('r') => {
                 if let Some(story) = self.selected_story(&workbench) {
                     if !self.read.insert(story.id.clone()) {
@@ -316,6 +351,7 @@ impl Workspace for NewsWorkspace {
             if let Some(index) = list_row_at(event, rows[1], visible_count) {
                 self.selected = index;
                 self.detail_scroll = 0;
+                self.article_status = "ENTER READS HERE · O OPENS THE PUBLISHER".to_owned();
                 return true;
             }
             if let Some(key) = scroll_key(event, rows[1]) {
@@ -330,18 +366,17 @@ impl Workspace for NewsWorkspace {
         ])
         .split(rows[1]);
         if !self.show_calendar && is_primary_click(event, story_open_area(columns[1])) {
-            self.open_selected_article(&workbench);
+            self.open_selected_reader(&workbench);
             return true;
         }
         if !self.show_calendar && is_primary_click(event, story_expand_area(columns[1])) {
-            if self.selected_story(&workbench).is_some() {
-                self.toggle_expanded_detail();
-            }
+            self.open_selected_article(&workbench);
             return true;
         }
         if let Some(index) = list_row_at(event, columns[0], visible_count) {
             self.selected = index;
             self.detail_scroll = 0;
+            self.article_status = "ENTER READS HERE · O OPENS THE PUBLISHER".to_owned();
             return true;
         }
         if is_primary_click(event, columns[2]) {
@@ -401,7 +436,7 @@ impl Workspace for NewsWorkspace {
             Paragraph::new(Line::from(vec![
                 Span::styled(format!(" {} RESULTS  {unread} UNREAD  ", visible.len()), Style::new().bg(AMBER.into()).fg(BG.into()).bold()),
                 Span::styled(filter_label, INK),
-                Span::styled("  O OPEN · V FULL · R READ · 0 RESET · 1/2/3 REGION · U UNREAD · M SAVED · E EVENTS · S SECURITY · F9 REFRESH  ", MUTED),
+                Span::styled("  ENTER/V READ HERE · O WEB · R READ · 0 RESET · 1/2/3 REGION · U UNREAD · M SAVED · E EVENTS · S SECURITY · F9 REFRESH  ", MUTED),
                 Span::styled(feed_status, YELLOW),
             ])).block(terminal_block("NEWS", "FILTERS & WORKFLOW")),
             rows[0],
@@ -540,26 +575,26 @@ fn render_story(frame: &mut Frame, area: Rect, story: &NewsStory, article_status
         vec![
             Line::from(vec![
                 Span::styled(
-                    " [ OPEN ARTICLE · O / ENTER ] ",
+                    " [ READ HERE · ENTER / V ] ",
                     Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
                 ),
                 Span::styled(
-                    " [ FULL STORY · V ] ",
+                    " [ OPEN WEB · O ] ",
                     Style::new().bg(CYAN.into()).fg(BG.into()).bold(),
                 ),
             ]),
-            Line::styled(article_status, MUTED),
+            Line::styled(article_footer_status(story, article_status), MUTED),
         ]
     } else {
         vec![
             Line::from(vec![
                 Span::styled(" NO PUBLISHER LINK AVAILABLE ", MUTED),
                 Span::styled(
-                    " [ FULL STORY · V ] ",
+                    " [ READ HERE · ENTER / V ] ",
                     Style::new().bg(CYAN.into()).fg(BG.into()).bold(),
                 ),
             ]),
-            Line::styled(article_status, MUTED),
+            Line::styled(article_footer_status(story, article_status), MUTED),
         ]
     };
     frame.render_widget(
@@ -609,7 +644,7 @@ fn render_expanded_story(
 ) {
     let panel = expanded_panel_area(area);
     frame.render_widget(Clear, panel);
-    let block = terminal_block("READ", "EXPANDED STORY · FEED-SUPPLIED EXCERPT");
+    let block = terminal_block("READ", expanded_story_title(story));
     let inner = block.inner(panel);
     frame.render_widget(block, panel);
     let rows = Layout::vertical([Constraint::Min(3), Constraint::Length(2)]).split(inner);
@@ -624,16 +659,16 @@ fn render_expanded_story(
         Paragraph::new(vec![
             Line::from(vec![
                 Span::styled(
-                    " [ OPEN PUBLISHER · O / ENTER ] ",
+                    " [ OPEN PUBLISHER · O ] ",
                     if story.url.is_some() {
                         Style::new().bg(AMBER.into()).fg(BG.into()).bold()
                     } else {
                         Style::new().fg(MUTED.into())
                     },
                 ),
-                Span::styled("  PGUP/PGDN SCROLL · V/ESC CLOSE", MUTED),
+                Span::styled("  J/K OR PGUP/PGDN SCROLL · V/ESC CLOSE", MUTED),
             ]),
-            Line::styled(article_status, MUTED),
+            Line::styled(article_footer_status(story, article_status), MUTED),
         ]),
         rows[1],
     );
@@ -678,12 +713,49 @@ fn story_detail_lines(story: &NewsStory) -> Vec<Line<'_>> {
             MUTED,
         ),
         Line::raw(""),
-        Line::styled(
-            "FEED-SUPPLIED METADATA / EXCERPT ONLY · OPEN THE PUBLISHER FOR THE FULL ARTICLE",
-            MUTED,
-        ),
+        Line::styled(article_body_status(story), MUTED),
     ]);
     lines
+}
+
+fn expanded_story_title(story: &NewsStory) -> &'static str {
+    match story.body_state {
+        ArticleBodyState::Downloaded => "ARTICLE · IN-TERMINAL READER",
+        ArticleBodyState::FeedProvided => "ARTICLE · PUBLISHER FEED CONTENT",
+        ArticleBodyState::Loading => "ARTICLE · FETCHING TEXT",
+        ArticleBodyState::ExcerptOnly | ArticleBodyState::Unavailable(_) => {
+            "ARTICLE · PUBLISHER EXCERPT"
+        }
+    }
+}
+
+fn article_body_status(story: &NewsStory) -> String {
+    match &story.body_state {
+        ArticleBodyState::Downloaded => {
+            "ARTICLE TEXT EXTRACTED ON DEMAND · O OPENS THE ORIGINAL PUBLISHER PAGE".to_owned()
+        }
+        ArticleBodyState::FeedProvided => {
+            "PUBLISHER-PROVIDED FEED CONTENT · O OPENS THE ORIGINAL PAGE".to_owned()
+        }
+        ArticleBodyState::Loading => "FETCHING AND EXTRACTING ARTICLE TEXT…".to_owned(),
+        ArticleBodyState::ExcerptOnly => {
+            "FEED EXCERPT ONLY · PRESS R TO FETCH OR O TO OPEN THE PUBLISHER".to_owned()
+        }
+        ArticleBodyState::Unavailable(error) => {
+            format!("FULL TEXT UNAVAILABLE · {error} · O OPENS THE PUBLISHER")
+        }
+    }
+}
+
+fn article_footer_status(story: &NewsStory, article_status: &str) -> String {
+    if article_status.starts_with("OPENED")
+        || article_status.starts_with("OPEN FAILED")
+        || article_status.starts_with("NO PUBLISHER")
+    {
+        article_status.to_owned()
+    } else {
+        article_body_status(story)
+    }
 }
 
 fn wrapped_height(lines: &[Line<'_>], width: u16) -> u16 {
@@ -797,6 +869,35 @@ mod tests {
                 .map(|index| format!("Feed-supplied excerpt paragraph {index}."))
                 .collect();
             workbench
+        }
+    }
+
+    #[derive(Default)]
+    struct RequestingQuery {
+        requests: Mutex<Vec<(String, String)>>,
+    }
+
+    impl NewsFeed for RequestingQuery {
+        fn load_news(&self) -> NewsSnapshot {
+            NewsSnapshot {
+                headlines: headlines(),
+            }
+        }
+
+        fn load_workbench(&self) -> NewsWorkbench {
+            let mut workbench = NewsWorkbench::from_snapshot(self.load_news());
+            workbench.stories[0].url = Some("https://example.com/markets-gain".to_owned());
+            workbench.stories[0].body.clear();
+            workbench.stories[0].body_state = ArticleBodyState::ExcerptOnly;
+            workbench
+        }
+
+        fn request_article(&self, story_id: &str, url: &str) -> bool {
+            self.requests
+                .lock()
+                .unwrap()
+                .push((story_id.to_owned(), url.to_owned()));
+            true
         }
     }
 
@@ -933,12 +1034,38 @@ mod tests {
     }
 
     #[test]
-    fn clicking_the_story_action_launches_the_selected_publisher_url() {
+    fn enter_opens_the_terminal_reader_and_requests_missing_article_text() {
+        let query = Arc::new(RequestingQuery::default());
+        let mut workspace = NewsWorkspace::new(query.clone());
+
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+
+        assert!(workspace.detail_expanded);
+        assert_eq!(query.requests.lock().unwrap().len(), 1);
+        assert_eq!(
+            workspace.article_status,
+            "FETCHING ARTICLE TEXT IN THE BACKGROUND"
+        );
+    }
+
+    #[test]
+    fn clicking_the_story_action_opens_the_terminal_reader() {
+        let query = Arc::new(RequestingQuery::default());
+        let mut workspace = NewsWorkspace::new(query.clone());
+
+        assert!(workspace.handle_mouse(click(50, 27), Rect::new(0, 0, 120, 30)));
+
+        assert!(workspace.detail_expanded);
+        assert_eq!(query.requests.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn clicking_the_web_action_launches_the_selected_publisher_url() {
         let opener = Arc::new(RecordingOpener::default());
         let mut workspace =
             NewsWorkspace::with_article_opener(Arc::new(LinkedQuery), opener.clone());
 
-        assert!(workspace.handle_mouse(click(50, 27), Rect::new(0, 0, 120, 30)));
+        assert!(workspace.handle_mouse(click(80, 27), Rect::new(0, 0, 120, 30)));
 
         assert_eq!(opener.opened.lock().unwrap().len(), 1);
     }
@@ -948,7 +1075,7 @@ mod tests {
         let opener = Arc::new(RecordingOpener::default());
         let mut workspace = NewsWorkspace::with_article_opener(Arc::new(StubQuery), opener.clone());
 
-        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE)));
 
         assert!(opener.opened.lock().unwrap().is_empty());
         assert_eq!(workspace.article_status, "NO PUBLISHER LINK FOR THIS STORY");
@@ -976,8 +1103,7 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(rendered.contains("EXPANDED STORY"));
-        assert!(rendered.contains("FEED-SUPPLIED"));
+        assert!(rendered.contains("PUBLISHER FEED CONTENT"));
 
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)));
         assert!(workspace.detail_scroll > 0);

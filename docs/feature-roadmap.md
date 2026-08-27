@@ -64,8 +64,8 @@ move to its own crate later without changing its public vocabulary.
   cross-sheet references, cross-sheet cycle detection, mixed absolute axes, and
   atomic translated copy, paste, and directional fill controls.
 - **Complete:** toggleable AI drawer with immediate input focus, a warm reusable
-  Codex app-server worker, and publisher-safe News article opening by keyboard
-  or mouse.
+  Codex app-server worker, and bounded, transient, on-demand News article
+  reading with an explicit publisher-page fallback.
 - **In progress:** first financial-function slice with top-level
   `PX_LAST(instrument)` and `PX_CHANGE(instrument, period)` cells, bounded
   background resolution, formula-preserving recalculation, explicit loading,

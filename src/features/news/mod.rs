@@ -3,7 +3,8 @@ mod port;
 mod workspace;
 
 pub use domain::{
-    EventImportance, Headline, NewsEvent, NewsFilter, NewsSnapshot, NewsStory, NewsWorkbench,
+    ArticleBodyState, EventImportance, Headline, NewsEvent, NewsFilter, NewsSnapshot, NewsStory,
+    NewsWorkbench,
 };
 pub use port::{NewsArticleOpenError, NewsArticleOpener, NewsFeed};
 pub use workspace::NewsWorkspace;

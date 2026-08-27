@@ -123,14 +123,18 @@ endorsed by, or sponsored by Yahoo.
 
 - **Surfaces:** interactive News list/story metadata and the cached-headline
   section of interactive Overview.
-- **Default sources:** CNBC Markets, U.S. SEC press releases, and Federal
-  Reserve press releases; configurable through `MARKET_TERMINAL_NEWS_FEEDS`.
+- **Default sources:** Seeking Alpha news and investment ideas, Bloomberg
+  Markets, MarketWatch Top Stories, Financial Times Markets, U.S. SEC press
+  releases, and Federal Reserve press releases; configurable through
+  `MARKET_TERMINAL_NEWS_FEEDS`.
 - **Content boundary:** the feed-provided headline, summary/byline metadata,
-  timestamp, attribution, and publisher URL are displayed. The application
-  does not fetch or persist publisher article bodies. Opening an article passes
-  a validated `http(s)` URL to the system browser.
-- **Caching:** bounded in-memory snapshot only; no feed content is committed to
-  the repository.
+  timestamp, attribution, publisher URL, and any feed-provided body are
+  displayed. On explicit reader activation, the background worker may fetch the
+  publisher page and apply readability extraction. It does not bypass access
+  controls; unavailable full text stays visibly excerpt-only. Opening the web
+  source passes a validated `http(s)` URL to the system browser.
+- **Caching:** bounded in-memory snapshots and article bodies only; no feed or
+  extracted article content is persisted or committed to the repository.
 
 ## User portfolio CSV
 
