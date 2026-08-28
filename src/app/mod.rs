@@ -472,6 +472,21 @@ impl App {
             }
         }
 
+        if self.workspaces.is_modal_active(self.active_workspace) {
+            if key.code == KeyCode::Char('f')
+                && !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            {
+                self.open_hints();
+            } else {
+                // Modal workspaces fail closed: even an unrecognized key cannot
+                // activate shell navigation behind the visible modal.
+                self.workspaces.handle_key(self.active_workspace, key);
+            }
+            return;
+        }
+
         if self.panel_focus {
             self.handle_panel_focus_key(key);
             return;
@@ -587,6 +602,12 @@ impl App {
         self.panel_focus = false;
         self.focused_action = None;
         self.hint_mode = None;
+        if self.workspaces.is_modal_active(self.active_workspace) {
+            let workspace_area = ui::ShellLayout::new(frame_area).workspace;
+            self.workspaces
+                .handle_mouse(self.active_workspace, event, workspace_area);
+            return;
+        }
         let target = ui::hit_test(self, frame_area, event.column, event.row);
         if !matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
             if let Some(ShellClickTarget::Workspace(area)) = target {
@@ -1168,17 +1189,21 @@ impl App {
         self.close_settings();
         self.panel_focus = false;
         self.focused_action = None;
-        let mut targets = self
-            .workspaces
-            .navigation_items()
-            .map(|item| ShellHintTarget::Workspace(item.id))
-            .chain([
-                ShellHintTarget::Command,
-                ShellHintTarget::Help,
-                ShellHintTarget::Settings,
-                ShellHintTarget::Quit,
-            ])
-            .collect::<Vec<_>>();
+        let modal_active = self.workspaces.is_modal_active(self.active_workspace);
+        let mut targets = if modal_active {
+            Vec::new()
+        } else {
+            self.workspaces
+                .navigation_items()
+                .map(|item| ShellHintTarget::Workspace(item.id))
+                .chain([
+                    ShellHintTarget::Command,
+                    ShellHintTarget::Help,
+                    ShellHintTarget::Settings,
+                    ShellHintTarget::Quit,
+                ])
+                .collect::<Vec<_>>()
+        };
         let workspace_area = ui::ShellLayout::new(self.terminal_area).workspace;
         let remaining = HINT_ALPHABET.len().pow(2).saturating_sub(targets.len());
         targets.extend(
@@ -2639,6 +2664,72 @@ mod tests {
                     && action.label.contains("% CHANGE")
             }));
         assert!(app.shell_hints().is_none());
+    }
+
+    #[test]
+    fn news_reader_traps_shell_navigation_and_limits_follow_hints_to_the_modal() {
+        let mut app = bootstrap::demo_app();
+        let frame_area = Rect::new(0, 0, 160, 48);
+        let workspace_area = crate::ui::ShellLayout::new(frame_area).workspace;
+        app.set_terminal_area(frame_area);
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "NEWS".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.active_workspace(), NEWS);
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app
+            .workspace_actions(workspace_area, 128)
+            .iter()
+            .all(|action| action.id.starts_with("modal:")));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        assert_eq!(app.active_workspace(), NEWS);
+        let navigation_row = crate::ui::ShellLayout::new(frame_area).navigation.y;
+        let portfolio_column = (0..frame_area.width)
+            .find(|column| {
+                crate::ui::hit_test(&app, frame_area, *column, navigation_row)
+                    == Some(crate::ui::ShellClickTarget::Navigation(PORTFOLIO))
+            })
+            .unwrap();
+        app.handle_mouse(left_click(portfolio_column, navigation_row), frame_area);
+        assert_eq!(app.active_workspace(), NEWS);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let hints = &app.shell_hints().unwrap().1;
+        assert!(!hints.is_empty());
+        assert!(hints.iter().all(|hint| {
+            matches!(
+                &hint.target,
+                ShellHintTarget::WorkspaceAction { action, .. }
+                    if action.starts_with("modal:")
+            )
+        }));
+        let close_code = hints
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action.starts_with("modal:close:")
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in close_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        assert!(app
+            .workspace_actions(workspace_area, 128)
+            .iter()
+            .any(|action| action.id.starts_with("story:0:")));
+        assert!(app.shell_hints().is_none());
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.panel_focus());
     }
 
     #[test]

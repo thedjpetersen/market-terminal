@@ -181,6 +181,16 @@ encode the requested period and are parsed back into Charting-owned domain
 values; stateful controls recheck comparison and inspection availability before
 activation. The active period is the deterministic restoration target, while a
 separate header action preserves the existing click-to-refresh surface.
+News is the modal/action reference. Its shared responsive layout owns filter
+controls, headline rows, selected-story commands, detail links, calendar events,
+and refresh rectangles for rendering, pointer hit testing, spatial focus, and
+follow hints. Opaque story action IDs include a stable content digest and are
+revalidated against the live snapshot before activation. When a workspace reports
+`is_modal_active`, the application kernel routes all keyboard and pointer input to
+that workspace, excludes shell and navigation destinations from follow hints, and
+publishes only the feature's modal actions. The reader therefore exposes close and
+publisher-page destinations without allowing workspace hotkeys, navigation clicks,
+or stale story identities to escape the modal.
 
 ## Cross-feature events
 

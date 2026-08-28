@@ -16,19 +16,20 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
+    app::{
+        AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor,
+    },
     ui::{
         components::terminal_block,
-        is_primary_click, list_row_at, scroll_key,
+        contains, is_primary_click, list_row_at, scroll_key,
         theme::{AMBER, BG, CYAN, INK, MUTED, YELLOW},
     },
 };
 
 use super::{
+    controls::{news_areas, pack_control_areas, NewsControl},
     ArticleBodyState, NewsArticleOpener, NewsFeed, NewsFilter, NewsStory, NewsWorkbench, ID,
 };
-
-const WIDE_NEWS_MIN_COLUMNS: u16 = 90;
 
 pub struct NewsWorkspace {
     query: Arc<dyn NewsFeed>,
@@ -102,6 +103,263 @@ impl NewsWorkspace {
         self.selected = self
             .selected
             .min(self.visible_indices(&workbench).len().saturating_sub(1));
+    }
+
+    fn control_label(&self, control: NewsControl, workbench: &NewsWorkbench) -> String {
+        let selected = self.selected_story(workbench);
+        match control {
+            NewsControl::Reset => " 0 RESET ".to_owned(),
+            NewsControl::RegionUs => " 1 US ".to_owned(),
+            NewsControl::RegionEu => " 2 EU ".to_owned(),
+            NewsControl::RegionAsia => " 3 AS ".to_owned(),
+            NewsControl::Unread => " U UNREAD ".to_owned(),
+            NewsControl::Saved => " M SAVED ".to_owned(),
+            NewsControl::Calendar => {
+                if self.show_calendar {
+                    " E STORIES ".to_owned()
+                } else {
+                    " E EVENTS ".to_owned()
+                }
+            }
+            NewsControl::ReadState => selected.map_or_else(
+                || " R READ ".to_owned(),
+                |story| {
+                    if self.read.contains(&story.id) {
+                        " R UNREAD ".to_owned()
+                    } else {
+                        " R READ ".to_owned()
+                    }
+                },
+            ),
+            NewsControl::Bookmark => selected.map_or_else(
+                || " B SAVE ".to_owned(),
+                |story| {
+                    if self.bookmarks.contains(&story.id) {
+                        " B UNSAVE ".to_owned()
+                    } else {
+                        " B SAVE ".to_owned()
+                    }
+                },
+            ),
+            NewsControl::Security => " S SEC ".to_owned(),
+            NewsControl::InsertSheet => " A SHEET ".to_owned(),
+            NewsControl::Refresh => " F9 REFRESH ".to_owned(),
+        }
+    }
+
+    fn control_areas(
+        &self,
+        area: Rect,
+        workbench: &NewsWorkbench,
+    ) -> Vec<(NewsControl, Rect)> {
+        pack_control_areas(
+            area,
+            NewsControl::ALL.into_iter().map(|control| {
+                let width = self.control_label(control, workbench).chars().count() as u16;
+                (control, width)
+            }),
+        )
+    }
+
+    fn control_enabled(&self, control: NewsControl, workbench: &NewsWorkbench) -> bool {
+        let selected = self.selected_story(workbench);
+        match control {
+            NewsControl::Reset => self.filter.is_active() || self.show_calendar,
+            NewsControl::ReadState | NewsControl::Bookmark => selected.is_some(),
+            NewsControl::Security | NewsControl::InsertSheet => selected
+                .is_some_and(|story| !story.related_symbols.is_empty()),
+            _ => true,
+        }
+    }
+
+    fn control_active(&self, control: NewsControl, workbench: &NewsWorkbench) -> bool {
+        match control {
+            NewsControl::RegionUs => self.filter.region.as_deref() == Some("US"),
+            NewsControl::RegionEu => self.filter.region.as_deref() == Some("EU"),
+            NewsControl::RegionAsia => self.filter.region.as_deref() == Some("AS"),
+            NewsControl::Unread => self.filter.unread_only,
+            NewsControl::Saved => self.filter.bookmarked_only,
+            NewsControl::Calendar => self.show_calendar,
+            NewsControl::ReadState => self
+                .selected_story(workbench)
+                .is_some_and(|story| self.read.contains(&story.id)),
+            NewsControl::Bookmark => self
+                .selected_story(workbench)
+                .is_some_and(|story| self.bookmarks.contains(&story.id)),
+            NewsControl::Reset
+            | NewsControl::Security
+            | NewsControl::InsertSheet
+            | NewsControl::Refresh => false,
+        }
+    }
+
+    fn control_action_id(&self, control: NewsControl, workbench: &NewsWorkbench) -> String {
+        if control.is_story_specific() {
+            let identity = self
+                .selected_story(workbench)
+                .map_or(0, |story| story_identity(&story.id));
+            format!("control:{}:{identity:016x}", control.key())
+        } else {
+            format!("control:{}", control.key())
+        }
+    }
+
+    fn control_action_label(&self, control: NewsControl, workbench: &NewsWorkbench) -> String {
+        let selected = self.selected_story(workbench);
+        match control {
+            NewsControl::Reset => "Reset all news filters".to_owned(),
+            NewsControl::RegionUs => "Show United States news".to_owned(),
+            NewsControl::RegionEu => "Show European news".to_owned(),
+            NewsControl::RegionAsia => "Show Asian news".to_owned(),
+            NewsControl::Unread => "Toggle unread-only news".to_owned(),
+            NewsControl::Saved => "Toggle saved-only news".to_owned(),
+            NewsControl::Calendar => {
+                if self.show_calendar {
+                    "Return to the selected story".to_owned()
+                } else {
+                    "Open the economic event calendar".to_owned()
+                }
+            }
+            NewsControl::ReadState => selected.map_or_else(
+                || "Toggle selected story read state".to_owned(),
+                |story| format!("Toggle read state for {}", story.headline.title),
+            ),
+            NewsControl::Bookmark => selected.map_or_else(
+                || "Toggle selected story bookmark".to_owned(),
+                |story| format!("Toggle bookmark for {}", story.headline.title),
+            ),
+            NewsControl::Security => selected.map_or_else(
+                || "Open linked security research".to_owned(),
+                |story| {
+                    format!(
+                        "Open {} security research",
+                        story.related_symbols.first().map_or("linked", String::as_str)
+                    )
+                },
+            ),
+            NewsControl::InsertSheet => selected.map_or_else(
+                || "Insert linked security into Spreadsheet".to_owned(),
+                |story| {
+                    format!(
+                        "Insert {} into Spreadsheet",
+                        story.related_symbols.first().map_or("linked", String::as_str)
+                    )
+                },
+            ),
+            NewsControl::Refresh => "Refresh the live news feed".to_owned(),
+        }
+    }
+
+    fn activate_control(
+        &mut self,
+        control: NewsControl,
+        expected_identity: Option<u64>,
+        workbench: &NewsWorkbench,
+    ) -> bool {
+        if !self.control_enabled(control, workbench) {
+            return false;
+        }
+        let selected = self.selected_story(workbench);
+        if control.is_story_specific()
+            && expected_identity
+                != selected.map(|story| story_identity(&story.id))
+        {
+            return false;
+        }
+        match control {
+            NewsControl::Reset => {
+                self.filter = NewsFilter::default();
+                self.show_calendar = false;
+                self.selected = 0;
+            }
+            NewsControl::RegionUs => {
+                self.filter.region = Some("US".to_owned());
+                self.selected = 0;
+            }
+            NewsControl::RegionEu => {
+                self.filter.region = Some("EU".to_owned());
+                self.selected = 0;
+            }
+            NewsControl::RegionAsia => {
+                self.filter.region = Some("AS".to_owned());
+                self.selected = 0;
+            }
+            NewsControl::Unread => {
+                self.filter.unread_only = !self.filter.unread_only;
+                self.selected = 0;
+            }
+            NewsControl::Saved => {
+                self.filter.bookmarked_only = !self.filter.bookmarked_only;
+                self.selected = 0;
+            }
+            NewsControl::Calendar => self.show_calendar = !self.show_calendar,
+            NewsControl::ReadState => {
+                let story = selected.expect("enabled story control has a selected story");
+                if !self.read.insert(story.id.clone()) {
+                    self.read.remove(&story.id);
+                }
+            }
+            NewsControl::Bookmark => {
+                let story = selected.expect("enabled story control has a selected story");
+                if !self.bookmarks.insert(story.id.clone()) {
+                    self.bookmarks.remove(&story.id);
+                }
+            }
+            NewsControl::Security => {
+                let symbol = selected
+                    .and_then(|story| story.related_symbols.first())
+                    .expect("enabled security control has a linked symbol");
+                self.pending_intents.push(AppIntent::DispatchCommand {
+                    command: format!("SEC {symbol} US"),
+                    origin: ID,
+                });
+            }
+            NewsControl::InsertSheet => {
+                let symbol = selected
+                    .and_then(|story| story.related_symbols.first())
+                    .expect("enabled sheet control has a linked symbol");
+                self.pending_intents.push(AppIntent::DispatchCommand {
+                    command: format!("SHEET INSERT {symbol} US"),
+                    origin: ID,
+                });
+            }
+            NewsControl::Refresh => self.query.request_refresh(),
+        }
+        self.clamp_selection();
+        true
+    }
+
+    fn activate_current_control(
+        &mut self,
+        control: NewsControl,
+        workbench: &NewsWorkbench,
+    ) -> bool {
+        let identity = control.is_story_specific().then(|| {
+            self.selected_story(workbench)
+                .map_or(0, |story| story_identity(&story.id))
+        });
+        self.activate_control(control, identity, workbench)
+    }
+
+    fn header_actions(&self, area: Rect, workbench: &NewsWorkbench) -> Vec<WorkspaceAction> {
+        let areas = news_areas(area);
+        self.control_areas(areas.controls, workbench)
+            .into_iter()
+            .map(|(control, control_area)| {
+                let mut action = WorkspaceAction::new(
+                    self.control_action_id(control, workbench),
+                    self.control_action_label(control, workbench),
+                    control_area,
+                );
+                if !self.control_enabled(control, workbench) {
+                    action = action.disabled();
+                }
+                if control == NewsControl::Calendar && self.show_calendar {
+                    action = action.preferred();
+                }
+                action
+            })
+            .collect()
     }
 
     fn set_option(&mut self, option: &str) {
@@ -265,67 +523,40 @@ impl Workspace for NewsWorkspace {
             KeyCode::Enter | KeyCode::Char('v' | 'V') => self.open_selected_reader(&workbench),
             KeyCode::Char('o' | 'O') => self.open_selected_article(&workbench),
             KeyCode::Char('r') => {
-                if let Some(story) = self.selected_story(&workbench) {
-                    if !self.read.insert(story.id.clone()) {
-                        self.read.remove(&story.id);
-                    }
-                }
+                self.activate_current_control(NewsControl::ReadState, &workbench);
             }
             KeyCode::Char('b') => {
-                if let Some(story) = self.selected_story(&workbench) {
-                    if !self.bookmarks.insert(story.id.clone()) {
-                        self.bookmarks.remove(&story.id);
-                    }
-                }
+                self.activate_current_control(NewsControl::Bookmark, &workbench);
             }
             KeyCode::Char('u') => {
-                self.filter.unread_only = !self.filter.unread_only;
-                self.selected = 0;
+                self.activate_current_control(NewsControl::Unread, &workbench);
             }
             KeyCode::Char('m') => {
-                self.filter.bookmarked_only = !self.filter.bookmarked_only;
-                self.selected = 0;
+                self.activate_current_control(NewsControl::Saved, &workbench);
             }
-            KeyCode::Char('e') => self.show_calendar = !self.show_calendar,
-            KeyCode::F(9) => self.query.request_refresh(),
+            KeyCode::Char('e') => {
+                self.activate_current_control(NewsControl::Calendar, &workbench);
+            }
+            KeyCode::F(9) => {
+                self.activate_current_control(NewsControl::Refresh, &workbench);
+            }
             KeyCode::Char('0') => {
-                self.filter = NewsFilter::default();
-                self.show_calendar = false;
-                self.selected = 0;
+                self.activate_current_control(NewsControl::Reset, &workbench);
             }
             KeyCode::Char('1') => {
-                self.filter.region = Some("US".into());
-                self.selected = 0;
+                self.activate_current_control(NewsControl::RegionUs, &workbench);
             }
             KeyCode::Char('2') => {
-                self.filter.region = Some("EU".into());
-                self.selected = 0;
+                self.activate_current_control(NewsControl::RegionEu, &workbench);
             }
             KeyCode::Char('3') => {
-                self.filter.region = Some("AS".into());
-                self.selected = 0;
+                self.activate_current_control(NewsControl::RegionAsia, &workbench);
             }
             KeyCode::Char('s') => {
-                if let Some(symbol) = self
-                    .selected_story(&workbench)
-                    .and_then(|story| story.related_symbols.first())
-                {
-                    self.pending_intents.push(AppIntent::DispatchCommand {
-                        command: format!("SEC {symbol} US"),
-                        origin: ID,
-                    });
-                }
+                self.activate_current_control(NewsControl::Security, &workbench);
             }
             KeyCode::Char('a') => {
-                if let Some(symbol) = self
-                    .selected_story(&workbench)
-                    .and_then(|story| story.related_symbols.first())
-                {
-                    self.pending_intents.push(AppIntent::DispatchCommand {
-                        command: format!("SHEET INSERT {symbol} US"),
-                        origin: ID,
-                    });
-                }
+                self.activate_current_control(NewsControl::InsertSheet, &workbench);
             }
             _ => return false,
         }
@@ -354,50 +585,248 @@ impl Workspace for NewsWorkspace {
             return true;
         }
         let visible_count = self.visible_indices(&workbench).len();
-        let rows = Layout::vertical([Constraint::Length(3), Constraint::Min(10)]).split(area);
-        if rows[1].width < WIDE_NEWS_MIN_COLUMNS {
-            if self.show_calendar {
-                return crate::ui::contains(rows[1], event.column, event.row);
+        let areas = news_areas(area);
+        if is_primary_click(event, areas.header) {
+            for (control, control_area) in self.control_areas(areas.controls, &workbench) {
+                if contains(control_area, event.column, event.row) {
+                    if self.control_enabled(control, &workbench) {
+                        self.activate_current_control(control, &workbench);
+                    }
+                    return true;
+                }
             }
-            if let Some(index) = list_row_at(event, rows[1], visible_count) {
+            return true;
+        }
+        if areas.detail.is_none() {
+            if self.show_calendar {
+                return contains(areas.body, event.column, event.row);
+            }
+            if let Some(index) = list_row_at(event, areas.stories, visible_count) {
                 self.selected = index;
                 self.detail_scroll = 0;
                 self.article_status = "ENTER READS HERE · O OPENS THE PUBLISHER".to_owned();
                 return true;
             }
-            if let Some(key) = scroll_key(event, rows[1]) {
+            if let Some(key) = scroll_key(event, areas.body) {
                 return self.handle_key(key);
             }
             return false;
         }
-        let columns = Layout::horizontal([
-            Constraint::Percentage(39),
-            Constraint::Percentage(43),
-            Constraint::Percentage(18),
-        ])
-        .split(rows[1]);
-        if !self.show_calendar && is_primary_click(event, story_open_area(columns[1])) {
+        let detail = areas.detail.expect("wide news layout has detail area");
+        let events = areas.events.expect("wide news layout has events area");
+        if !self.show_calendar && is_primary_click(event, story_open_area(detail)) {
             self.open_selected_reader(&workbench);
             return true;
         }
-        if !self.show_calendar && is_primary_click(event, story_expand_area(columns[1])) {
+        if !self.show_calendar && is_primary_click(event, story_expand_area(detail)) {
             self.open_selected_article(&workbench);
             return true;
         }
-        if let Some(index) = list_row_at(event, columns[0], visible_count) {
+        if let Some(index) = list_row_at(event, areas.stories, visible_count) {
             self.selected = index;
             self.detail_scroll = 0;
             self.article_status = "ENTER READS HERE · O OPENS THE PUBLISHER".to_owned();
             return true;
         }
-        if is_primary_click(event, columns[2]) {
+        if is_primary_click(event, events) {
             self.show_calendar = true;
             return true;
         }
-        if let Some(key) = scroll_key(event, rows[1]) {
+        if let Some(key) = scroll_key(event, areas.body) {
             return self.handle_key(key);
         }
         false
+    }
+
+    fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
+        let workbench = self.query.load_workbench();
+        if self.detail_expanded {
+            let Some(selected) = self.selected_story(&workbench) else {
+                return vec![WorkspaceAction::new(
+                    "modal:close:missing",
+                    "Close unavailable news reader",
+                    expanded_close_area(area),
+                )
+                .preferred()];
+            };
+            let selected_identity = story_identity(&selected.id);
+            let mut actions = vec![WorkspaceAction::new(
+                format!("modal:close:{selected_identity:016x}"),
+                format!("Close reader for {}", short_title(&selected.headline.title)),
+                expanded_close_area(area),
+            )
+            .preferred()];
+            let mut open = WorkspaceAction::new(
+                format!("modal:web:{selected_identity:016x}"),
+                format!(
+                    "Open publisher page for {}",
+                    short_title(&selected.headline.title)
+                ),
+                expanded_open_area(area),
+            );
+            if selected.url.is_none() {
+                open = open.disabled();
+            }
+            actions.push(open);
+            return actions;
+        }
+        let Some(selected) = self.selected_story(&workbench) else {
+            return self.header_actions(area, &workbench);
+        };
+        let selected_identity = story_identity(&selected.id);
+
+        let areas = news_areas(area);
+        let visible = self.visible_indices(&workbench);
+        let visible_rows = usize::from(areas.stories.height.saturating_sub(2)).min(visible.len());
+        let mut actions = self.header_actions(area, &workbench);
+        if !self.show_calendar {
+            actions.extend(
+                visible
+                    .iter()
+                    .take(visible_rows)
+                    .enumerate()
+                    .filter_map(|(ordinal, index)| {
+                        let story = workbench.stories.get(*index)?;
+                        let identity = story_identity(&story.id);
+                        let action = WorkspaceAction::new(
+                            format!("story:{ordinal}:{identity:016x}"),
+                            format!("Read {}", short_title(&story.headline.title)),
+                            news_story_row_area(areas.stories, ordinal)?,
+                        );
+                        Some(if ordinal == self.selected {
+                            action.preferred()
+                        } else {
+                            action
+                        })
+                    }),
+            );
+        }
+        if let Some(detail) = areas.detail.filter(|_| !self.show_calendar) {
+            actions.push(WorkspaceAction::new(
+                format!("story-read:{selected_identity:016x}"),
+                format!("Read {} in terminal", short_title(&selected.headline.title)),
+                story_open_area(detail),
+            ));
+            let mut web = WorkspaceAction::new(
+                format!("story-web:{selected_identity:016x}"),
+                format!(
+                    "Open publisher page for {}",
+                    short_title(&selected.headline.title)
+                ),
+                story_expand_area(detail),
+            );
+            if selected.url.is_none() {
+                web = web.disabled();
+            }
+            actions.push(web);
+        }
+        if let Some(events) = areas.events.filter(|_| !self.show_calendar) {
+            actions.push(WorkspaceAction::new(
+                "view:events",
+                "Open the economic event calendar",
+                events,
+            ));
+        }
+        actions
+    }
+
+    fn activate_action(&mut self, id: &str) -> bool {
+        let workbench = self.query.load_workbench();
+        if let Some(identity) = id.strip_prefix("modal:close:") {
+            let missing = identity == "missing" && self.selected_story(&workbench).is_none();
+            if !self.detail_expanded
+                || (!missing && !selected_identity_matches(self, &workbench, identity))
+            {
+                return false;
+            }
+            self.toggle_expanded_detail();
+            return true;
+        }
+        if let Some(identity) = id.strip_prefix("modal:web:") {
+            if !self.detail_expanded
+                || !selected_identity_matches(self, &workbench, identity)
+                || self
+                    .selected_story(&workbench)
+                    .is_none_or(|story| story.url.is_none())
+            {
+                return false;
+            }
+            self.open_selected_article(&workbench);
+            return true;
+        }
+        if self.detail_expanded {
+            return false;
+        }
+        if id == "view:events" {
+            self.show_calendar = true;
+            return true;
+        }
+        if let Some(identity) = id.strip_prefix("story-read:") {
+            if self.show_calendar || !selected_identity_matches(self, &workbench, identity) {
+                return false;
+            }
+            self.open_selected_reader(&workbench);
+            return true;
+        }
+        if let Some(identity) = id.strip_prefix("story-web:") {
+            if self.show_calendar
+                || !selected_identity_matches(self, &workbench, identity)
+                || self
+                    .selected_story(&workbench)
+                    .is_none_or(|story| story.url.is_none())
+            {
+                return false;
+            }
+            self.open_selected_article(&workbench);
+            return true;
+        }
+        if let Some(row) = id.strip_prefix("story:") {
+            let Some((ordinal, identity)) = row.split_once(':') else {
+                return false;
+            };
+            let Ok(ordinal) = ordinal.parse::<usize>() else {
+                return false;
+            };
+            let visible = self.visible_indices(&workbench);
+            let Some(story) = visible
+                .get(ordinal)
+                .and_then(|index| workbench.stories.get(*index))
+            else {
+                return false;
+            };
+            if !identity_matches(&story.id, identity) {
+                return false;
+            }
+            self.selected = ordinal;
+            self.open_selected_reader(&workbench);
+            return true;
+        }
+        let Some(control_id) = id.strip_prefix("control:") else {
+            return false;
+        };
+        let (key, identity) = control_id
+            .split_once(':')
+            .map_or((control_id, None), |(key, identity)| (key, Some(identity)));
+        let Some(control) = NewsControl::from_key(key) else {
+            return false;
+        };
+        if control.is_story_specific() != identity.is_some() {
+            return false;
+        }
+        let expected_identity = match identity {
+            Some(identity) => {
+                let Some(identity) = parse_identity(identity) else {
+                    return false;
+                };
+                Some(identity)
+            }
+            None => None,
+        };
+        self.activate_control(control, expected_identity, &workbench)
+    }
+
+    fn is_modal_active(&self) -> bool {
+        self.detail_expanded
     }
 
     fn poll_intents(&mut self) -> Vec<AppIntent> {
@@ -418,6 +847,8 @@ impl Workspace for NewsWorkspace {
                 );
                 return;
             }
+            render_missing_expanded_story(frame, area);
+            return;
         }
         let visible = self.visible_indices(&workbench);
         let unread = workbench
@@ -426,7 +857,7 @@ impl Workspace for NewsWorkspace {
             .filter(|story| !self.read.contains(&story.id))
             .count();
         let feed_status = self.query.status();
-        let rows = Layout::vertical([Constraint::Length(3), Constraint::Min(10)]).split(area);
+        let areas = news_areas(area);
         let filter_label = format!(
             "REGION {}  TOPIC {}  SYMBOL {}  {}{}",
             self.filter.region.as_deref().unwrap_or("ALL"),
@@ -444,21 +875,31 @@ impl Workspace for NewsWorkspace {
             },
         );
         frame.render_widget(
+            terminal_block("NEWS", "FILTERS & WORKFLOW"),
+            areas.header,
+        );
+        frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(format!(" {} RESULTS  {unread} UNREAD  ", visible.len()), Style::new().bg(AMBER.into()).fg(BG.into()).bold()),
                 Span::styled(filter_label, INK),
-                Span::styled("  ENTER/V READ HERE · O WEB · R READ · 0 RESET · 1/2/3 REGION · U UNREAD · M SAVED · E EVENTS · S SECURITY · F9 REFRESH  ", MUTED),
+                Span::styled("  ", MUTED),
                 Span::styled(feed_status, YELLOW),
-            ])).block(terminal_block("NEWS", "FILTERS & WORKFLOW")),
-            rows[0],
+            ])),
+            areas.summary,
         );
-
-        let columns = Layout::horizontal([
-            Constraint::Percentage(39),
-            Constraint::Percentage(43),
-            Constraint::Percentage(18),
-        ])
-        .split(rows[1]);
+        for (control, control_area) in self.control_areas(areas.controls, &workbench) {
+            let style = if !self.control_enabled(control, &workbench) {
+                Style::new().fg(MUTED.into())
+            } else if self.control_active(control, &workbench) {
+                Style::new().bg(CYAN.into()).fg(BG.into()).bold()
+            } else {
+                Style::new().fg(AMBER.into())
+            };
+            frame.render_widget(
+                Paragraph::new(self.control_label(control, &workbench)).style(style),
+                control_area,
+            );
+        }
         let items = visible
             .iter()
             .enumerate()
@@ -488,26 +929,29 @@ impl Workspace for NewsWorkspace {
             })
             .collect::<Vec<_>>();
         let stories = List::new(items).block(terminal_block("TOP", "TOP NEWS"));
-        if rows[1].width < WIDE_NEWS_MIN_COLUMNS {
+        if areas.detail.is_none() {
             if self.show_calendar {
-                render_calendar(frame, rows[1], &workbench);
+                render_calendar(frame, areas.body, &workbench);
             } else {
-                frame.render_widget(stories, rows[1]);
+                frame.render_widget(stories, areas.stories);
             }
             return;
         }
-        frame.render_widget(stories, columns[0]);
+        frame.render_widget(stories, areas.stories);
+
+        let detail = areas.detail.expect("wide news layout has detail area");
+        let events = areas.events.expect("wide news layout has events area");
 
         if self.show_calendar {
-            render_calendar(frame, columns[1], &workbench);
+            render_calendar(frame, detail, &workbench);
         } else if let Some(story) = self.selected_story(&workbench) {
-            render_story(frame, columns[1], story, &self.article_status);
+            render_story(frame, detail, story, &self.article_status);
         } else {
             frame.render_widget(
                 Paragraph::new("NO STORIES MATCH THE ACTIVE FILTER\n\nPRESS 0 TO RESET")
                     .style(MUTED)
                     .block(terminal_block("READ", "STORY")),
-                columns[1],
+                detail,
             );
         }
 
@@ -530,9 +974,58 @@ impl Workspace for NewsWorkspace {
             Paragraph::new(upcoming)
                 .wrap(Wrap { trim: true })
                 .block(terminal_block("ECO", "EVENTS · E EXPAND")),
-            columns[2],
+            events,
         );
     }
+}
+
+fn story_identity(id: &str) -> u64 {
+    id.as_bytes().iter().fold(0xcbf29ce484222325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    })
+}
+
+fn parse_identity(identity: &str) -> Option<u64> {
+    (identity.len() == 16)
+        .then(|| u64::from_str_radix(identity, 16).ok())
+        .flatten()
+}
+
+fn identity_matches(story_id: &str, encoded: &str) -> bool {
+    parse_identity(encoded) == Some(story_identity(story_id))
+}
+
+fn selected_identity_matches(
+    workspace: &NewsWorkspace,
+    workbench: &NewsWorkbench,
+    encoded: &str,
+) -> bool {
+    workspace
+        .selected_story(workbench)
+        .is_some_and(|story| identity_matches(&story.id, encoded))
+}
+
+fn short_title(title: &str) -> String {
+    const LIMIT: usize = 96;
+    let mut characters = title.chars();
+    let shortened = characters.by_ref().take(LIMIT).collect::<String>();
+    if characters.next().is_some() {
+        format!("{shortened}…")
+    } else {
+        shortened
+    }
+}
+
+fn news_story_row_area(area: Rect, ordinal: usize) -> Option<Rect> {
+    let y = area.y.saturating_add(1 + u16::try_from(ordinal).ok()?);
+    (y < area.bottom().saturating_sub(1)).then(|| {
+        Rect::new(
+            area.x.saturating_add(1),
+            y,
+            area.width.saturating_sub(2),
+            1,
+        )
+    })
 }
 
 fn story_open_area(area: Rect) -> Rect {
@@ -643,6 +1136,29 @@ fn expanded_open_area(area: Rect) -> Rect {
         31.min(panel.width.saturating_sub(2)),
         1.min(panel.height),
     )
+}
+
+fn render_missing_expanded_story(frame: &mut Frame, area: Rect) {
+    let panel = expanded_panel_area(area);
+    frame.render_widget(Clear, panel);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled("THE SELECTED STORY IS NO LONGER IN THE LIVE FEED", YELLOW),
+            Line::raw(""),
+            Line::styled(
+                "Close the reader to return to the refreshed headline list.",
+                MUTED,
+            ),
+        ])
+        .wrap(Wrap { trim: true })
+        .block(terminal_block("READ", "STORY UNAVAILABLE")),
+        panel,
+    );
+    frame.render_widget(
+        Paragraph::new(" [ CLOSE · V / ESC ] ")
+            .style(Style::new().bg(CYAN.into()).fg(BG.into()).bold()),
+        expanded_close_area(area),
+    );
 }
 
 fn render_expanded_story(
@@ -985,7 +1501,7 @@ mod tests {
     fn clicking_a_headline_selects_its_story() {
         let mut workspace = NewsWorkspace::new(Arc::new(StubQuery));
 
-        assert!(workspace.handle_mouse(click(2, 5), Rect::new(0, 0, 120, 30)));
+        assert!(workspace.handle_mouse(click(2, 7), Rect::new(0, 0, 120, 30)));
 
         assert_eq!(workspace.selected, 1);
     }
@@ -1010,7 +1526,7 @@ mod tests {
         assert!(rendered.contains("TOP NEWS"));
         assert!(!rendered.contains("STORY DETAIL"));
 
-        assert!(workspace.handle_mouse(click(70, 5), area));
+        assert!(workspace.handle_mouse(click(70, 7), area));
         assert_eq!(workspace.selected, 1);
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)));
         terminal
@@ -1024,6 +1540,86 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(rendered.contains("ECONOMIC EVENT CALENDAR"));
+    }
+
+    #[test]
+    fn actions_share_geometry_revalidate_story_identity_and_trap_the_reader() {
+        let area = Rect::new(5, 3, 120, 30);
+        let mut workspace = NewsWorkspace::new(Arc::new(LinkedQuery));
+        let actions = workspace.actions(area);
+        let ids = actions
+            .iter()
+            .map(|action| action.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+
+        assert_eq!(ids.len(), actions.len());
+        assert!(actions.iter().all(|action| {
+            action.area.x >= area.x
+                && action.area.y >= area.y
+                && action.area.right() <= area.right()
+                && action.area.bottom() <= area.bottom()
+        }));
+        assert!(actions
+            .iter()
+            .any(|action| action.id.starts_with("story:0:") && action.preferred));
+        assert!(actions
+            .iter()
+            .any(|action| action.id.starts_with("story-read:")));
+        assert!(actions
+            .iter()
+            .any(|action| action.id.starts_with("story-web:") && action.enabled));
+        assert!(actions
+            .iter()
+            .any(|action| action.id == "view:events"));
+
+        let stale_read = actions
+            .iter()
+            .find(|action| action.id.starts_with("control:read-state:"))
+            .unwrap()
+            .id
+            .clone();
+        workspace.selected = 1;
+        assert!(!workspace.activate_action(&stale_read));
+
+        let second_story = workspace
+            .actions(area)
+            .into_iter()
+            .find(|action| action.id.starts_with("story:1:"))
+            .unwrap()
+            .id;
+        assert!(workspace.activate_action(&second_story));
+        assert!(workspace.is_modal_active());
+        assert_eq!(workspace.selected, 1);
+        let modal = workspace.actions(area);
+        assert_eq!(modal.len(), 2);
+        assert!(modal
+            .iter()
+            .any(|action| action.id.starts_with("modal:close:") && action.preferred));
+        assert!(modal
+            .iter()
+            .any(|action| action.id.starts_with("modal:web:") && !action.enabled));
+        assert!(modal
+            .iter()
+            .all(|action| action.id.starts_with("modal:")));
+        let close = modal
+            .iter()
+            .find(|action| action.id.starts_with("modal:close:"))
+            .unwrap()
+            .id
+            .clone();
+        assert!(workspace.activate_action(&close));
+        assert!(!workspace.is_modal_active());
+
+        let workbench = workspace.query.load_workbench();
+        let controls = news_areas(area).controls;
+        let asia = workspace
+            .control_areas(controls, &workbench)
+            .into_iter()
+            .find(|(control, _)| *control == NewsControl::RegionAsia)
+            .unwrap()
+            .1;
+        assert!(workspace.handle_mouse(click(asia.x, asia.y), area));
+        assert_eq!(workspace.filter.region.as_deref(), Some("AS"));
     }
 
     #[test]

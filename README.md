@@ -70,12 +70,20 @@ and Quit receives a prefix-free one- or two-letter label. Type a label to route
 there immediately, or press `Esc` to cancel. The labels use the familiar
 Vimium-style link-hint interaction while remaining terminal-native.
 
-Portfolio, Monitor, Desk, Security, and Chart extend follow hints and spatial focus
-inside the active panel. Their currently rendered tabs, rows, panes, and controls
+Portfolio, Monitor, Desk, Security, Chart, and News extend follow hints and spatial
+focus inside the active panel. Their currently rendered tabs, rows, panes, and controls
 receive labels and focus at their actual terminal coordinates; the natural
 selected or primary action becomes the restoration target. Off-screen, disabled,
 duplicate, and stale actions are not routable. Each feature owns activation and
 the shell remains unaware of portfolio, quote, or research domain behavior.
+
+News exposes its responsive filter strip, selected-story operations, visible
+headline rows, detail links, calendar events, and refresh control through the same
+geometry used for rendering and mouse input. Story actions carry a stable content
+identity and fail closed if a refresh replaces the selected item. While the article
+reader is open, keyboard and pointer input are trapped inside it and `F` labels only
+its close and available publisher-page actions; closing restores the ordinary shell
+escape hierarchy.
 
 Chart exposes direct `1D`, `1M`, `6M`, `YTD`, `1Y`, and `5Y` destinations plus
 normalization, moving-average kind and visibility, RSI, volume, SPY comparison,
@@ -167,6 +175,10 @@ excerpt and clearly direct you to the publisher. Downloaded bodies are bounded
 and transiently held in memory only. Below 90 columns—including a narrow Desk
 pane—the headline list uses the full width; Enter or `V` opens the reader and
 `E` swaps in the calendar rather than compressing three unreadable columns.
+Press `Esc` from the list to enter spatial focus, or `F` at any time, to route
+directly to filters, headline rows, story operations, calendar events, or refresh.
+Inside the reader those navigation modes are modal-scoped, so workspace hotkeys
+and navigation-rail clicks cannot leave an open article accidentally.
 
 Override the defaults with comma-separated feeds:
 

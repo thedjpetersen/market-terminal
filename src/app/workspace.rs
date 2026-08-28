@@ -317,6 +317,15 @@ pub trait Workspace: Send {
         false
     }
 
+    /// Reports a feature-owned modal that must trap shell navigation.
+    ///
+    /// While active, the application routes keys and pointer events only to the
+    /// owning workspace. Follow hints remain available, but contain only actions
+    /// returned by that modal.
+    fn is_modal_active(&self) -> bool {
+        false
+    }
+
     fn shell_chrome(&self) -> ShellChrome {
         ShellChrome::Standard
     }
@@ -481,6 +490,13 @@ impl WorkspaceRegistry {
             .iter_mut()
             .find(|entry| entry.descriptor().id == id)
             .is_some_and(|workspace| workspace.activate_action(action_id))
+    }
+
+    pub fn is_modal_active(&self, id: WorkspaceId) -> bool {
+        self.entries
+            .iter()
+            .find(|entry| entry.descriptor().id == id)
+            .is_some_and(|workspace| workspace.is_modal_active())
     }
 
     pub fn on_blur(&mut self, id: WorkspaceId) {

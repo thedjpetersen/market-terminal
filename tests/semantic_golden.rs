@@ -51,6 +51,16 @@ const GOLDENS: &[Golden] = &[
         hashes: [0x2585b21f3c947110, 0x3726a67132e1222d, 0xe0134fa41e96413d],
     },
     Golden {
+        name: "news",
+        prepare: prepare_news,
+        hashes: [0xe845a20f59083ce3, 0x559da760c32dc499, 0x58ab3ba74fbd5669],
+    },
+    Golden {
+        name: "news-reader",
+        prepare: prepare_news_reader,
+        hashes: [0xff94c4456267fe0f, 0x30c7fb0a3ae066b0, 0xe9b2272fa91ef6f1],
+    },
+    Golden {
         name: "panel-focus",
         prepare: prepare_panel_focus,
         hashes: [0x083f507844abbfca, 0xc81d613d8914778c, 0x7f9d0ce5b3f01b47],
@@ -124,6 +134,15 @@ fn prepare_risk(app: &mut App) {
 
 fn prepare_risk_history(app: &mut App) {
     dispatch(app, "RISK HISTORY");
+}
+
+fn prepare_news(app: &mut App) {
+    dispatch(app, "NEWS");
+}
+
+fn prepare_news_reader(app: &mut App) {
+    dispatch(app, "NEWS");
+    app.handle_key(key(KeyCode::Enter));
 }
 
 fn prepare_panel_focus(app: &mut App) {
