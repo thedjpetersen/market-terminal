@@ -544,123 +544,123 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
 
     let columns =
         Layout::horizontal([Constraint::Percentage(58), Constraint::Percentage(42)]).split(rows[1]);
-    let commands = app
-        .workspaces
-        .descriptors()
-        .map(|descriptor| {
-            Line::from(vec![
-                Span::styled(format!("{:<13}", descriptor.label), theme::AMBER),
-                Span::styled(descriptor.commands.join(" · "), theme::INK),
-            ])
+    let commands = app.help_commands();
+    let selected = app
+        .help_selected_index()
+        .min(commands.len().saturating_sub(1));
+    let visible_rows = usize::from(columns[0].height.saturating_sub(2)).max(1);
+    let offset = selected
+        .saturating_sub(visible_rows.saturating_sub(1))
+        .min(commands.len().saturating_sub(visible_rows));
+    let end = (offset + visible_rows).min(commands.len());
+    let command_lines = commands[offset..end]
+        .iter()
+        .enumerate()
+        .map(|(visible_index, command)| {
+            let index = offset + visible_index;
+            let marker = if index == selected { '›' } else { ' ' };
+            let line = format!("{marker} {:<16} {}", command.command, command.owner);
+            if index == selected {
+                Line::styled(
+                    line,
+                    Style::new()
+                        .bg(theme::CYAN.into())
+                        .fg(theme::BG.into())
+                        .bold(),
+                )
+            } else {
+                Line::styled(line, theme::INK)
+            }
         })
         .collect::<Vec<_>>();
+    let directory_title = format!("COMMANDS {}-{} / {}", offset + 1, end, commands.len());
     frame.render_widget(
-        Paragraph::new(commands)
-            .wrap(Wrap { trim: true })
-            .block(components::terminal_block("CMD", "COMMAND DIRECTORY")),
+        Paragraph::new(command_lines).block(components::terminal_block("CMD", &directory_title)),
         columns[0],
     );
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::styled("OPEN AND NAVIGATE", theme::AMBER),
-            Line::raw(format!(
-                "{:<11} Open command bar",
-                app.key_labels(&[ShellAction::OpenCommand])
-            )),
-            Line::raw(format!(
-                "Enter command / {} open focused row",
-                app.key_labels(&[ShellAction::Open])
-            )),
-            Line::raw("[KEY]      Open labeled workspace"),
-            Line::raw("Esc+arrows Panel focus; Enter interacts"),
-            Line::raw("F          Follow visible one/two-letter hints"),
-            Line::raw("A          Toggle AI drawer; Esc closes"),
-            Line::raw(format!(
-                "{:<11} Effective settings / setup",
-                app.key_labels(&[ShellAction::Settings])
-            )),
-            Line::raw(format!(
-                "{:<11} Next / previous color theme",
-                app.key_labels(&[ShellAction::NextTheme, ShellAction::PreviousTheme])
-            )),
-            Line::raw("Ctrl+B     ←/→ N/P panels · 1–9/0 select · ? help"),
-            Line::raw(format!(
-                "{} + JK  Move in lists and tables",
-                app.key_labels(&[
-                    ShellAction::Up,
-                    ShellAction::Down,
-                    ShellAction::Left,
-                    ShellAction::Right
-                ])
-            )),
-            Line::raw("Mouse      Click controls; wheel scrolls"),
-            Line::raw(""),
-            Line::styled("VI COMMAND EDITING", theme::AMBER),
-            Line::raw("Type normally in INSERT mode"),
-            Line::raw("Esc        Enter NORMAL; Esc again cancels"),
-            Line::raw("h/l 0/$    Character / line motions"),
-            Line::raw("w/b        Word motions"),
-            Line::raw("i/a I/A    Re-enter INSERT mode"),
-            Line::raw("x D dd     Delete char / tail / line"),
-            Line::raw("↑/↓        Recall command history"),
-            Line::raw("Ctrl+W/U   Delete word / clear line"),
-            Line::raw(""),
-            Line::styled("USEFUL COMMANDS", theme::AMBER),
-            Line::raw("HELP                 This guide"),
-            Line::raw("SETTINGS / THEME     Configure runtime / colors"),
-            Line::raw("$META / free text    AI infers a validated command"),
-            Line::raw("DESK                 Monitor + Chart + News"),
-            Line::raw("PORT IMPORT <CSV>    Import positions"),
-            Line::raw("PORT ACTIVITY        Open exact cash/activity ledger"),
-            Line::raw("PORT IMPORT ACTIVITY <CSV>  Import cash or broker activity"),
-            Line::raw("PORT PERFORMANCE     Show performance input coverage"),
-            Line::raw("PORT LOTS            Open exact tax-lot basis"),
-            Line::raw("PORT IMPORT LOTS <CSV>  Import broker open lots"),
-            Line::raw("PORT REALIZED        Open closed lots and realized gains"),
-            Line::raw("PORT IMPORT REALIZED <CSV>  Import broker closed lots"),
-            Line::raw("PORT TRADES          Open verified broker executions"),
-            Line::raw("PORT IMPORT TRADES <CSV>  Import broker order/fill history"),
-            Line::raw("PORT CONTRIBUTION    Open security contribution"),
-            Line::raw("PORT IMPORT CONTRIBUTION <CSV>  Import verified position period"),
-            Line::raw("PORT ATTRIBUTION     Open linked multi-period attribution"),
-            Line::raw("PORT IMPORT ATTRIBUTION <CSV>  Import verified period history"),
-            Line::raw("PORT RELOAD          Reload positions"),
-            Line::raw("SHEET IMPORT <CSV>   Replace active sheet"),
-            Line::raw("SHEET EXPORT <CSV>   Export active sheet"),
-            Line::raw("CHART <SYMBOL>       Provider OHLC history"),
-            Line::raw("  K                   Candles / line"),
-            Line::raw("NEWS                 Live headlines"),
-            Line::raw("  Enter/V/Click       Read article in MarketTerm"),
-            Line::raw("  O/Click             Open original in browser"),
-            Line::raw("  J/K/PgUp/PgDn/Wheel Scroll article reader"),
-            Line::raw("  R                   Mark story read/unread"),
-            Line::raw("AI <REQUEST>         Ask the assistant"),
-            Line::raw(""),
-            Line::styled("Ctrl+C always quits the terminal.", theme::MUTED),
-        ])
-        .wrap(Wrap { trim: true })
-        .block(components::terminal_block("KEY", "QUICK START")),
-        columns[1],
-    );
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(
-                    " ESC / {} ",
-                    app.key_labels(&[ShellAction::Quit, ShellAction::Help])
-                ),
-                Style::new()
-                    .bg(theme::AMBER.into())
-                    .fg(theme::BG.into())
-                    .bold(),
-            ),
-            Span::styled(
-                " CLOSE HELP   ·   CLICK A WORKSPACE TAB TO LEAVE",
-                theme::MUTED,
-            ),
-        ])),
-        rows[2],
-    );
+    if app.help_details_visible() {
+        let detail_lines = commands.get(selected).map_or_else(Vec::new, |command| {
+            let hotkey = command
+                .hotkey
+                .map(|hotkey| hotkey.to_ascii_uppercase().to_string())
+                .unwrap_or_else(|| "—".to_owned());
+            vec![
+                Line::from(vec![
+                    Span::styled("COMMAND      ", theme::AMBER),
+                    Span::styled(
+                        command.command.clone(),
+                        Style::new().fg(theme::INK.into()).bold(),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled("DESTINATION  ", theme::AMBER),
+                    Span::raw(command.owner.clone()),
+                ]),
+                Line::from(vec![
+                    Span::styled("ALIASES      ", theme::AMBER),
+                    Span::raw(command.aliases.join(" · ")),
+                ]),
+                Line::from(vec![
+                    Span::styled("HOTKEY       ", theme::AMBER),
+                    Span::raw(hotkey),
+                ]),
+                Line::raw(""),
+                Line::styled("INFORMATION", theme::AMBER),
+                Line::raw(command.description.clone()),
+            ]
+        });
+        frame.render_widget(
+            Paragraph::new(detail_lines)
+                .wrap(Wrap { trim: true })
+                .block(components::terminal_block("INFO", "COMMAND INFORMATION")),
+            columns[1],
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled("BROWSE THE DIRECTORY", theme::AMBER),
+                Line::raw("↑/↓ or J/K       Select command"),
+                Line::raw("PgUp/PgDn/Wheel Scroll commands"),
+                Line::raw("Enter            Open command information"),
+                Line::raw(""),
+                Line::styled("OPEN AND NAVIGATE", theme::AMBER),
+                Line::raw(format!(
+                    "{:<11} Open command bar",
+                    app.key_labels(&[ShellAction::OpenCommand])
+                )),
+                Line::raw("Esc+arrows Panel focus; Enter interacts"),
+                Line::raw("F          Follow visible hints"),
+                Line::raw("A          Toggle AI drawer"),
+                Line::raw(format!(
+                    "{:<11} Effective settings",
+                    app.key_labels(&[ShellAction::Settings])
+                )),
+                Line::raw(format!(
+                    "{:<11} Change color theme",
+                    app.key_labels(&[ShellAction::NextTheme, ShellAction::PreviousTheme])
+                )),
+                Line::raw(""),
+                Line::styled("USEFUL COMMANDS", theme::AMBER),
+                Line::raw("HELP                 This guide"),
+                Line::raw("PORT IMPORT <CSV>    Import positions"),
+                Line::raw("SHEET IMPORT <CSV>   Replace active sheet"),
+                Line::raw("CHART <SYMBOL>       Provider OHLC history"),
+                Line::raw("NEWS                 Live headlines"),
+                Line::raw("AI <REQUEST>         Ask the assistant"),
+                Line::raw(""),
+                Line::styled("Ctrl+C always quits the terminal.", theme::MUTED),
+            ])
+            .wrap(Wrap { trim: true })
+            .block(components::terminal_block("KEY", "QUICK START")),
+            columns[1],
+        );
+    }
+    let footer = if app.help_details_visible() {
+        " ↑/↓ SELECT · ENTER RUN COMMAND · ESC BACK "
+    } else {
+        " ↑/↓ SELECT · PGUP/PGDN/WHEEL SCROLL · ENTER COMMAND INFO · ESC CLOSE "
+    };
+    frame.render_widget(Paragraph::new(Line::styled(footer, theme::MUTED)), rows[2]);
     frame.render_widget(
         Paragraph::new(" [ CLOSE ] ").style(
             Style::new()

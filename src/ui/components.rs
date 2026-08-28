@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::ui::theme::{self, AMBER, BG, INK};
 
-pub fn terminal_block(code: &'static str, title: &'static str) -> Block<'static> {
+pub fn terminal_block(code: &str, title: &str) -> Block<'static> {
     Block::new()
         .borders(Borders::ALL)
         .border_style(AMBER)

@@ -59,6 +59,15 @@ pub(crate) struct ShellHint {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HelpCommand {
+    pub command: String,
+    pub owner: String,
+    pub aliases: Vec<String>,
+    pub hotkey: Option<char>,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct HintMode {
     input: String,
     hints: Vec<ShellHint>,
@@ -87,6 +96,8 @@ pub struct App {
     command_delete_pending: bool,
     history_cursor: Option<usize>,
     pub(crate) help_visible: bool,
+    pub(crate) help_selected: usize,
+    pub(crate) help_details_visible: bool,
     pub(crate) settings_visible: bool,
     pub(crate) settings_first_run: bool,
     runtime_settings: RuntimeSettingsSummary,
@@ -125,6 +136,8 @@ impl App {
             command_delete_pending: false,
             history_cursor: None,
             help_visible: false,
+            help_selected: 0,
+            help_details_visible: false,
             settings_visible: false,
             settings_first_run: false,
             runtime_settings: RuntimeSettingsSummary::demo(),
@@ -223,6 +236,81 @@ impl App {
 
     pub fn help_visible(&self) -> bool {
         self.help_visible
+    }
+
+    pub(crate) fn help_commands(&self) -> Vec<HelpCommand> {
+        let mut commands = Vec::new();
+        let shell_commands = [
+            (
+                "HELP",
+                &["HELP"][..],
+                "Open this interactive command guide.",
+            ),
+            (
+                "SETTINGS",
+                &["SETTINGS", "CONFIG", "SETUP"][..],
+                "Open effective runtime settings and setup guidance.",
+            ),
+            (
+                "CONFIG",
+                &["SETTINGS", "CONFIG", "SETUP"][..],
+                "Open effective runtime settings and setup guidance.",
+            ),
+            (
+                "SETUP",
+                &["SETTINGS", "CONFIG", "SETUP"][..],
+                "Open effective runtime settings and setup guidance.",
+            ),
+            (
+                "THEME",
+                &["THEME"][..],
+                "Cycle the terminal color theme or select a named theme.",
+            ),
+        ];
+        commands.extend(
+            shell_commands
+                .into_iter()
+                .map(|(command, aliases, description)| HelpCommand {
+                    command: command.to_owned(),
+                    owner: "SHELL".to_owned(),
+                    aliases: aliases.iter().map(|alias| (*alias).to_owned()).collect(),
+                    hotkey: None,
+                    description: description.to_owned(),
+                }),
+        );
+
+        for descriptor in self.workspaces.descriptors() {
+            let aliases = descriptor
+                .commands
+                .iter()
+                .map(|command| (*command).to_owned())
+                .collect::<Vec<_>>();
+            let hotkey = (descriptor.hotkey != '\0').then_some(descriptor.hotkey);
+            commands.extend(descriptor.commands.iter().map(|command| HelpCommand {
+                command: (*command).to_owned(),
+                owner: descriptor.label.to_owned(),
+                aliases: aliases.clone(),
+                hotkey,
+                description: format!(
+                    "Open or update the {} workspace through its exact command boundary.",
+                    descriptor.label
+                ),
+            }));
+        }
+        commands.sort_by(|left, right| left.command.cmp(&right.command));
+        commands
+    }
+
+    pub(crate) fn help_selected_command(&self) -> Option<HelpCommand> {
+        self.help_commands().into_iter().nth(self.help_selected)
+    }
+
+    pub(crate) fn help_selected_index(&self) -> usize {
+        self.help_selected
+    }
+
+    pub(crate) fn help_details_visible(&self) -> bool {
+        self.help_details_visible
     }
 
     pub fn settings_visible(&self) -> bool {
@@ -378,7 +466,7 @@ impl App {
                     ..
                 } => {
                     self.close_settings();
-                    self.help_visible = true;
+                    self.open_help();
                 }
                 keymap::BindingMatch::Action {
                     action: ShellAction::OpenCommand,
@@ -407,45 +495,7 @@ impl App {
         }
 
         if self.help_visible {
-            if key.code == KeyCode::Esc {
-                self.help_visible = false;
-                return;
-            }
-            match self.keymap.resolve(key) {
-                keymap::BindingMatch::Action {
-                    action: ShellAction::Quit | ShellAction::Help,
-                    ..
-                } => self.help_visible = false,
-                keymap::BindingMatch::Action {
-                    action: ShellAction::OpenCommand,
-                    ..
-                } => {
-                    self.help_visible = false;
-                    self.open_command();
-                }
-                keymap::BindingMatch::Action {
-                    action: ShellAction::Settings,
-                    ..
-                } => {
-                    self.help_visible = false;
-                    self.open_settings();
-                }
-                keymap::BindingMatch::Action {
-                    action: ShellAction::NextTheme,
-                    ..
-                } => {
-                    self.cycle_theme(1);
-                    self.persist_session();
-                }
-                keymap::BindingMatch::Action {
-                    action: ShellAction::PreviousTheme,
-                    ..
-                } => {
-                    self.cycle_theme(-1);
-                    self.persist_session();
-                }
-                _ => {}
-            }
+            self.handle_help_key(key);
             return;
         }
 
@@ -557,6 +607,163 @@ impl App {
         }
     }
 
+    fn open_help(&mut self) {
+        self.help_visible = true;
+        self.help_details_visible = false;
+        let last = self.help_commands().len().saturating_sub(1);
+        self.help_selected = self.help_selected.min(last);
+    }
+
+    fn close_help(&mut self) {
+        self.help_visible = false;
+        self.help_details_visible = false;
+    }
+
+    fn move_help_selection(&mut self, amount: isize) {
+        let last = self.help_commands().len().saturating_sub(1);
+        self.help_selected = if amount.is_negative() {
+            self.help_selected.saturating_sub(amount.unsigned_abs())
+        } else {
+            self.help_selected.saturating_add(amount as usize).min(last)
+        };
+    }
+
+    fn invoke_selected_help_command(&mut self) {
+        let Some(command) = self.help_selected_command() else {
+            return;
+        };
+        self.close_help();
+        self.command = command.command;
+        self.command_cursor = self.command.len();
+        self.execute_command();
+    }
+
+    fn handle_help_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                if self.help_details_visible {
+                    self.help_details_visible = false;
+                } else {
+                    self.close_help();
+                }
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k' | 'K') => {
+                self.move_help_selection(-1);
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j' | 'J') => {
+                self.move_help_selection(1);
+                return;
+            }
+            KeyCode::PageUp => {
+                self.move_help_selection(-10);
+                return;
+            }
+            KeyCode::PageDown => {
+                self.move_help_selection(10);
+                return;
+            }
+            KeyCode::Home => {
+                self.help_selected = 0;
+                return;
+            }
+            KeyCode::End => {
+                self.help_selected = self.help_commands().len().saturating_sub(1);
+                return;
+            }
+            KeyCode::Left if self.help_details_visible => {
+                self.help_details_visible = false;
+                return;
+            }
+            KeyCode::Right if !self.help_details_visible => {
+                self.help_details_visible = self.help_selected_command().is_some();
+                return;
+            }
+            KeyCode::Enter => {
+                if self.help_details_visible {
+                    self.invoke_selected_help_command();
+                } else if self.help_selected_command().is_some() {
+                    self.help_details_visible = true;
+                }
+                return;
+            }
+            _ => {}
+        }
+
+        match self.keymap.resolve(key) {
+            keymap::BindingMatch::Action {
+                action: ShellAction::Quit | ShellAction::Help,
+                ..
+            } => self.close_help(),
+            keymap::BindingMatch::Action {
+                action: ShellAction::OpenCommand,
+                ..
+            } => {
+                self.close_help();
+                self.open_command();
+            }
+            keymap::BindingMatch::Action {
+                action: ShellAction::Settings,
+                ..
+            } => {
+                self.close_help();
+                self.open_settings();
+            }
+            keymap::BindingMatch::Action {
+                action: ShellAction::NextTheme,
+                ..
+            } => {
+                self.cycle_theme(1);
+                self.persist_session();
+            }
+            keymap::BindingMatch::Action {
+                action: ShellAction::PreviousTheme,
+                ..
+            } => {
+                self.cycle_theme(-1);
+                self.persist_session();
+            }
+            keymap::BindingMatch::Action {
+                action: ShellAction::Up,
+                ..
+            } => self.move_help_selection(-1),
+            keymap::BindingMatch::Action {
+                action: ShellAction::Down,
+                ..
+            } => self.move_help_selection(1),
+            keymap::BindingMatch::Action {
+                action: ShellAction::PageUp,
+                ..
+            } => self.move_help_selection(-10),
+            keymap::BindingMatch::Action {
+                action: ShellAction::PageDown,
+                ..
+            } => self.move_help_selection(10),
+            keymap::BindingMatch::Action {
+                action: ShellAction::Open,
+                ..
+            } => {
+                if self.help_details_visible {
+                    self.invoke_selected_help_command();
+                } else if self.help_selected_command().is_some() {
+                    self.help_details_visible = true;
+                }
+            }
+            keymap::BindingMatch::Disabled
+            | keymap::BindingMatch::Unmapped
+            | keymap::BindingMatch::Action {
+                action:
+                    ShellAction::NextPanel
+                    | ShellAction::PreviousPanel
+                    | ShellAction::Refresh
+                    | ShellAction::Left
+                    | ShellAction::Right,
+                ..
+            } => {}
+        }
+    }
+
     fn handle_bound_action(&mut self, action: ShellAction) {
         match action {
             ShellAction::Quit => self.should_quit = true,
@@ -564,7 +771,7 @@ impl App {
             ShellAction::NextPanel => self.switch_relative_workspace(true),
             ShellAction::PreviousPanel => self.switch_relative_workspace(false),
             ShellAction::Settings => self.open_settings(),
-            ShellAction::Help => self.help_visible = true,
+            ShellAction::Help => self.open_help(),
             ShellAction::NextTheme => {
                 self.cycle_theme(1);
                 self.persist_session();
@@ -602,13 +809,27 @@ impl App {
         self.panel_focus = false;
         self.focused_action = None;
         self.hint_mode = None;
+        let target = ui::hit_test(self, frame_area, event.column, event.row);
+        if self.help_visible
+            && matches!(target, Some(ShellClickTarget::HelpOverlay))
+            && matches!(
+                event.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            )
+        {
+            self.move_help_selection(if matches!(event.kind, MouseEventKind::ScrollUp) {
+                -1
+            } else {
+                1
+            });
+            return;
+        }
         if self.workspaces.is_modal_active(self.active_workspace) {
             let workspace_area = ui::ShellLayout::new(frame_area).workspace;
             self.workspaces
                 .handle_mouse(self.active_workspace, event, workspace_area);
             return;
         }
-        let target = ui::hit_test(self, frame_area, event.column, event.row);
         if !matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
             if let Some(ShellClickTarget::Workspace(area)) = target {
                 self.workspaces
@@ -619,7 +840,7 @@ impl App {
 
         match target {
             Some(ShellClickTarget::CommandInput) => {
-                self.help_visible = false;
+                self.close_help();
                 self.close_settings();
                 self.close_assistant_drawer();
                 if self.input_mode != InputMode::Command {
@@ -628,7 +849,7 @@ impl App {
                 self.open_command();
             }
             Some(ShellClickTarget::CommandGo) => {
-                self.help_visible = false;
+                self.close_help();
                 self.close_settings();
                 self.close_assistant_drawer();
                 if self.input_mode == InputMode::Command {
@@ -639,7 +860,7 @@ impl App {
                 }
             }
             Some(ShellClickTarget::Navigation(id)) => {
-                self.help_visible = false;
+                self.close_help();
                 self.close_settings();
                 self.cancel_command();
                 if Some(id) == self.assistant_workspace {
@@ -664,7 +885,7 @@ impl App {
             Some(ShellClickTarget::AssistantClose) | Some(ShellClickTarget::AssistantBackdrop) => {
                 self.close_assistant_drawer()
             }
-            Some(ShellClickTarget::HelpClose) => self.help_visible = false,
+            Some(ShellClickTarget::HelpClose) => self.close_help(),
             Some(ShellClickTarget::HelpOverlay) => {}
             Some(ShellClickTarget::SettingsClose) => self.close_settings(),
             Some(ShellClickTarget::SettingsThemePrevious) => {
@@ -697,7 +918,7 @@ impl App {
         });
         if opens_help {
             self.settings_visible = false;
-            self.help_visible = true;
+            self.open_help();
         } else if opens_settings {
             self.open_settings();
         } else if let Some(invocation) = invocation
@@ -1064,7 +1285,7 @@ impl App {
             KeyCode::Right | KeyCode::Down | KeyCode::Char('n' | 'N') => {
                 self.switch_relative_workspace(true);
             }
-            KeyCode::Char('?') => self.help_visible = true,
+            KeyCode::Char('?') => self.open_help(),
             KeyCode::Char(character @ '1'..='9') => {
                 self.switch_to_navigation_index(character as usize - '1' as usize);
             }
@@ -1185,7 +1406,7 @@ impl App {
 
     fn open_hints(&mut self) {
         self.close_assistant_drawer();
-        self.help_visible = false;
+        self.close_help();
         self.close_settings();
         self.panel_focus = false;
         self.focused_action = None;
@@ -1294,7 +1515,7 @@ impl App {
                 }
             }
             ShellHintTarget::Command => self.open_command(),
-            ShellHintTarget::Help => self.help_visible = true,
+            ShellHintTarget::Help => self.open_help(),
             ShellHintTarget::Settings => self.open_settings(),
             ShellHintTarget::Quit => self.should_quit = true,
         }
@@ -1390,7 +1611,7 @@ impl App {
     }
 
     fn open_settings(&mut self) {
-        self.help_visible = false;
+        self.close_help();
         self.close_assistant_drawer();
         self.settings_visible = true;
     }
@@ -2031,6 +2252,82 @@ mod tests {
     }
 
     #[test]
+    fn help_directory_scrolls_with_keys_and_mouse_without_leaving_bounds() {
+        let frame_area = Rect::new(0, 0, 120, 30);
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        let command_count = app.help_commands().len();
+
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.help_selected, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.help_selected, 1);
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
+        assert!(app.help_selected > 1);
+        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+        assert_eq!(app.help_selected, command_count - 1);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.help_selected, command_count - 1);
+        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+        assert_eq!(app.help_selected, 0);
+
+        app.handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 4,
+                row: 8,
+                modifiers: KeyModifiers::NONE,
+            },
+            frame_area,
+        );
+        assert_eq!(app.help_selected, 1);
+    }
+
+    #[test]
+    fn enter_opens_help_command_details_then_invokes_the_exact_command() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        for _ in 0..app.help_commands().len() {
+            if app.help_selected_command().map(|command| command.command) == Some("PORT".to_owned())
+            {
+                break;
+            }
+            app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+        assert_eq!(
+            app.help_selected_command().map(|command| command.command),
+            Some("PORT".to_owned())
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.help_visible());
+        assert!(app.help_details_visible);
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.help_visible());
+        assert_eq!(app.active_workspace(), PORTFOLIO);
+        assert_eq!(
+            app.recent_commands().first().map(String::as_str),
+            Some("PORT")
+        );
+    }
+
+    #[test]
+    fn escape_returns_from_help_details_before_closing_the_overlay() {
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.help_details_visible);
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.help_visible());
+        assert!(!app.help_details_visible);
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.help_visible());
+    }
+
+    #[test]
     fn help_screen_renders_commands_and_has_a_clickable_close_control() {
         let frame_area = Rect::new(0, 0, 160, 48);
         let mut app = bootstrap::demo_app();
@@ -2050,6 +2347,21 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("MARKET TERMINAL GUIDE"));
         assert!(rendered.contains("PORT IMPORT <CSV>"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        terminal
+            .draw(|frame| crate::ui::render(frame, &app))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("COMMAND INFORMATION"));
+        assert!(rendered.contains("Open or update"));
+        assert!(rendered.contains("ENTER RUN COMMAND"));
 
         let close = crate::ui::help_close_area(crate::ui::ShellLayout::new(frame_area).workspace);
         app.handle_mouse(left_click(close.x + 1, close.y), frame_area);
