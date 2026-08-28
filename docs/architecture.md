@@ -200,6 +200,16 @@ or Security internals. Activating a live row reloads the already-composed read
 model and rechecks its row index plus symbol or content digest, so an asynchronous
 portfolio/news replacement cannot route a stale dashboard target.
 
+Alerts is the durable-mutation action reference. A feature-owned geometry module
+partitions the register, audit panel, and complete footer controls and supplies
+the exact rectangles used by rendering, pointer hit testing, spatial focus, and
+follow hints. Row action IDs include both the visible index and the full domain
+rule ID; activation rechecks both against the current register before changing
+selection. Stateful controls re-evaluate lifecycle and trigger state immediately
+before mutation, so an acknowledgement that became unavailable is rejected.
+Security promotion emits an application intent only after re-reading the selected
+rule, preserving bounded-context ownership while preventing stale-symbol routing.
+
 ## Cross-feature events
 
 The application kernel owns an in-process, typed event bus. Subscriptions are

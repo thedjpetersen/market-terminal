@@ -70,7 +70,7 @@ and Quit receives a prefix-free one- or two-letter label. Type a label to route
 there immediately, or press `Esc` to cancel. The labels use the familiar
 Vimium-style link-hint interaction while remaining terminal-native.
 
-Portfolio, Monitor, Desk, Security, Chart, News, and Overview extend follow hints
+Portfolio, Monitor, Desk, Security, Chart, News, Overview, and Alerts extend follow hints
 and spatial focus inside the active panel. Their currently rendered tabs, rows, panes, and controls
 receive labels and focus at their actual terminal coordinates; the natural
 selected or primary action becomes the restoration target. Off-screen, disabled,
@@ -323,6 +323,15 @@ shutdown, so terminal input does not wait on disk I/O. The register is bounded
 to 256 rules, 256 audit entries per rule, and 1,024 recent evaluation IDs per
 rule. Delivery is still explicitly `SIMULATED · LOCAL ONLY`; persistence does
 not send an external notification or place an order.
+
+Press `Esc` to focus the selected alert, use the arrows to move among visible
+rules and controls, and press `Enter` to activate. `F` labels every visible rule,
+the enable/disable, acknowledgement, Security, and refresh controls, plus the
+header refresh surface. Rendering, mouse input, spatial focus, and follow hints
+share the same responsive rectangles. Rule actions include the exact rule ID and
+are revalidated before selection; acknowledgement is unavailable unless the
+current rule is triggered, and Security routing rechecks the current selection
+before dispatching its symbol.
 
 ## Live instrument master
 

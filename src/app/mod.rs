@@ -1657,6 +1657,7 @@ mod tests {
     use crate::{
         bootstrap,
         features::{
+            alerts::ID as ALERTS,
             assistant::ID as ASSISTANT,
             charting::ID as CHARTING,
             news::ID as NEWS,
@@ -2670,8 +2671,7 @@ mod tests {
             .workspace_actions(workspace_area, 128)
             .iter()
             .any(|action| {
-                action.id == "control:normalization"
-                    && action.label.contains("% CHANGE")
+                action.id == "control:normalization" && action.label.contains("% CHANGE")
             }));
         assert!(app.shell_hints().is_none());
     }
@@ -2732,6 +2732,85 @@ mod tests {
             app.active_workspace(),
             app.workspaces.resolve_target("risk").unwrap()
         );
+        assert!(app.shell_hints().is_none());
+    }
+
+    #[test]
+    fn alerts_follow_hints_select_rules_and_route_to_security() {
+        let mut app = bootstrap::demo_app();
+        let frame_area = Rect::new(0, 0, 160, 48);
+        let workspace_area = crate::ui::ShellLayout::new(frame_area).workspace;
+        app.set_terminal_area(frame_area);
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "ALERTS".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.active_workspace(), ALERTS);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        let target = loop {
+            app.advance_tick();
+            if let Some(action) = app
+                .workspace_actions(workspace_area, 128)
+                .into_iter()
+                .find(|action| action.id.starts_with("rule:1:"))
+            {
+                break action;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for demo alert rules"
+            );
+            std::thread::yield_now();
+        };
+        assert!(!target.preferred);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let rule_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action == &target.id
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in rule_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        assert!(app
+            .workspace_actions(workspace_area, 128)
+            .iter()
+            .any(|action| action.id == target.id && action.preferred));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let security_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action == "control:security"
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in security_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.advance_tick();
+        assert_eq!(app.active_workspace(), SECURITY);
         assert!(app.shell_hints().is_none());
     }
 

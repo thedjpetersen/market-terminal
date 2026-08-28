@@ -61,6 +61,11 @@ const GOLDENS: &[Golden] = &[
         hashes: [0xff94c4456267fe0f, 0x30c7fb0a3ae066b0, 0xe9b2272fa91ef6f1],
     },
     Golden {
+        name: "alerts",
+        prepare: prepare_alerts,
+        hashes: [0x51989730c470a18b, 0x18db67236fdd3013, 0xc889b0b131fdc289],
+    },
+    Golden {
         name: "panel-focus",
         prepare: prepare_panel_focus,
         hashes: [0x4e829f219f1a7025, 0x4ba506f53b8f138a, 0x117a60a4e7574cc9],
@@ -143,6 +148,12 @@ fn prepare_news(app: &mut App) {
 fn prepare_news_reader(app: &mut App) {
     dispatch(app, "NEWS");
     app.handle_key(key(KeyCode::Enter));
+}
+
+fn prepare_alerts(app: &mut App) {
+    dispatch(app, "ALERTS");
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    app.advance_tick();
 }
 
 fn prepare_panel_focus(app: &mut App) {

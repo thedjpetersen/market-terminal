@@ -6,7 +6,7 @@ use std::thread::JoinHandle;
 
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Rect},
     style::Style,
     text::{Line, Span},
     widgets::{Cell, Paragraph, Row, Table, Wrap},
@@ -14,15 +14,19 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
+    app::{AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor},
     ui::{
         components::terminal_block,
-        scroll_key, table_row_at,
+        contains, is_primary_click, scroll_key,
         theme::{AMBER, BG, CYAN, GREEN, INK, MUTED, RED, YELLOW},
     },
 };
 
 use super::{
+    controls::{
+        alert_areas, pack_control_areas, panel_header_area, table_row_area, visible_rule_rows,
+        AlertControl,
+    },
     AlertCondition, AlertEvaluation, AlertLifecycle, AlertRule, AlertRuleId, AlertRulesState,
     AlertSnapshot, AlertStateError, AlertStateStore, AlertStatus, AlertsError, AlertsQuery,
     DebouncePolicy, InstrumentRef, ID, MAX_ALERT_RULES,
@@ -61,6 +65,7 @@ pub struct AlertsWorkspace {
     persist_receiver: Option<Receiver<AlertPersistResult>>,
     pending_persist: Option<AlertRulesState>,
     persist_worker: Option<JoinHandle<()>>,
+    pending_intents: Vec<AppIntent>,
 }
 
 impl AlertsWorkspace {
@@ -167,6 +172,7 @@ impl AlertsWorkspace {
             persist_receiver,
             pending_persist: None,
             persist_worker,
+            pending_intents: Vec::new(),
         };
         workspace.refresh();
         workspace
@@ -285,6 +291,93 @@ impl AlertsWorkspace {
             .selected
             .saturating_add_signed(delta)
             .min(self.rules.len() - 1);
+    }
+
+    fn selected_rule(&self) -> Option<&AlertRule> {
+        self.rules.get(self.selected)
+    }
+
+    fn control_text(&self, control: AlertControl) -> String {
+        match control {
+            AlertControl::Toggle => match self.selected_rule().map(|rule| rule.lifecycle) {
+                Some(AlertLifecycle::Enabled) => " SPACE/E DISABLE ".to_owned(),
+                Some(AlertLifecycle::Disabled) => " SPACE/E ENABLE ".to_owned(),
+                None => " SPACE/E ENABLE ".to_owned(),
+            },
+            AlertControl::Acknowledge => " A ACKNOWLEDGE ".to_owned(),
+            AlertControl::Security => " S SECURITY ".to_owned(),
+            AlertControl::Refresh => " R REFRESH ".to_owned(),
+        }
+    }
+
+    fn control_action_label(&self, control: AlertControl) -> String {
+        let selected = self.selected_rule();
+        match control {
+            AlertControl::Toggle => selected.map_or_else(
+                || "Enable or disable the selected alert".to_owned(),
+                |rule| {
+                    let verb = if rule.lifecycle == AlertLifecycle::Enabled {
+                        "Disable"
+                    } else {
+                        "Enable"
+                    };
+                    format!("{verb} {} alert", rule.instrument.symbol)
+                },
+            ),
+            AlertControl::Acknowledge => selected.map_or_else(
+                || "Acknowledge the selected alert".to_owned(),
+                |rule| format!("Acknowledge {} trigger", rule.instrument.symbol),
+            ),
+            AlertControl::Security => selected.map_or_else(
+                || "Open selected alert instrument in Security".to_owned(),
+                |rule| format!("Open {} security research", rule.instrument.symbol),
+            ),
+            AlertControl::Refresh => "Refresh live alert evaluation".to_owned(),
+        }
+    }
+
+    fn control_enabled(&self, control: AlertControl) -> bool {
+        match control {
+            AlertControl::Toggle | AlertControl::Security => self.selected_rule().is_some(),
+            AlertControl::Acknowledge => self
+                .selected_rule()
+                .is_some_and(|rule| matches!(rule.status, AlertStatus::Triggered { .. })),
+            AlertControl::Refresh => true,
+        }
+    }
+
+    fn control_areas(&self, area: Rect) -> Vec<(AlertControl, Rect)> {
+        pack_control_areas(
+            area,
+            AlertControl::ALL.into_iter().map(|control| {
+                let width = self.control_text(control).chars().count() as u16;
+                (control, width)
+            }),
+        )
+    }
+
+    fn activate_control(&mut self, control: AlertControl) -> bool {
+        if !self.control_enabled(control) {
+            return false;
+        }
+        match control {
+            AlertControl::Toggle => self.toggle_selected(),
+            AlertControl::Acknowledge => self.acknowledge_selected(),
+            AlertControl::Security => {
+                let Some(symbol) = self
+                    .selected_rule()
+                    .map(|rule| rule.instrument.symbol.clone())
+                else {
+                    return false;
+                };
+                self.pending_intents.push(AppIntent::DispatchCommand {
+                    command: format!("SEC {symbol} US"),
+                    origin: ID,
+                });
+            }
+            AlertControl::Refresh => self.refresh(),
+        }
+        true
     }
 
     fn toggle_selected(&mut self) {
@@ -461,78 +554,120 @@ impl Workspace for AlertsWorkspace {
                 true
             }
             KeyCode::Char(' ') | KeyCode::Char('e') => {
-                self.toggle_selected();
+                let _ = self.activate_control(AlertControl::Toggle);
                 true
             }
             KeyCode::Char('a') => {
-                self.acknowledge_selected();
+                let _ = self.activate_control(AlertControl::Acknowledge);
                 true
             }
-            KeyCode::Char('r') => {
-                self.refresh();
-                true
-            }
+            KeyCode::Char('s') => self.activate_control(AlertControl::Security),
+            KeyCode::Char('r') => self.activate_control(AlertControl::Refresh),
             _ => false,
         }
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
-        let areas = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(8),
-            Constraint::Length(7),
-            Constraint::Length(2),
-        ])
-        .split(area);
-        if crate::ui::is_primary_click(event, areas[0]) {
-            return self.handle_key(KeyEvent::new(
-                KeyCode::Char('r'),
-                crossterm::event::KeyModifiers::NONE,
-            ));
-        }
-        if let Some(index) = table_row_at(event, areas[1], self.rules.len()) {
-            self.selected = index;
-            return true;
-        }
-        if crate::ui::is_primary_click(event, areas[3]) {
-            let controls = [
-                (" ↑↓/JK SELECT  ", None),
-                ("SPACE/E ENABLE/DISABLE  ", Some(KeyCode::Char(' '))),
-                ("A ACKNOWLEDGE  ", Some(KeyCode::Char('a'))),
-                ("R REFRESH LIVE EVALUATION  ", Some(KeyCode::Char('r'))),
-            ];
-            let mut x = areas[3].x;
-            for (label, key) in controls {
-                let width = label.chars().count() as u16;
-                if event.column >= x && event.column < x.saturating_add(width) {
-                    return key.is_none_or(|key| {
-                        self.handle_key(KeyEvent::new(key, crossterm::event::KeyModifiers::NONE))
-                    });
+        let areas = alert_areas(area);
+        if is_primary_click(event, area) {
+            for action in self.actions(area) {
+                if action.enabled && contains(action.area, event.column, event.row) {
+                    return self.activate_action(&action.id);
                 }
-                x = x.saturating_add(width);
             }
-            return true;
         }
-        if let Some(key) = scroll_key(event, areas[1]) {
+        if let Some(key) = scroll_key(event, areas.rules) {
             return self.handle_key(key);
         }
         false
     }
 
+    fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
+        let areas = alert_areas(area);
+        let visible_rows = visible_rule_rows(areas.rules, self.rules.len());
+        let preferred_row = (self.selected < visible_rows)
+            .then_some(self.selected)
+            .or_else(|| (visible_rows > 0).then_some(0));
+        let mut actions = self
+            .rules
+            .iter()
+            .take(visible_rows)
+            .enumerate()
+            .filter_map(|(index, rule)| {
+                let area = table_row_area(areas.rules, index)?;
+                let mut action = WorkspaceAction::new(
+                    format!("rule:{index}:{}", rule.id),
+                    format!(
+                        "Select {} {} alert",
+                        rule.instrument.symbol,
+                        rule.condition.label()
+                    ),
+                    area,
+                );
+                if preferred_row == Some(index) {
+                    action = action.preferred();
+                }
+                Some(action)
+            })
+            .collect::<Vec<_>>();
+        actions.extend(
+            self.control_areas(areas.controls)
+                .into_iter()
+                .map(|(control, area)| {
+                    let mut action = WorkspaceAction::new(
+                        control.action_id(),
+                        self.control_action_label(control),
+                        area,
+                    );
+                    if !self.control_enabled(control) {
+                        action = action.disabled();
+                    }
+                    action
+                }),
+        );
+        let mut refresh = WorkspaceAction::new(
+            "control:refresh-header",
+            "Refresh live alert evaluation from the header",
+            panel_header_area(areas.header),
+        );
+        if preferred_row.is_none() {
+            refresh = refresh.preferred();
+        }
+        actions.push(refresh);
+        actions
+    }
+
+    fn activate_action(&mut self, id: &str) -> bool {
+        if id == "control:refresh-header" {
+            return self.activate_control(AlertControl::Refresh);
+        }
+        if let Some(control) = AlertControl::from_action_id(id) {
+            return self.activate_control(control);
+        }
+        let Some(rule) = id.strip_prefix("rule:") else {
+            return false;
+        };
+        let Some((index, expected_id)) = rule.split_once(':') else {
+            return false;
+        };
+        let Ok(index) = index.parse::<usize>() else {
+            return false;
+        };
+        if self.rules.get(index).map(|rule| rule.id.as_str()) != Some(expected_id) {
+            return false;
+        }
+        self.selected = index;
+        true
+    }
+
     fn poll_intents(&mut self) -> Vec<AppIntent> {
         self.poll_refresh();
         self.poll_persistence();
-        Vec::new()
+        std::mem::take(&mut self.pending_intents)
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
-        let areas = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(8),
-            Constraint::Length(7),
-            Constraint::Length(2),
-        ])
-        .split(area);
+        let areas = alert_areas(area);
         let (triggered, acknowledged, disabled) = status_counts(&self.rules);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
@@ -547,7 +682,7 @@ impl Workspace for AlertsWorkspace {
                 Span::styled(&self.status, YELLOW),
             ]))
             .block(terminal_block("ALERTS", "RULE REGISTER")),
-            areas[0],
+            areas.header,
         );
 
         let header = Row::new([
@@ -604,7 +739,7 @@ impl Workspace for AlertsWorkspace {
             .header(header)
             .column_spacing(1)
             .block(terminal_block("RULES", "LOCAL EVALUATION STATE")),
-            areas[1],
+            areas.rules,
         );
 
         frame.render_widget(
@@ -617,22 +752,23 @@ impl Workspace for AlertsWorkspace {
             ))
             .wrap(Wrap { trim: true })
             .block(terminal_block("AUDIT", "SELECTED RULE")),
-            areas[2],
+            areas.audit,
         );
 
+        for (control, control_area) in self.control_areas(areas.controls) {
+            let style = if self.control_enabled(control) {
+                Style::new().fg(AMBER.into())
+            } else {
+                Style::new().fg(MUTED.into())
+            };
+            frame.render_widget(
+                Paragraph::new(self.control_text(control)).style(style),
+                control_area,
+            );
+        }
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(" ↑↓/JK ", AMBER),
-                Span::styled("SELECT  ", MUTED),
-                Span::styled("SPACE/E ", AMBER),
-                Span::styled("ENABLE/DISABLE  ", MUTED),
-                Span::styled("A ", AMBER),
-                Span::styled("ACKNOWLEDGE  ", MUTED),
-                Span::styled("R ", AMBER),
-                Span::styled("REFRESH LIVE EVALUATION  ", MUTED),
-                Span::styled("SIMULATED · LOCAL ONLY · NO EXTERNAL NOTIFICATION", YELLOW),
-            ])),
-            areas[3],
+            Paragraph::new(" SIMULATED · LOCAL ONLY · NO EXTERNAL NOTIFICATION").style(YELLOW),
+            areas.disclosure,
         );
     }
 }
@@ -809,7 +945,10 @@ fn selected_detail(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, sync::Mutex};
+    use std::{
+        collections::{HashSet, VecDeque},
+        sync::Mutex,
+    };
 
     use crossterm::event::KeyModifiers;
 
@@ -864,6 +1003,15 @@ mod tests {
         }
     }
 
+    fn click(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
     fn stub_query(triggered: bool) -> Arc<dyn AlertsQuery> {
         let rule = AlertRule::new(
             AlertRuleId::new("stub:aapl"),
@@ -915,6 +1063,64 @@ mod tests {
         ));
         workspace.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
         assert_eq!(workspace.rules[0].lifecycle, AlertLifecycle::Disabled);
+    }
+
+    #[test]
+    fn actions_share_geometry_revalidate_rule_ids_and_route_security() {
+        let area = Rect::new(0, 0, 120, 36);
+        let mut workspace = AlertsWorkspace::new(stub_query(true));
+        settle(&mut workspace);
+
+        let actions = workspace.actions(area);
+        let ids = actions
+            .iter()
+            .map(|action| action.id.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(ids.len(), actions.len());
+        assert!(actions.iter().all(|action| {
+            action.area.width > 0
+                && action.area.height > 0
+                && action.area.x >= area.x
+                && action.area.y >= area.y
+                && action.area.right() <= area.right()
+                && action.area.bottom() <= area.bottom()
+        }));
+        let rule = actions
+            .iter()
+            .find(|action| action.id.starts_with("rule:0:"))
+            .unwrap()
+            .clone();
+        assert!(rule.preferred);
+        assert!(actions
+            .iter()
+            .any(|action| action.id == "control:acknowledge" && action.enabled));
+
+        let acknowledge = actions
+            .iter()
+            .find(|action| action.id == "control:acknowledge")
+            .unwrap();
+        assert!(workspace.handle_mouse(click(acknowledge.area.x, acknowledge.area.y), area));
+        assert!(matches!(
+            workspace.rules[0].status,
+            AlertStatus::Acknowledged { .. }
+        ));
+        assert!(workspace
+            .actions(area)
+            .iter()
+            .any(|action| action.id == "control:acknowledge" && !action.enabled));
+
+        assert!(workspace.activate_action("control:security"));
+        assert_eq!(
+            workspace.poll_intents(),
+            vec![AppIntent::DispatchCommand {
+                command: "SEC AAPL US".to_owned(),
+                origin: ID,
+            }]
+        );
+
+        workspace.rules[0].id = AlertRuleId::new("replacement:aapl");
+        assert!(!workspace.activate_action(&rule.id));
+        assert!(!workspace.activate_action("rule:999:missing"));
     }
 
     #[test]

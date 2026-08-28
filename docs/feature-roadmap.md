@@ -194,6 +194,16 @@ move to its own crate later without changing its public vocabulary.
   identity are rechecked against the latest composed snapshot before routing.
   Narrow packing excludes partial controls and the updated Overview, panel-focus,
   follow-hint, and Help frames are locked at all three supported sizes.
+- **Complete:** Alerts action routing as the durable-mutation reference: visible
+  rule rows, enable/disable, acknowledgement, Security promotion, footer refresh,
+  and header refresh share one responsive geometry across rendering, mouse,
+  spatial focus, and follow hints. Row actions carry exact rule IDs and fail
+  closed after insertion, removal, or reorder; acknowledgement is omitted from
+  routing unless the latest state is triggered; Security promotion revalidates
+  the selected rule before emitting a shell command. Feature and shell tests
+  exercise geometry, disabled controls, stale IDs, pointer activation, generated
+  hint labels, and cross-workspace routing, while Alerts frames are locked at all
+  three supported sizes.
 - **Complete:** source-derived OpenTerminalUI capability ledger pinned to an
   exact upstream tree, with stable `OTUI-*` IDs, implementation-maturity labels,
   repository-relative evidence, owners, priorities, gaps, acceptance-test IDs,
@@ -287,7 +297,7 @@ continues.
 | --- | --- | --- | --- |
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
 | Mission Control, launchpad, ticker tape | Partial | Overview, Desk, Markets, persisted active workspace | Add configurable launch tiles, live pulse strip, priority stack, and saved role presets. |
-| Keyboard navigation and icon rail | Partial | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, Chart periods/studies/comparisons/inspection/modes/promotion/refresh, modal-safe News filters/headlines/story/calendar/reader actions, and Overview periods/cards/live holdings/headlines/context controls | Adopt the action contract in remaining Alerts and Spreadsheet rows, buttons, controls, and tables. |
+| Keyboard navigation and icon rail | Partial | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, Chart periods/studies/comparisons/inspection/modes/promotion/refresh, modal-safe News filters/headlines/story/calendar/reader actions, Overview periods/cards/live holdings/headlines/context controls, and Alerts rows/mutations/Security/refresh controls | Adopt the action contract in the remaining Spreadsheet cells, formula controls, table actions, and overlays. |
 | Saved views and workspace presets | Partial | Workspace order, active workspace, layout and command history persist | Persist/restore view parameters, filters, selected instrument, table columns, chart state, pane geometry, and Trader/Quant/PM/Risk/Ops presets. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
 | Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
@@ -411,8 +421,7 @@ and every visible study, comparison, inspection, mode, Spreadsheet, and refresh
 control through one responsive render/mouse/action geometry. Period and mutable
 state are revalidated on activation, disabled cursor directions disappear from
 the shell registry, the active period restores focus, and an application test
-routes generated labels through both a period and a stateful control. Alerts and
-Spreadsheet remain to adopt the contract. News now derives filters,
+routes generated labels through both a period and a stateful control. News now derives filters,
 visible headline rows, selected-story commands, detail links, calendar events,
 and refresh from a shared responsive geometry. Story identities are revalidated
 against the latest feed before activation. Its full-screen reader is the first
@@ -425,6 +434,13 @@ It emits only shell intents across bounded contexts and revalidates row identity
 against the latest composed snapshot. An application test routes real generated
 labels through a period and into Risk; feature tests cover shared mouse geometry,
 stale headline replacement, duplicate IDs, narrow packing, and focus preference.
+Alerts now derives visible rule rows and its mutation, Security, and refresh
+controls from one responsive geometry. Opaque row IDs include the exact domain
+rule ID and are revalidated against the current register; disabled acknowledgement
+actions are excluded by the shell; pointer and keyboard activation share the same
+feature-owned path. A shell test selects a nonpreferred rule through a generated
+label and follows the selected symbol into Security. Spreadsheet is the only
+remaining P0 workspace adopter.
 `tests/architecture_boundaries.rs` now enforces
 dependency direction on every CI run. The first remediation moved Assistant's portfolio
 context behind an Assistant-owned port and composition-root translator, and
