@@ -6,6 +6,7 @@ use ratatui::{layout::Rect, Frame};
 pub(super) const MAX_COMMAND_BYTES: usize = 4_096;
 const MAX_COMMAND_TOKENS: usize = 64;
 const MAX_COMMAND_TOKEN_BYTES: usize = 512;
+const MAX_WORKSPACE_ACTIONS: usize = 26 * 26;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WorkspaceId(&'static str);
@@ -193,6 +194,34 @@ pub struct WorkspaceNavigationItem {
     pub hotkey: Option<char>,
 }
 
+/// A visible, stable feature-owned destination for spatial focus and follow hints.
+///
+/// The shell treats the identifier as opaque. Features calculate rectangles from
+/// the same area they render into and retain ownership of activation semantics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceAction {
+    pub id: String,
+    pub label: String,
+    pub area: Rect,
+    pub enabled: bool,
+}
+
+impl WorkspaceAction {
+    pub fn new(id: impl Into<String>, label: impl Into<String>, area: Rect) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            area,
+            enabled: true,
+        }
+    }
+
+    pub fn disabled(mut self) -> Self {
+        self.enabled = false;
+        self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellContext {
     pub active_workspace: WorkspaceId,
@@ -263,7 +292,22 @@ pub trait Workspace: Send {
         false
     }
 
-    fn shell_chrome(&self) -> ShellChrome { ShellChrome::Standard }
+    /// Describes visible feature-local actions in the current render area.
+    ///
+    /// IDs must remain stable while follow mode is open. The registry fails
+    /// closed on duplicate, empty, oversized, disabled, or out-of-bounds actions.
+    fn actions(&self, _area: Rect) -> Vec<WorkspaceAction> {
+        Vec::new()
+    }
+
+    /// Activates one action previously returned from [`Workspace::actions`].
+    fn activate_action(&mut self, _id: &str) -> bool {
+        false
+    }
+
+    fn shell_chrome(&self) -> ShellChrome {
+        ShellChrome::Standard
+    }
 
     /// Direct feature hotkeys are optional. Existing descriptors can opt out with `\0`.
     fn hotkey(&self) -> Option<char> {
@@ -400,6 +444,50 @@ impl WorkspaceRegistry {
             .iter_mut()
             .find(|entry| entry.descriptor().id == id)
             .is_some_and(|workspace| workspace.handle_mouse(event, area))
+    }
+
+    pub fn actions(&self, id: WorkspaceId, area: Rect, limit: usize) -> Vec<WorkspaceAction> {
+        let Some(workspace) = self
+            .entries
+            .iter()
+            .find(|entry| entry.descriptor().id == id)
+        else {
+            return Vec::new();
+        };
+        let mut seen = HashSet::new();
+        workspace
+            .actions(area)
+            .into_iter()
+            .filter(|action| {
+                action.enabled
+                    && !action.id.is_empty()
+                    && action.id.len() <= 128
+                    && !action.label.is_empty()
+                    && action.label.len() <= 256
+                    && action.area.width > 0
+                    && action.area.height > 0
+                    && action.area.x >= area.x
+                    && action.area.y >= area.y
+                    && action.area.right() <= area.right()
+                    && action.area.bottom() <= area.bottom()
+                    && seen.insert(action.id.clone())
+            })
+            .take(limit.min(MAX_WORKSPACE_ACTIONS))
+            .collect()
+    }
+
+    pub fn activate_action(&mut self, id: WorkspaceId, action_id: &str, area: Rect) -> bool {
+        if !self
+            .actions(id, area, MAX_WORKSPACE_ACTIONS)
+            .iter()
+            .any(|action| action.id == action_id)
+        {
+            return false;
+        }
+        self.entries
+            .iter_mut()
+            .find(|entry| entry.descriptor().id == id)
+            .is_some_and(|workspace| workspace.activate_action(action_id))
     }
 
     pub fn on_blur(&mut self, id: WorkspaceId) {
@@ -554,6 +642,8 @@ mod tests {
         hotkey: Option<char>,
         favorite: bool,
         invocation: Option<Arc<Mutex<Option<CommandInvocation>>>>,
+        actions: Vec<WorkspaceAction>,
+        activated: Option<Arc<Mutex<Vec<String>>>>,
     }
 
     impl Stub {
@@ -563,6 +653,8 @@ mod tests {
                 hotkey: (descriptor.hotkey != '\0').then_some(descriptor.hotkey),
                 favorite: true,
                 invocation: None,
+                actions: Vec::new(),
+                activated: None,
             }
         }
     }
@@ -582,6 +674,19 @@ mod tests {
             if let Some(captured) = &self.invocation {
                 *captured.lock().expect("capture lock") = Some(invocation.clone());
             }
+            true
+        }
+        fn actions(&self, _area: Rect) -> Vec<WorkspaceAction> {
+            self.actions.clone()
+        }
+        fn activate_action(&mut self, id: &str) -> bool {
+            let Some(activated) = &self.activated else {
+                return false;
+            };
+            activated
+                .lock()
+                .expect("activation capture lock")
+                .push(id.to_owned());
             true
         }
     }
@@ -692,6 +797,35 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, favorite);
         assert_eq!(items[0].hotkey, None);
+    }
+
+    #[test]
+    fn action_registry_bounds_validates_deduplicates_and_activates() {
+        let id = WorkspaceId::new("actions");
+        let activated = Arc::new(Mutex::new(Vec::new()));
+        let area = Rect::new(10, 5, 40, 20);
+        let workspace = Stub {
+            actions: vec![
+                WorkspaceAction::new("row:0", "Open first row", Rect::new(11, 8, 20, 1)),
+                WorkspaceAction::new("row:0", "Duplicate", Rect::new(11, 9, 20, 1)),
+                WorkspaceAction::new("disabled", "Disabled", Rect::new(11, 10, 20, 1)).disabled(),
+                WorkspaceAction::new("outside", "Outside", Rect::new(0, 0, 2, 1)),
+                WorkspaceAction::new("row:1", "Open second row", Rect::new(11, 11, 20, 1)),
+            ],
+            activated: Some(Arc::clone(&activated)),
+            ..Stub::new(descriptor(id, 'a', &["ACTIONS"]))
+        };
+        let mut registry = WorkspaceRegistry::new(vec![Box::new(workspace)]);
+
+        let actions = registry.actions(id, area, 1);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].id, "row:0");
+        assert!(registry.activate_action(id, "row:0", area));
+        assert!(!registry.activate_action(id, "disabled", area));
+        assert_eq!(
+            *activated.lock().expect("activation capture lock"),
+            ["row:0"]
+        );
     }
 
     #[test]

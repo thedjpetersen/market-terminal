@@ -17,6 +17,10 @@ bootstrap ──▶ app kernel
 
 - `app` owns lifecycle, input modes, keyboard/mouse routing, and the stable
   `Workspace` plug-in contract. It has no market or portfolio business rules.
+  Visible feature-local destinations are published as bounded `WorkspaceAction`
+  values with opaque stable IDs, labels, enabled state, and render-relative
+  rectangles. The registry rejects invalid geometry and duplicate or oversized
+  actions; activation is revalidated against the current feature state.
   Its generic `DeskWorkspace` composes three existing workspace instances and
   routes focus/render/input without importing their domain models.
   It snapshots its shell state through the persistence context's narrow
@@ -134,12 +138,18 @@ on that concrete adapter.
 1. Create `src/features/<function>/` with `domain.rs`, `port.rs`, and
    `workspace.rs`.
 2. Implement the `Workspace` contract and publish a unique `WorkspaceId`,
-   hotkey, and command aliases.
+   hotkey, and command aliases. Publish visible rows, tabs, and controls through
+   `actions` and handle their opaque IDs through `activate_action` when the
+   feature has local destinations that should participate in follow/spatial
+   routing.
 3. Add an infrastructure adapter for the feature-owned port.
 4. Register the workspace in `bootstrap.rs`.
 
 No root router match, shared screen state, or central data trait needs to be
-edited. The registry validates duplicate IDs and hotkeys at startup.
+edited. The registry validates duplicate IDs and hotkeys at startup. Follow
+hints remain shell-owned, but their feature targets and activation semantics do
+not leak into the shell; Portfolio's tabs, security rows, and reload control are
+the initial reference implementation.
 
 ## Cross-feature events
 

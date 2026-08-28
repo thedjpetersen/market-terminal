@@ -1,9 +1,7 @@
 use std::{io, time::Duration};
 
 use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind,
-    },
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind},
     execute,
 };
 use ratatui::DefaultTerminal;
@@ -20,6 +18,7 @@ pub fn run(mut app: App, terminal: &mut DefaultTerminal) -> io::Result<()> {
     let _mouse_capture = MouseCaptureGuard::enable()?;
     while !app.should_quit() {
         let frame_area = terminal.draw(|frame| render(frame, &app))?.area;
+        app.set_terminal_area(frame_area);
         if let Some(input) = read_input_event()? {
             match input {
                 Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),

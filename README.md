@@ -66,6 +66,13 @@ and Quit receives a prefix-free one- or two-letter label. Type a label to route
 there immediately, or press `Esc` to cancel. The labels use the familiar
 Vimium-style link-hint interaction while remaining terminal-native.
 
+Portfolio is the first workspace to extend follow hints inside the active
+panel. Its currently rendered view tabs, security-capable table rows, and reload
+control receive labels at their actual terminal coordinates; off-screen,
+disabled, duplicate, and stale actions are not routable. The bounded
+feature-owned action contract will be adopted by the remaining workspaces
+without teaching the shell their domain behavior.
+
 `DESK` (aliases `SPLIT` and `DASHBOARD`) opens the combined workspace adapted
 from `alphai-tui`. Press `Tab`/`Shift+Tab` or `1`/`2`/`3` to focus Monitor,
 Chart, or News. Clicking inside a pane focuses it and sends subsequent keys to

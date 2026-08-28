@@ -55,7 +55,7 @@ impl ShellLayout {
         }
     }
 
-    fn for_app(app: &App, area: Rect) -> Self {
+    pub(crate) fn for_app(app: &App, area: Rect) -> Self {
         if uses_immersive_shell(app) {
             Self {
                 header: Rect::default(),
@@ -398,6 +398,28 @@ fn render_shell_hints(frame: &mut Frame, layout: ShellLayout, app: &App) {
                 1,
             ),
         );
+    }
+
+    for action in app.workspace_actions(layout.workspace, hints.len()) {
+        let target = ShellHintTarget::WorkspaceAction {
+            workspace: app.active_workspace(),
+            action: action.id.clone(),
+        };
+        let Some(hint) = hints
+            .iter()
+            .find(|hint| hint.code.starts_with(input) && hint.target == target)
+        else {
+            continue;
+        };
+        let width = (hint.code.len() as u16)
+            .saturating_add(2)
+            .min(action.area.width);
+        if width > 0 {
+            frame.render_widget(
+                Paragraph::new(format!(" {} ", hint.code)).style(badge_style),
+                Rect::new(action.area.x, action.area.y, width, 1),
+            );
+        }
     }
 
     let utility_hints = hints

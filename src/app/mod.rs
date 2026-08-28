@@ -33,14 +33,19 @@ pub(crate) use keymap::{Keymap, ShellAction};
 pub use settings::RuntimeSettingsSummary;
 pub use workspace::{
     AppIntent, CommandArgument, CommandInvocation, CommandParseError, ShellChrome, ShellContext,
-    Workspace, WorkspaceDescriptor, WorkspaceId, WorkspaceNavigationItem, WorkspaceRegistry,
+    Workspace, WorkspaceAction, WorkspaceDescriptor, WorkspaceId, WorkspaceNavigationItem,
+    WorkspaceRegistry,
 };
 
 const HINT_ALPHABET: &[u8] = b"ASDFGHJKLQWERTYUIOPZXCVBNM";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ShellHintTarget {
     Workspace(WorkspaceId),
+    WorkspaceAction {
+        workspace: WorkspaceId,
+        action: String,
+    },
     Command,
     Help,
     Settings,
@@ -57,6 +62,7 @@ pub(crate) struct ShellHint {
 struct HintMode {
     input: String,
     hints: Vec<ShellHint>,
+    workspace_area: Rect,
 }
 
 struct PendingCommandInference {
@@ -80,6 +86,7 @@ pub struct App {
     pub(crate) tmux_prefix_pending: bool,
     panel_focus: bool,
     hint_mode: Option<HintMode>,
+    terminal_area: Rect,
     assistant_workspace: Option<WorkspaceId>,
     assistant_drawer_visible: bool,
     pub(crate) ticks: u64,
@@ -116,6 +123,7 @@ impl App {
             tmux_prefix_pending: false,
             panel_focus: false,
             hint_mode: None,
+            terminal_area: Rect::new(0, 0, 120, 36),
             assistant_workspace,
             assistant_drawer_visible: false,
             ticks: 0,
@@ -248,6 +256,20 @@ impl App {
 
     pub fn panel_focus(&self) -> bool {
         self.panel_focus
+    }
+
+    pub fn set_terminal_area(&mut self, area: Rect) {
+        if area.width == 0 || area.height == 0 || area == self.terminal_area {
+            return;
+        }
+        self.terminal_area = area;
+        if self.hint_mode.take().is_some() {
+            self.command_feedback = Some("HINTS CANCELED · TERMINAL RESIZED".to_owned());
+        }
+    }
+
+    pub(crate) fn workspace_actions(&self, area: Rect, limit: usize) -> Vec<WorkspaceAction> {
+        self.workspaces.actions(self.active_workspace, area, limit)
     }
 
     pub(crate) fn shell_hints(&self) -> Option<(&str, &[ShellHint])> {
@@ -1027,7 +1049,7 @@ impl App {
         self.help_visible = false;
         self.close_settings();
         self.panel_focus = false;
-        let targets = self
+        let mut targets = self
             .workspaces
             .navigation_items()
             .map(|item| ShellHintTarget::Workspace(item.id))
@@ -1038,6 +1060,16 @@ impl App {
                 ShellHintTarget::Quit,
             ])
             .collect::<Vec<_>>();
+        let workspace_area = ui::ShellLayout::new(self.terminal_area).workspace;
+        let remaining = HINT_ALPHABET.len().pow(2).saturating_sub(targets.len());
+        targets.extend(
+            self.workspace_actions(workspace_area, remaining)
+                .into_iter()
+                .map(|action| ShellHintTarget::WorkspaceAction {
+                    workspace: self.active_workspace,
+                    action: action.id,
+                }),
+        );
         let hints = hint_codes(targets.len())
             .zip(targets)
             .map(|(code, target)| ShellHint { code, target })
@@ -1045,6 +1077,7 @@ impl App {
         self.hint_mode = Some(HintMode {
             input: String::new(),
             hints,
+            workspace_area,
         });
     }
 
@@ -1090,14 +1123,15 @@ impl App {
         let exact = matches
             .iter()
             .find(|hint| hint.code == input)
-            .map(|hint| hint.target);
+            .map(|hint| hint.target.clone());
         if let Some(target) = exact {
+            let workspace_area = mode.workspace_area;
             self.hint_mode = None;
-            self.activate_hint(target);
+            self.activate_hint(target, workspace_area);
         }
     }
 
-    fn activate_hint(&mut self, target: ShellHintTarget) {
+    fn activate_hint(&mut self, target: ShellHintTarget, workspace_area: Rect) {
         match target {
             ShellHintTarget::Workspace(id) if Some(id) == self.assistant_workspace => {
                 self.open_assistant_drawer();
@@ -1105,6 +1139,15 @@ impl App {
             ShellHintTarget::Workspace(id) => {
                 self.activate_workspace(id);
                 self.workspaces.on_focus(id);
+            }
+            ShellHintTarget::WorkspaceAction { workspace, action } => {
+                if workspace != self.active_workspace
+                    || !self
+                        .workspaces
+                        .activate_action(workspace, &action, workspace_area)
+                {
+                    self.command_feedback = Some(format!("ACTION UNAVAILABLE · {action}"));
+                }
             }
             ShellHintTarget::Command => self.open_command(),
             ShellHintTarget::Help => self.help_visible = true,
@@ -1991,6 +2034,95 @@ mod tests {
     }
 
     #[test]
+    fn follow_hints_activate_feature_owned_tabs_and_rows() {
+        let mut app = bootstrap::demo_app();
+        app.set_terminal_area(Rect::new(0, 0, 160, 48));
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "PORT".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let attribution_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action == "view:attribution"
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        let shell_layout = crate::ui::ShellLayout::new(Rect::new(0, 0, 160, 48));
+        let attribution_area = app
+            .workspace_actions(shell_layout.workspace, 128)
+            .into_iter()
+            .find(|action| action.id == "view:attribution")
+            .unwrap()
+            .area;
+        let mut terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render(frame, &app))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let badge = (0..attribution_code.len() + 2)
+            .map(|offset| {
+                let index = usize::from(attribution_area.y) * usize::from(buffer.area.width)
+                    + usize::from(attribution_area.x)
+                    + offset;
+                buffer.content()[index].symbol()
+            })
+            .collect::<String>();
+        assert_eq!(badge, format!(" {attribution_code} "));
+        let badge_index = usize::from(attribution_area.y) * usize::from(buffer.area.width)
+            + usize::from(attribution_area.x);
+        assert_eq!(
+            buffer.content()[badge_index].bg,
+            crate::ui::theme::AMBER.into()
+        );
+        assert_eq!(
+            buffer.content()[badge_index].fg,
+            crate::ui::theme::BG.into()
+        );
+        for character in attribution_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let row_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action.starts_with("row:attribution:0:")
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in row_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.advance_tick();
+
+        assert_eq!(
+            app.active_workspace(),
+            app.workspaces.resolve_target("security").unwrap()
+        );
+        assert!(app.shell_hints().is_none());
+    }
+
+    #[test]
     fn follow_hint_codes_are_prefix_free_and_compact() {
         let short = hint_codes(HINT_ALPHABET.len()).collect::<Vec<_>>();
         assert!(short.iter().all(|code| code.len() == 1));
@@ -2004,6 +2136,22 @@ mod tests {
 
         let exceptional = hint_codes(HINT_ALPHABET.len().pow(2) + 1).collect::<Vec<_>>();
         assert!(exceptional.iter().all(|code| code.len() == 3));
+    }
+
+    #[test]
+    fn terminal_resize_cancels_stale_action_geometry() {
+        let mut app = bootstrap::demo_app();
+        app.set_terminal_area(Rect::new(0, 0, 120, 36));
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert!(app.shell_hints().is_some());
+
+        app.set_terminal_area(Rect::new(0, 0, 100, 30));
+
+        assert!(app.shell_hints().is_none());
+        assert_eq!(
+            app.command_feedback(),
+            Some("HINTS CANCELED · TERMINAL RESIZED")
+        );
     }
 
     #[test]

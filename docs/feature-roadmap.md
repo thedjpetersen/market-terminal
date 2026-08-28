@@ -141,6 +141,10 @@ move to its own crate later without changing its public vocabulary.
   drill-down with stable history-wide account anonymization, ordered-period and
   aggregate valuation continuity, independent crash-safe path persistence,
   Security routing, and complete methodology/version/residual disclosure.
+- **Complete:** first P0 feature-action routing slice with bounded stable action
+  IDs, duplicate/disabled/off-screen rejection, viewport-aware one- or two-letter
+  follow hints, activation revalidation, and Portfolio tabs, security-capable
+  rows, and reload controls as the initial adopter.
 - **Next:** execute the OpenTerminalUI parity track below, beginning with the
   parity ledger and shell/workspace completion, then finishing the remaining
   Stage 2 risk, screening, and alert-rule families. Provider availability
@@ -213,7 +217,7 @@ continues.
 | --- | --- | --- | --- |
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
 | Mission Control, launchpad, ticker tape | Partial | Overview, Desk, Markets, persisted active workspace | Add configurable launch tiles, live pulse strip, priority stack, and saved role presets. |
-| Keyboard navigation and icon rail | Partial | `Esc` panel focus, arrows, Enter, tmux prefix, remappable keys, shell-level `F` hints | Register workspace rows, tabs, buttons, chart controls, and table actions in the follow-hint and spatial-focus contracts. |
+| Keyboard navigation and icon rail | Partial | `Esc` panel focus, arrows, Enter, tmux prefix, remappable keys, shell-level `F` hints, and feature-owned hints for visible Portfolio tabs/rows/reload | Adopt the action contract in remaining workspace rows, buttons, chart controls, and tables, then add spatial routing between their rectangles. |
 | Saved views and workspace presets | Partial | Workspace order, active workspace, layout and command history persist | Persist/restore view parameters, filters, selected instrument, table columns, chart state, pane geometry, and Trader/Quant/PM/Risk/Ops presets. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
 | Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
@@ -308,6 +312,13 @@ tests; follow hints route every visible action in representative Overview, Desk,
 Security, Portfolio, Chart, News, Alerts, and Spreadsheet frames; spatial focus
 has geometry/property tests; the ledger is pinned to an exact upstream commit and
 CI rejects incomplete evidence links.
+
+**Status: in progress.** The bounded feature-action contract now filters invalid,
+disabled, duplicate, off-screen, and excess actions, assigns at most two-letter
+codes, renders badges at feature-owned rectangles, and revalidates activation.
+Portfolio supplies visible tabs, security-capable rows, and reload as the first
+adopter. The parity ledger artifact, spatial rectangle routing, remaining
+workspace adopters, gallery states, and CI evidence enforcement remain.
 
 ### P1 — Mission Control, launchpad, and saved workspaces
 

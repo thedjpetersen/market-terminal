@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
+    app::{AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor},
     ui::{
         components::{render_table, terminal_block},
         is_primary_click, scroll_key, table_row_at,
@@ -59,6 +59,36 @@ impl PortfolioView {
             Self::Contribution => "CONTRIB",
             Self::Attribution => "ATTRIB",
         }
+    }
+
+    const fn action_id(self) -> &'static str {
+        match self {
+            Self::Positions => "view:positions",
+            Self::Activity => "view:activity",
+            Self::Performance => "view:performance",
+            Self::TaxLots => "view:lots",
+            Self::RealizedGains => "view:realized",
+            Self::Trades => "view:trades",
+            Self::Contribution => "view:contribution",
+            Self::Attribution => "view:attribution",
+        }
+    }
+
+    const fn action_key(self) -> &'static str {
+        match self {
+            Self::Positions => "positions",
+            Self::Activity => "activity",
+            Self::Performance => "performance",
+            Self::TaxLots => "lots",
+            Self::RealizedGains => "realized",
+            Self::Trades => "trades",
+            Self::Contribution => "contribution",
+            Self::Attribution => "attribution",
+        }
+    }
+
+    fn from_action_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|view| view.action_id() == id)
     }
 
     fn offset(self, delta: isize) -> Self {
@@ -135,52 +165,57 @@ impl PortfolioWorkspace {
         };
     }
 
-    fn open_selected(&mut self) -> bool {
+    fn symbol_at(&self, index: usize) -> Option<String> {
         let symbol = match self.view {
             PortfolioView::Positions => self
                 .query
                 .load_portfolio()
                 .positions
-                .get(self.selected)
+                .get(index)
                 .and_then(|position| (!position.cash).then(|| position.symbol.clone())),
             PortfolioView::Activity => self
                 .query
                 .load_activity()
                 .entries
-                .get(self.selected)
+                .get(index)
                 .and_then(|entry| entry.symbol.clone()),
             PortfolioView::Performance => None,
             PortfolioView::TaxLots => self
                 .query
                 .load_tax_lots()
                 .lots
-                .get(self.selected)
+                .get(index)
                 .map(|lot| lot.symbol.clone()),
             PortfolioView::RealizedGains => self
                 .query
                 .load_realized_gains()
                 .lots
-                .get(self.selected)
+                .get(index)
                 .map(|lot| lot.symbol.clone()),
             PortfolioView::Trades => self
                 .query
                 .load_trades()
                 .executions
-                .get(self.selected)
+                .get(index)
                 .map(|execution| execution.symbol.clone()),
             PortfolioView::Contribution => self
                 .query
                 .load_contribution()
                 .rows
-                .get(self.selected)
+                .get(index)
                 .map(|row| row.symbol.clone()),
             PortfolioView::Attribution => self
                 .query
                 .load_attribution()
                 .rows
-                .get(self.selected)
+                .get(index)
                 .map(|row| row.symbol.clone()),
         };
+        symbol
+    }
+
+    fn open_selected(&mut self) -> bool {
+        let symbol = self.symbol_at(self.selected);
         let Some(symbol) = symbol else {
             self.status = "SELECTED ROW HAS NO SECURITY TO OPEN".to_owned();
             return self.selection_count() > 0;
@@ -663,6 +698,86 @@ impl Workspace for PortfolioWorkspace {
             }
             _ => false,
         }
+    }
+
+    fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
+        let areas = portfolio_layout(area);
+        let mut actions = Vec::new();
+        let mut x = areas.tabs.x;
+        for (index, view) in PortfolioView::ALL.into_iter().enumerate() {
+            let width = format!(" {} {} ", index + 1, view.label()).chars().count() as u16;
+            if x >= areas.tabs.right() {
+                break;
+            }
+            actions.push(WorkspaceAction::new(
+                view.action_id(),
+                format!("Open {} portfolio view", view.label()),
+                Rect::new(
+                    x,
+                    areas.tabs.y,
+                    width.min(areas.tabs.right().saturating_sub(x)),
+                    1,
+                ),
+            ));
+            x = x.saturating_add(width);
+        }
+
+        let visible_rows =
+            usize::from(areas.main.height.saturating_sub(4)).min(self.selection_count());
+        for index in 0..visible_rows {
+            let Some(symbol) = self.symbol_at(index) else {
+                continue;
+            };
+            actions.push(WorkspaceAction::new(
+                format!("row:{}:{index}:{symbol}", self.view.action_key()),
+                format!("Open {symbol} security research"),
+                Rect::new(
+                    areas.main.x.saturating_add(1),
+                    areas.main.y.saturating_add(3 + index as u16),
+                    areas.main.width.saturating_sub(2),
+                    1,
+                ),
+            ));
+        }
+
+        actions.push(WorkspaceAction::new(
+            "reload",
+            format!("Reload {} portfolio data", self.view.label()),
+            Rect::new(
+                areas.header.x,
+                areas.header.y,
+                areas.header.width.min(12),
+                1,
+            ),
+        ));
+        actions
+    }
+
+    fn activate_action(&mut self, id: &str) -> bool {
+        if let Some(view) = PortfolioView::from_action_id(id) {
+            self.select_view(view);
+            return true;
+        }
+        if id == "reload" {
+            self.reload_current();
+            return true;
+        }
+        let mut parts = id.splitn(4, ':');
+        let (Some("row"), Some(view), Some(index), Some(expected_symbol)) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            return false;
+        };
+        let Some(index) = index.parse::<usize>().ok() else {
+            return false;
+        };
+        if view != self.view.action_key()
+            || self.symbol_at(index).as_deref() != Some(expected_symbol)
+        {
+            return false;
+        }
+        self.selected = index;
+        self.open_selected()
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
@@ -1942,6 +2057,62 @@ mod tests {
         assert!(workspace.status.contains("PROVIDER-REPORTED"));
         assert!(workspace.handle_mouse(click(layout.footer.x + 1, layout.footer.y), area));
         assert!(workspace.handle_mouse(click(layout.header.x + 1, layout.header.y + 1), area));
+    }
+
+    #[test]
+    fn visible_actions_route_tabs_rows_and_reload_without_shell_domain_knowledge() {
+        let mut workspace = PortfolioWorkspace::new(Arc::new(crate::infrastructure::DemoData));
+        let area = Rect::new(0, 0, 120, 36);
+        let actions = workspace.actions(area);
+
+        assert!(actions.iter().any(|action| action.id == "view:attribution"));
+        let row_action = actions
+            .iter()
+            .find(|action| action.id.starts_with("row:positions:0:"))
+            .unwrap()
+            .id
+            .clone();
+        assert!(actions.iter().any(|action| action.id == "reload"));
+        assert!(actions.iter().all(|action| {
+            action.area.x >= area.x
+                && action.area.y >= area.y
+                && action.area.right() <= area.right()
+                && action.area.bottom() <= area.bottom()
+        }));
+
+        assert!(workspace.activate_action("view:attribution"));
+        assert_eq!(workspace.view, PortfolioView::Attribution);
+        let attribution_row = workspace
+            .actions(area)
+            .into_iter()
+            .find(|action| action.id.starts_with("row:attribution:0:"))
+            .unwrap()
+            .id;
+        assert!(workspace.activate_action(&attribution_row));
+        assert!(matches!(
+            workspace.poll_intents().as_slice(),
+            [AppIntent::DispatchCommand { command, origin }]
+                if command.starts_with("SEC ") && *origin == ID
+        ));
+        assert!(!workspace.activate_action(&row_action));
+        assert!(!workspace.activate_action("row:attribution:999999:AAPL"));
+        assert!(!workspace.activate_action("unknown"));
+    }
+
+    #[test]
+    fn narrow_portfolio_actions_include_only_rendered_tabs_and_rows() {
+        let workspace = PortfolioWorkspace::new(Arc::new(crate::infrastructure::DemoData));
+        let actions = workspace.actions(Rect::new(0, 0, 60, 24));
+
+        assert!(actions.iter().any(|action| action.id == "view:positions"));
+        assert!(!actions.iter().any(|action| action.id == "view:attribution"));
+        assert!(
+            actions
+                .iter()
+                .filter(|action| action.id.starts_with("row:"))
+                .count()
+                <= 11
+        );
     }
 
     #[test]
