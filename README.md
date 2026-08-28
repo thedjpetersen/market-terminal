@@ -558,6 +558,18 @@ an invented FX rate. The panel carries the import version, valuation time,
 methodology, and inherited missing-data disclosures; click a non-cash row or
 press Enter to open Security Research.
 
+Press `2`, `Tab`, or run `RISK HISTORY` for the historical risk view. It reuses
+the independently imported `PORT IMPORT PERFORMANCE <FILE.CSV>` valuation
+history rather than inferring a return series from current positions. For each
+currency it shows flow-adjusted annualized sample and EWMA volatility,
+wealth-index maximum drawdown with peak/trough/recovery dates, historical and
+Gaussian VaR/CVaR, Sharpe/Sortino, and—when the benchmark column is complete—
+beta, correlation, tracking error, and information ratio. Confidence, EWMA
+lambda, risk-free rate, sample count, median calendar interval, annualization,
+period, input version, methodology, and low-sample/missing-benchmark limitations
+stay visible. Loss VaR/CVaR are positive magnitudes; currencies are never
+combined through an assumed FX rate.
+
 ## Spreadsheet CSV files
 
 The persistent Spreadsheet starts empty; the IBM model is reserved for the

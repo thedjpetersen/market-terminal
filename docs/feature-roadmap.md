@@ -106,6 +106,14 @@ move to its own crate later without changing its public vocabulary.
   with exact per-currency reconciliation, concentration, an explicit non-cash
   shock, missing-price disclosures, clickable drill-through, and actual
   configured-portfolio render verification.
+- **Complete:** first historical Risk package over Portfolio's independent dated
+  valuation boundary: end-of-period flow-adjusted observations, actual-day
+  annualized sample and EWMA volatility, wealth-index drawdown/recovery,
+  historical and Gaussian VaR/CVaR, Sharpe/Sortino, and complete-benchmark beta,
+  correlation, tracking error, and information ratio. Every result remains per
+  currency and carries period, sample count, median interval, annualization,
+  confidence, lambda, risk-free rate, input version, methodology, and low-sample
+  or missing-benchmark disclosures.
 - **Complete:** first Stage 2 Performance slice with bounded dated-valuation
   CSV import, exact flow-adjusted TWR, optional benchmark and active return,
   strict per-currency separation, versioned methodology/disclosures, and
@@ -251,7 +259,7 @@ continues.
 | Tool-using AI research | Partial | Codex/OpenRouter chat, validated UI intents, bounded article reading | Add screen-aware read tools, research retrieval, cited artifacts, provider routing, debate, bounded strategy research, and local-model fallback. |
 | Futures and options suite | Missing | Stage 3 domain placeholder only | Add chains, Greeks/IV, OI/PCR/flow, strategies, futures basis/curve, expiry calendar, scenario tools, and delayed/entitled data states. |
 | Portfolio accounting and attribution | Partial | Exact positions, cash/activity, valuations/TWR, lots, realized gains, fills, single/multi-period attribution | Add portfolio CRUD/transaction truth, allocation views, benchmark history, dividends, multi-portfolio comparison, and rebalance evidence. |
-| Risk, stress, and correlation | Partial | Concentration and explicit non-cash shock over a versioned portfolio snapshot | Add historical/EWMA volatility, VaR/CVaR, drawdown, rolling correlation, PCA/factor exposure, scenario library, Monte Carlo, clustering, and contribution to risk. |
+| Risk, stress, and correlation | Partial | Concentration and explicit non-cash shock plus flow-adjusted historical/EWMA volatility, drawdown/recovery, historical/Gaussian VaR/CVaR, Sharpe/Sortino, beta, correlation, tracking error, and information ratio over versioned per-currency valuations | Add marginal/component risk, rolling correlation, PCA/factor exposure, scenario library, Monte Carlo, clustering, and cross-asset dependency views. |
 | Paper trading, journal, TCA, position sizing | Missing | Verified broker executions are strictly read-only | Add visibly simulated orders/fills, sizing, journal and behavior analytics, execution-cost models, TCA, approvals, and immutable paper audit state. Live routing remains excluded. |
 | Backtesting, Model Lab, robustness | Missing | Deterministic market replay is infrastructure, not a strategy backtester | Add look-ahead-safe engine, costs/fills, templates, walk-forward and parameter sweeps, robustness, experiment tracking, tear sheets, and governance. |
 | Portfolio Lab and optimizer | Missing | Performance/attribution calculators cover realized portfolios only | Add portfolio backtests, weighting/rebalancing, strategy blends, optimizer constraints, correlation, attribution, and reproducible run comparison. |
@@ -478,6 +486,18 @@ Stage 2 and match the reference's portfolio decision surface.
   Sortino ratios, max drawdown/recovery, historical and parametric VaR/CVaR,
   marginal/component risk, rolling correlation, PCA/factor exposure, and explicit
   confidence/window/sample/annualization/missing-data metadata.
+  - **Delivered foundation:** Portfolio's bounded dated-valuation history now
+    feeds a storage-independent Risk calculator. It computes exact
+    flow-adjusted observations; annualized sample and zero-mean EWMA volatility;
+    wealth-index peak, trough, and recovery; empirical loss-tail and Gaussian
+    VaR/CVaR; Sharpe/Sortino; and, with a complete benchmark, beta, correlation,
+    tracking error, and information ratio. `RISK HISTORY` exposes per-currency
+    results and the confidence, lambda, risk-free, sample, interval,
+    annualization, version, methodology, and disclosure evidence.
+  - **Still required:** security/asset contribution and marginal risk, rolling
+    windows and pairwise sample policy, correlation matrices and regime views,
+    PCA and classified factor exposures, missing-data windows, and independent
+    external reference vectors for each estimator.
 - Add scenario libraries for historical crises and explicit shocks plus a custom
   scenario builder. Scenarios identify repricing assumptions, unsupported assets,
   linear/nonlinear treatment, currency conversion, and coverage; Monte Carlo
@@ -905,12 +925,17 @@ ALERT core.drawdown > 8% -> preview -> enable
 cash/activity ledger, dated per-currency valuations, and broker open-tax-lot
 exports supply separate versioned Portfolio inputs. The first Performance slice
 calculates flow-adjusted TWR plus optional benchmark and active return, and the
-first Risk slice consumes positions without storage access. A pure Portfolio
+first Risk slice consumes positions without storage access. Risk now also
+consumes the separate dated-valuation boundary to calculate flow-adjusted
+historical/EWMA volatility, drawdown/recovery, empirical and Gaussian VaR/CVaR,
+Sharpe/Sortino, and optional benchmark-relative beta, correlation, tracking
+error, and information ratio with explicit estimator metadata. A pure Portfolio
 calculator plus a bounded CSV adapter and terminal drill-down now reconcile
 single-period security contribution and optional benchmark-active attribution;
 the multi-period boundary plus its bounded CSV adapter and terminal drill-down
-now link ordered security, benchmark, and active contributions. Historical and
-factor risk and stress libraries remain. Screening and the additional
+now link ordered security, benchmark, and active contributions. Component,
+rolling-correlation, factor/PCA, scenario, and simulation risk libraries remain.
+Screening and the additional
 news/topic, portfolio-threshold, calendar, and spreadsheet-expression alert
 rule families remain separate Stage 2 slices.
 

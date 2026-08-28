@@ -2,6 +2,8 @@ use std::{collections::BTreeMap, fmt};
 
 use crate::foundation::{Currency, InstrumentId, Money};
 
+use super::HistoricalRiskSnapshot;
+
 pub const SCENARIO_SHOCK_BPS: i32 = -1_000;
 const MAX_RISK_POSITIONS: usize = 25_000;
 
@@ -66,6 +68,7 @@ pub struct RiskSnapshot {
     pub input_version: String,
     pub methodology: String,
     pub disclosures: Vec<String>,
+    pub historical: Option<HistoricalRiskSnapshot>,
 }
 
 impl RiskSnapshot {
@@ -289,6 +292,7 @@ pub fn calculate_risk(input: RiskInput) -> Result<RiskSnapshot, RiskCalculationE
         methodology: "MARKET-VALUE CONCENTRATION · CASH HELD FLAT · NON-CASH PARALLEL -10% SHOCK"
             .to_owned(),
         disclosures,
+        historical: None,
     })
 }
 

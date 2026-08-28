@@ -3,8 +3,9 @@ use std::sync::Arc;
 use crate::features::{
     portfolio::PortfolioRepository,
     risk::{
-        calculate_risk, RiskCurrencyInput, RiskError, RiskInput, RiskPositionInput, RiskQuery,
-        RiskSnapshot,
+        calculate_historical_risk, calculate_risk, HistoricalRiskInput, HistoricalRiskPointInput,
+        HistoricalRiskSeriesInput, RiskCurrencyInput, RiskError, RiskInput, RiskPositionInput,
+        RiskQuery, RiskSnapshot,
     },
 };
 
@@ -55,7 +56,42 @@ impl RiskQuery for PortfolioRiskQuery {
             input_version: portfolio.input_version,
             disclosures: portfolio.disclosures,
         };
-        calculate_risk(input).map_err(|error| RiskError::InvalidInput(error.to_string()))
+        let mut snapshot =
+            calculate_risk(input).map_err(|error| RiskError::InvalidInput(error.to_string()))?;
+        let performance = self.portfolio.load_performance();
+        if !performance.series.is_empty() {
+            let historical = calculate_historical_risk(HistoricalRiskInput {
+                series: performance
+                    .series
+                    .into_iter()
+                    .map(|series| HistoricalRiskSeriesInput {
+                        currency: series.currency,
+                        points: series
+                            .points
+                            .into_iter()
+                            .map(|point| HistoricalRiskPointInput {
+                                date: point.date,
+                                ending_value_minor: point.ending_value.minor_units(),
+                                external_flow_minor: point.external_flow.minor_units(),
+                                benchmark_value_minor: point
+                                    .benchmark_value
+                                    .map(|value| value.minor_units()),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+                source: format!("VERSIONED PERFORMANCE · {}", performance.source),
+                period: performance.period,
+                input_version: performance.input_version,
+                confidence_bps: 9_500,
+                ewma_lambda_millionths: 940_000,
+                annual_risk_free_rate_bps: 0,
+                disclosures: performance.disclosures,
+            })
+            .map_err(|error| RiskError::InvalidInput(error.to_string()))?;
+            snapshot.historical = Some(historical);
+        }
+        Ok(snapshot)
     }
 }
 
@@ -79,6 +115,10 @@ mod tests {
             snapshot.currencies[0].available_cash.minor_units(),
             12_783_400
         );
+        let historical = snapshot.historical.as_ref().unwrap();
+        assert_eq!(historical.series[0].observations, 3);
+        assert_eq!(historical.confidence_bps, 9_500);
+        assert_eq!(historical.ewma_lambda_millionths, 940_000);
     }
 
     #[test]

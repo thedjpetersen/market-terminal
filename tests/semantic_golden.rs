@@ -43,7 +43,12 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "risk",
         prepare: prepare_risk,
-        hashes: [0xe570caf107bce632, 0x8b0a1c661f723f5e, 0x916b6d994e0e14b5],
+        hashes: [0xe1b4613461b2e418, 0xd0d495a90a0fc1c9, 0xf490670878307079],
+    },
+    Golden {
+        name: "risk-history",
+        prepare: prepare_risk_history,
+        hashes: [0x2585b21f3c947110, 0x3726a67132e1222d, 0xe0134fa41e96413d],
     },
     Golden {
         name: "panel-focus",
@@ -115,6 +120,10 @@ fn prepare_help(app: &mut App) {
 
 fn prepare_risk(app: &mut App) {
     dispatch(app, "RISK");
+}
+
+fn prepare_risk_history(app: &mut App) {
+    dispatch(app, "RISK HISTORY");
 }
 
 fn prepare_panel_focus(app: &mut App) {

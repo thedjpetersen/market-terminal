@@ -17,10 +17,26 @@ use crate::{
     },
 };
 
-use super::{domain, RiskQuery, RiskSnapshot, ID};
+use super::{domain, historical, HistoricalRiskSnapshot, RiskQuery, RiskSnapshot, ID};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RiskView {
+    Concentration,
+    Historical,
+}
+
+impl RiskView {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Concentration => "CONCENTRATION",
+            Self::Historical => "HISTORICAL",
+        }
+    }
+}
 
 pub struct RiskWorkspace {
     query: Arc<dyn RiskQuery>,
+    view: RiskView,
     selected: usize,
     status: String,
     pending_intents: Vec<AppIntent>,
@@ -30,6 +46,7 @@ impl RiskWorkspace {
     pub fn new(query: Arc<dyn RiskQuery>) -> Self {
         Self {
             query,
+            view: RiskView::Concentration,
             selected: 0,
             status: "VERSIONED PORTFOLIO RISK".to_owned(),
             pending_intents: Vec::new(),
@@ -94,22 +111,52 @@ impl Workspace for RiskWorkspace {
         true
     }
 
-    fn handle_command(&mut self, _invocation: &CommandInvocation) -> bool {
+    fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
+        if invocation
+            .args
+            .first()
+            .is_some_and(|argument| argument.eq_ignore_ascii_case("HISTORY"))
+        {
+            self.view = RiskView::Historical;
+        } else if invocation
+            .args
+            .first()
+            .is_some_and(|argument| argument.eq_ignore_ascii_case("CONCENTRATION"))
+        {
+            self.view = RiskView::Concentration;
+        }
         self.refresh_status();
         true
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Tab => {
+                self.view = match self.view {
+                    RiskView::Concentration => RiskView::Historical,
+                    RiskView::Historical => RiskView::Concentration,
+                };
+                true
+            }
+            KeyCode::Char('1') => {
+                self.view = RiskView::Concentration;
+                true
+            }
+            KeyCode::Char('2') => {
+                self.view = RiskView::Historical;
+                true
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.view == RiskView::Concentration => {
                 self.move_selection(-1);
                 true
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down | KeyCode::Char('j') if self.view == RiskView::Concentration => {
                 self.move_selection(1);
                 true
             }
-            KeyCode::Enter | KeyCode::Char('s') => self.open_selected(),
+            KeyCode::Enter | KeyCode::Char('s') if self.view == RiskView::Concentration => {
+                self.open_selected()
+            }
             KeyCode::Char('r') => {
                 self.refresh_status();
                 true
@@ -120,11 +167,22 @@ impl Workspace for RiskWorkspace {
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
         let areas = risk_layout(area);
+        if is_primary_click(event, areas.tabs) {
+            self.view = if event.column < areas.tabs.x.saturating_add(20) {
+                RiskView::Concentration
+            } else {
+                RiskView::Historical
+            };
+            return true;
+        }
         if is_primary_click(event, areas.header) {
             self.refresh_status();
             return true;
         }
-        if let Ok(snapshot) = self.query.load_risk() {
+        if self.view == RiskView::Concentration {
+            let Ok(snapshot) = self.query.load_risk() else {
+                return false;
+            };
             if let Some(index) = table_row_at(event, areas.table, snapshot.positions.len()) {
                 self.selected = index;
                 return self.open_selected();
@@ -135,11 +193,19 @@ impl Workspace for RiskWorkspace {
             return true;
         }
         if is_primary_click(event, areas.footer) {
-            let controls = [
-                (" ↑↓/JK SELECT  ", None),
-                ("ENTER/S SECURITY  ", Some(KeyCode::Enter)),
-                ("R RECOMPUTE  ", Some(KeyCode::Char('r'))),
-            ];
+            let controls = if self.view == RiskView::Concentration {
+                [
+                    (" ↑↓/JK SELECT  ", None),
+                    ("ENTER/S SECURITY  ", Some(KeyCode::Enter)),
+                    ("R RECOMPUTE  ", Some(KeyCode::Char('r'))),
+                ]
+            } else {
+                [
+                    (" 1/2/TAB VIEW  ", None),
+                    ("R RECOMPUTE  ", Some(KeyCode::Char('r'))),
+                    (" ", None),
+                ]
+            };
             let mut x = areas.footer.x;
             for (label, key) in controls {
                 let width = label.chars().count() as u16;
@@ -187,21 +253,47 @@ impl Workspace for RiskWorkspace {
 impl RiskWorkspace {
     fn render_snapshot(&self, frame: &mut Frame, area: Rect, snapshot: &RiskSnapshot) {
         let areas = risk_layout(area);
-        render_header(frame, areas.header, snapshot, &self.status);
-        render_positions(frame, areas.table, snapshot, self.selected);
-        render_provenance(frame, areas.side, snapshot);
+        render_tabs(frame, areas.tabs, self.view);
+        match self.view {
+            RiskView::Concentration => {
+                render_header(frame, areas.header, snapshot, &self.status);
+                render_positions(frame, areas.table, snapshot, self.selected);
+                render_provenance(frame, areas.side, snapshot);
+            }
+            RiskView::Historical => {
+                render_historical_header(
+                    frame,
+                    areas.header,
+                    snapshot.historical.as_ref(),
+                    &self.status,
+                );
+                render_historical(frame, areas.table, snapshot.historical.as_ref());
+                render_historical_provenance(frame, areas.side, snapshot.historical.as_ref());
+            }
+        }
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" ↑↓/JK ", AMBER),
-                Span::styled("SELECT  ", MUTED),
-                Span::styled("ENTER/S ", AMBER),
-                Span::styled("SECURITY  ", MUTED),
+                Span::styled(" 1/2/TAB ", AMBER),
+                Span::styled("VIEW  ", MUTED),
+                Span::styled(
+                    if self.view == RiskView::Concentration {
+                        " ↑↓/JK "
+                    } else {
+                        " "
+                    },
+                    AMBER,
+                ),
+                Span::styled(
+                    if self.view == RiskView::Concentration {
+                        "SELECT  ENTER/S SECURITY  "
+                    } else {
+                        ""
+                    },
+                    MUTED,
+                ),
                 Span::styled("R ", AMBER),
                 Span::styled("RECOMPUTE  ", MUTED),
-                Span::styled(
-                    "POINT-IN-TIME · PER-CURRENCY · MISSING PRICES EXPLICIT",
-                    YELLOW,
-                ),
+                Span::styled("PER-CURRENCY · INPUTS AND METHODS EXPLICIT", YELLOW),
             ])),
             areas.footer,
         );
@@ -211,6 +303,7 @@ impl RiskWorkspace {
 #[derive(Debug, Clone, Copy)]
 struct RiskLayout {
     header: Rect,
+    tabs: Rect,
     table: Rect,
     side: Rect,
     footer: Rect,
@@ -219,18 +312,36 @@ struct RiskLayout {
 fn risk_layout(area: Rect) -> RiskLayout {
     let rows = Layout::vertical([
         Constraint::Length(4),
+        Constraint::Length(1),
         Constraint::Min(10),
         Constraint::Length(2),
     ])
     .split(area);
     let body =
-        Layout::horizontal([Constraint::Percentage(74), Constraint::Percentage(26)]).split(rows[1]);
+        Layout::horizontal([Constraint::Percentage(74), Constraint::Percentage(26)]).split(rows[2]);
     RiskLayout {
         header: rows[0],
+        tabs: rows[1],
         table: body[0],
         side: body[1],
-        footer: rows[2],
+        footer: rows[3],
     }
+}
+
+fn render_tabs(frame: &mut Frame, area: Rect, active: RiskView) {
+    let spans = [RiskView::Concentration, RiskView::Historical]
+        .into_iter()
+        .enumerate()
+        .map(|(index, view)| {
+            let style = if view == active {
+                Style::new().bg(AMBER.into()).fg(BG.into()).bold()
+            } else {
+                Style::new().fg(MUTED.into())
+            };
+            Span::styled(format!(" {} {} ", index + 1, view.label()), style)
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn render_header(frame: &mut Frame, area: Rect, snapshot: &RiskSnapshot, status: &str) {
@@ -327,6 +438,254 @@ fn render_positions(frame: &mut Frame, area: Rect, snapshot: &RiskSnapshot, sele
             "EXPOSURE",
             "POSITION CONCENTRATION",
         )),
+        area,
+    );
+}
+
+fn render_historical_header(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: Option<&HistoricalRiskSnapshot>,
+    status: &str,
+) {
+    let kpis = Layout::horizontal([Constraint::Ratio(1, 4); 4]).split(area);
+    let values = match snapshot {
+        Some(snapshot) => [
+            ("ANNUALIZED VOL", snapshot.annualized_volatility_label()),
+            ("MAX DRAWDOWN", snapshot.max_drawdown_label()),
+            ("HISTORICAL VAR", snapshot.historical_var_label()),
+            ("SHARPE", snapshot.sharpe_label()),
+        ],
+        None => [
+            ("ANNUALIZED VOL", "N/A".to_owned()),
+            ("MAX DRAWDOWN", "N/A".to_owned()),
+            ("HISTORICAL VAR", "N/A".to_owned()),
+            ("SHARPE", "N/A".to_owned()),
+        ],
+    };
+    for (index, (label, value)) in values.into_iter().enumerate() {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled(label, MUTED),
+                Line::styled(value, if index == 1 || index == 2 { RED } else { INK }),
+                Line::styled(status, YELLOW),
+            ])
+            .block(crate::ui::components::terminal_block("RISK HISTORY", label)),
+            kpis[index],
+        );
+    }
+}
+
+fn render_historical(frame: &mut Frame, area: Rect, snapshot: Option<&HistoricalRiskSnapshot>) {
+    let Some(snapshot) = snapshot else {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled("NO DATED VALUATION HISTORY", RED),
+                Line::raw(""),
+                Line::styled("PORT IMPORT PERFORMANCE <FILE.CSV>", CYAN),
+                Line::raw(""),
+                Line::styled(
+                    "RISK WILL NOT INFER RETURNS FROM A POSITION SNAPSHOT.",
+                    MUTED,
+                ),
+            ])
+            .wrap(Wrap { trim: true })
+            .block(crate::ui::components::terminal_block(
+                "HISTORICAL",
+                "VERSIONED VALUATIONS REQUIRED",
+            )),
+            area,
+        );
+        return;
+    };
+
+    let header = Row::new(["SERIES", "ABSOLUTE RISK", "TAIL · BENCHMARK-RELATIVE"])
+        .style(Style::new().fg(AMBER.into()).bold())
+        .bottom_margin(1);
+    let rows = snapshot.series.iter().map(|series| {
+        let drawdown_detail = if series.max_drawdown_bps == 0 {
+            "NO DRAWDOWN OBSERVED".to_owned()
+        } else {
+            format!(
+                "{} → {} · REC {}",
+                series.drawdown_peak_date,
+                series.drawdown_trough_date,
+                series.recovery_date.as_deref().unwrap_or("NOT RECOVERED")
+            )
+        };
+        let value_or_na = |value: Option<i32>| {
+            value
+                .map(historical::format_hundredths)
+                .unwrap_or_else(|| "N/A".to_owned())
+        };
+        let bps_or_na = |value: Option<i32>| {
+            value
+                .map(historical::format_bps)
+                .unwrap_or_else(|| "N/A".to_owned())
+        };
+        Row::new([
+            Cell::from(vec![
+                Line::styled(
+                    format!("{} · N {}", series.currency, series.observations),
+                    INK,
+                ),
+                Line::styled(series.period_start.clone(), MUTED),
+                Line::styled(format!("→ {}", series.period_end), MUTED),
+                Line::styled(
+                    format!(
+                        "MEDIAN {}D · {:.2}/YR",
+                        series.median_interval_days,
+                        series.annualization_periods_hundredths as f64 / 100.0
+                    ),
+                    CYAN,
+                ),
+            ]),
+            Cell::from(vec![
+                Line::styled(
+                    format!(
+                        "VOL {} · EWMA {}",
+                        historical::format_bps(series.annualized_volatility_bps),
+                        historical::format_bps(series.ewma_volatility_bps)
+                    ),
+                    INK,
+                ),
+                Line::styled(
+                    format!(
+                        "SHARPE {} · SORTINO {}",
+                        value_or_na(series.sharpe_hundredths),
+                        value_or_na(series.sortino_hundredths)
+                    ),
+                    INK,
+                ),
+                Line::styled(
+                    format!(
+                        "MAX DRAWDOWN {}",
+                        historical::format_bps(series.max_drawdown_bps)
+                    ),
+                    RED,
+                ),
+                Line::styled(drawdown_detail, MUTED),
+            ]),
+            Cell::from(vec![
+                Line::styled(
+                    format!(
+                        "HIST VAR {} · CVAR {}",
+                        historical::format_bps(series.historical_var_bps),
+                        historical::format_bps(series.historical_cvar_bps)
+                    ),
+                    RED,
+                ),
+                Line::styled(
+                    format!(
+                        "GAUSS VAR {} · CVAR {}",
+                        historical::format_bps(series.parametric_var_bps),
+                        historical::format_bps(series.parametric_cvar_bps)
+                    ),
+                    RED,
+                ),
+                Line::styled(
+                    format!(
+                        "BETA {} · CORR {}",
+                        value_or_na(series.beta_hundredths),
+                        value_or_na(series.correlation_hundredths)
+                    ),
+                    INK,
+                ),
+                Line::styled(
+                    format!(
+                        "TRACK ERR {} · INFO {}",
+                        bps_or_na(series.tracking_error_bps),
+                        value_or_na(series.information_ratio_hundredths)
+                    ),
+                    INK,
+                ),
+            ]),
+        ])
+        .height(4)
+    });
+    frame.render_widget(
+        Table::new(
+            rows,
+            [
+                Constraint::Percentage(24),
+                Constraint::Percentage(38),
+                Constraint::Percentage(38),
+            ],
+        )
+        .header(header)
+        .column_spacing(1)
+        .block(crate::ui::components::terminal_block(
+            "HISTORICAL",
+            "ABSOLUTE · DOWNSIDE · BENCHMARK-RELATIVE",
+        )),
+        area,
+    );
+}
+
+fn render_historical_provenance(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: Option<&HistoricalRiskSnapshot>,
+) {
+    let Some(snapshot) = snapshot else {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled("INPUT", AMBER),
+                Line::styled("NO PERFORMANCE HISTORY", RED),
+                Line::raw(""),
+                Line::styled("REQUIRED", AMBER),
+                Line::styled("DATE · CCY · VALUE · FLOW", MUTED),
+                Line::styled("BENCHMARK VALUE OPTIONAL", MUTED),
+            ])
+            .block(crate::ui::components::terminal_block("METHOD", "NO INPUT")),
+            area,
+        );
+        return;
+    };
+    let confidence = if snapshot.confidence_bps.is_multiple_of(100) {
+        format!("{}%", snapshot.confidence_bps / 100)
+    } else {
+        format!(
+            "{}.{:02}%",
+            snapshot.confidence_bps / 100,
+            snapshot.confidence_bps % 100
+        )
+    };
+    let mut lines = vec![
+        Line::styled("INPUT", AMBER),
+        Line::styled(snapshot.source.clone(), INK),
+        Line::styled(snapshot.period.clone(), MUTED),
+        Line::styled(snapshot.input_version.clone(), CYAN),
+        Line::raw(""),
+        Line::styled("PARAMETERS", AMBER),
+        Line::styled(format!("CONFIDENCE {confidence}"), INK),
+        Line::styled(
+            format!(
+                "EWMA λ {:.6}",
+                snapshot.ewma_lambda_millionths as f64 / 1_000_000.0
+            ),
+            INK,
+        ),
+        Line::styled(
+            format!(
+                "ANNUAL RISK-FREE {}",
+                historical::format_bps(snapshot.annual_risk_free_rate_bps)
+            ),
+            INK,
+        ),
+        Line::raw(""),
+        Line::styled("METHODOLOGY", AMBER),
+        Line::styled(snapshot.methodology.clone(), MUTED),
+        Line::raw(""),
+        Line::styled("DISCLOSURES", AMBER),
+    ];
+    for disclosure in snapshot.disclosures.iter().take(8) {
+        lines.push(Line::styled(format!("• {disclosure}"), MUTED));
+    }
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: true }).block(
+            crate::ui::components::terminal_block("METHOD", "VERSIONED RETURN SERIES"),
+        ),
         area,
     );
 }
@@ -499,5 +858,22 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("MARKET TERMINAL"));
         assert!(rendered.contains("POSITION CONCENTRATION"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "RISK HISTORY".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        terminal.draw(|frame| runtime::render(frame, &app)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("ABSOLUTE · DOWNSIDE · BENCHMARK-RELATIVE"));
+        assert!(rendered.contains("EWMA λ 0.940000"));
+        assert!(rendered.contains("DEMO-PERFORMANCE-V1"));
     }
 }

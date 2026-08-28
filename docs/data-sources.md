@@ -189,7 +189,7 @@ endorsed by, or sponsored by Yahoo.
 
 ## User portfolio performance CSV
 
-- **Surface:** Portfolio Performance.
+- **Surfaces:** Portfolio Performance and `RISK HISTORY`.
 - **Source/ownership:** a local dated valuation export selected by the user.
   Required inputs are date and portfolio value; external flow, benchmark value,
   and reporting currency are optional and explicitly disclosed when absent.
@@ -200,7 +200,15 @@ endorsed by, or sponsored by Yahoo.
   before linking into TWR. Benchmark and active return are calculated only from
   a complete benchmark column. Returns remain separate by currency, every
   snapshot has a deterministic input version and methodology, and no
-  contribution or attribution is inferred.
+  contribution or attribution is inferred. Risk derives one flow-adjusted
+  observation per adjacent valuation pair, annualizes from each currency
+  series' median calendar-day interval, and reports the period, sample count,
+  confidence, EWMA lambda, risk-free rate, input version, and methodology. It
+  calculates sample/EWMA volatility, drawdown/recovery, empirical and Gaussian
+  VaR/CVaR, and Sharpe/Sortino; beta, correlation, tracking error, and
+  information ratio require complete benchmark coverage. Low sample counts are
+  disclosed, loss VaR/CVaR use positive magnitudes, and no FX aggregation or
+  executable-price claim is introduced.
 
 ## User portfolio contribution CSV
 
