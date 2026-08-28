@@ -4,8 +4,8 @@ use std::{
 };
 
 use super::{
-    PortfolioActivityLedger, PortfolioPerformanceSnapshot, PortfolioSnapshot,
-    PortfolioTaxLotSnapshot,
+    PortfolioActivityLedger, PortfolioPerformanceSnapshot, PortfolioRealizedGainSnapshot,
+    PortfolioSnapshot, PortfolioTaxLotSnapshot,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +94,27 @@ pub trait PortfolioRepository: Send + Sync {
             "NO IMPORTED TAX LOTS · USE PORT IMPORT LOTS <FILE.CSV>".to_owned(),
         ))
     }
+
+    fn load_realized_gains(&self) -> PortfolioRealizedGainSnapshot {
+        PortfolioRealizedGainSnapshot::empty(
+            "NO REALIZED GAINS IMPORTED · USE PORT IMPORT REALIZED <FILE.CSV>",
+        )
+    }
+
+    fn import_realized_gains_csv(
+        &self,
+        _path: &Path,
+    ) -> Result<PortfolioRealizedGainSnapshot, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS PORTFOLIO PROVIDER DOES NOT SUPPORT CLOSED-LOT CSV IMPORT".to_owned(),
+        ))
+    }
+
+    fn reload_realized_gains(&self) -> Result<PortfolioRealizedGainSnapshot, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "NO IMPORTED REALIZED GAINS · USE PORT IMPORT REALIZED <FILE.CSV>".to_owned(),
+        ))
+    }
 }
 
 /// Persists only the user-selected import location, never portfolio contents.
@@ -128,6 +149,16 @@ pub trait PortfolioImportStateStore: Send + Sync {
     fn save_tax_lot_import_path(&self, _path: &Path) -> Result<(), PortfolioError> {
         Err(PortfolioError::Unsupported(
             "THIS STATE STORE DOES NOT SUPPORT TAX-LOT IMPORT PATHS".to_owned(),
+        ))
+    }
+
+    fn load_realized_gain_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+        Ok(None)
+    }
+
+    fn save_realized_gain_import_path(&self, _path: &Path) -> Result<(), PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS STATE STORE DOES NOT SUPPORT CLOSED-LOT IMPORT PATHS".to_owned(),
         ))
     }
 }

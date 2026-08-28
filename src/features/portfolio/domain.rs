@@ -175,6 +175,98 @@ pub struct PortfolioTaxLotSnapshot {
     pub disclosures: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioClosedLot {
+    pub lot_id: String,
+    pub account_id: PortfolioAccountId,
+    pub instrument_id: InstrumentId,
+    pub symbol: String,
+    pub acquired_date: String,
+    pub disposed_date: String,
+    pub holding_period: TaxLotHoldingPeriod,
+    pub currency: Currency,
+    pub quantity: PositionQuantity,
+    pub proceeds: Money,
+    pub cost_basis: Money,
+    pub realized_gain: Money,
+    pub realized_return_bps: Option<i32>,
+}
+
+impl PortfolioClosedLot {
+    pub fn quantity_label(&self) -> String {
+        self.quantity.label()
+    }
+
+    pub fn realized_return_label(&self) -> String {
+        self.realized_return_bps
+            .map(format_signed_bps)
+            .unwrap_or_else(|| "N/A".to_owned())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioRealizedGainCurrencyTotal {
+    pub currency: Currency,
+    pub lots: usize,
+    pub proceeds: Money,
+    pub cost_basis: Money,
+    pub realized_gain: Money,
+    pub short_term_gain: Money,
+    pub long_term_gain: Money,
+    pub unknown_term_gain: Money,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioRealizedGainSnapshot {
+    pub lots: Vec<PortfolioClosedLot>,
+    pub currency_totals: Vec<PortfolioRealizedGainCurrencyTotal>,
+    pub source: String,
+    pub period: String,
+    pub input_version: String,
+    pub methodology: String,
+    pub disclosures: Vec<String>,
+}
+
+impl PortfolioRealizedGainSnapshot {
+    pub fn empty(source: impl Into<String>) -> Self {
+        Self {
+            lots: Vec::new(),
+            currency_totals: Vec::new(),
+            source: source.into(),
+            period: "—".to_owned(),
+            input_version: "—".to_owned(),
+            methodology: "NO CLOSED-LOT INPUT".to_owned(),
+            disclosures: vec![
+                "IMPORT A BROKER CLOSED-LOT EXPORT TO RECONCILE REALIZED GAINS".to_owned(),
+                "OPEN LOTS OR CASH ACTIVITY ARE NOT INVENTED AS CLOSED TRADES".to_owned(),
+            ],
+        }
+    }
+
+    pub fn proceeds_label(&self) -> String {
+        one_currency_realized_total(&self.currency_totals, |total| total.proceeds)
+    }
+
+    pub fn cost_basis_label(&self) -> String {
+        one_currency_realized_total(&self.currency_totals, |total| total.cost_basis)
+    }
+
+    pub fn realized_gain_label(&self) -> String {
+        one_currency_realized_total(&self.currency_totals, |total| total.realized_gain)
+    }
+}
+
+fn one_currency_realized_total(
+    totals: &[PortfolioRealizedGainCurrencyTotal],
+    value: impl FnOnce(&PortfolioRealizedGainCurrencyTotal) -> Money,
+) -> String {
+    match totals {
+        [] => "N/A".to_owned(),
+        [total] => format_money(value(total)),
+        totals => format!("{} CCY · SEE REALIZED", totals.len()),
+    }
+}
+
 impl PortfolioTaxLotSnapshot {
     pub fn empty(source: impl Into<String>) -> Self {
         Self {

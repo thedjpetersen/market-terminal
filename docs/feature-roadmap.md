@@ -108,6 +108,11 @@ move to its own crate later without changing its public vocabulary.
   basis/value/unrealized-gain reconciliation, explicit unpriced and unknown-term
   states, anonymized accounts, Security drill-through, and independent
   crash-safe import-path restoration.
+- **Complete:** first Stage 2 closed-lot slice with bounded broker CSV import,
+  strict acquisition/disposal chronology, exact per-currency proceeds, basis,
+  realized-gain and provider-term reconciliation, reported-gain validation,
+  anonymized accounts, Security drill-through, and independent crash-safe
+  import-path restoration.
 - **Next:** the remaining Stage 2 portfolio/performance, risk, screening, and
   expanded alert-rule families. Provider availability extends the deployment
   surface; deterministic fixtures remain the Stage 1 acceptance baseline and
@@ -369,7 +374,7 @@ cash/activity ledger, dated per-currency valuations, and broker open-tax-lot
 exports supply separate versioned Portfolio inputs. The first Performance slice
 calculates flow-adjusted TWR plus optional benchmark and active return, and the
 first Risk slice consumes positions without storage access. Verified broker
-trade and closed-lot/realized-gain history, contribution, attribution,
+order/fill trade history, contribution, attribution,
 historical/factor risk, and stress libraries remain; screening and the
 additional news/topic, portfolio-threshold, calendar, and spreadsheet-expression
 alert rule families remain separate Stage 2 slices.

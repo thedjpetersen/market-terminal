@@ -4,8 +4,9 @@ mod workspace;
 
 pub use domain::{
     format_money, PortfolioAccountId, PortfolioActivityCurrencyTotal, PortfolioActivityEntry,
-    PortfolioActivityKind, PortfolioActivityLedger, PortfolioCurrencyTotal,
-    PortfolioPerformanceSeries, PortfolioPerformanceSnapshot, PortfolioSnapshot, PortfolioTaxLot,
+    PortfolioActivityKind, PortfolioActivityLedger, PortfolioClosedLot, PortfolioCurrencyTotal,
+    PortfolioPerformanceSeries, PortfolioPerformanceSnapshot, PortfolioRealizedGainCurrencyTotal,
+    PortfolioRealizedGainSnapshot, PortfolioSnapshot, PortfolioTaxLot,
     PortfolioTaxLotCurrencyTotal, PortfolioTaxLotSnapshot, PortfolioValuationPoint, Position,
     PositionQuantity, TaxLotHoldingPeriod,
 };

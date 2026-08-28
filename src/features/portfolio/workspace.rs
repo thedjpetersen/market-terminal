@@ -19,8 +19,9 @@ use crate::{
 };
 
 use super::{
-    format_money, PortfolioActivityLedger, PortfolioPerformanceSnapshot, PortfolioRepository,
-    PortfolioSnapshot, PortfolioTaxLotSnapshot, ID,
+    format_money, PortfolioActivityLedger, PortfolioPerformanceSnapshot,
+    PortfolioRealizedGainSnapshot, PortfolioRepository, PortfolioSnapshot, PortfolioTaxLotSnapshot,
+    ID,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,14 +30,16 @@ enum PortfolioView {
     Activity,
     Performance,
     TaxLots,
+    RealizedGains,
 }
 
 impl PortfolioView {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 5] = [
         Self::Positions,
         Self::Activity,
         Self::Performance,
         Self::TaxLots,
+        Self::RealizedGains,
     ];
 
     const fn label(self) -> &'static str {
@@ -45,6 +48,7 @@ impl PortfolioView {
             Self::Activity => "ACTIVITY",
             Self::Performance => "PERFORMANCE",
             Self::TaxLots => "LOTS",
+            Self::RealizedGains => "REALIZED",
         }
     }
 
@@ -86,6 +90,7 @@ impl PortfolioWorkspace {
             PortfolioView::Activity => self.query.load_activity().source,
             PortfolioView::Performance => self.query.load_performance().source,
             PortfolioView::TaxLots => self.query.load_tax_lots().source,
+            PortfolioView::RealizedGains => self.query.load_realized_gains().source,
         };
     }
 
@@ -95,6 +100,7 @@ impl PortfolioWorkspace {
             PortfolioView::Activity => self.query.load_activity().entries.len(),
             PortfolioView::Performance => self.query.load_performance().series.len(),
             PortfolioView::TaxLots => self.query.load_tax_lots().lots.len(),
+            PortfolioView::RealizedGains => self.query.load_realized_gains().lots.len(),
         }
     }
 
@@ -132,6 +138,12 @@ impl PortfolioWorkspace {
             PortfolioView::TaxLots => self
                 .query
                 .load_tax_lots()
+                .lots
+                .get(self.selected)
+                .map(|lot| lot.symbol.clone()),
+            PortfolioView::RealizedGains => self
+                .query
+                .load_realized_gains()
                 .lots
                 .get(self.selected)
                 .map(|lot| lot.symbol.clone()),
@@ -224,6 +236,28 @@ impl PortfolioWorkspace {
         self.clamp_selection();
     }
 
+    fn import_realized_gains(&mut self, args: &[String]) {
+        let raw_path = args.join(" ");
+        if raw_path.is_empty() {
+            self.status = "CLOSED-LOT IMPORT REQUIRES A CSV PATH · PORT IMPORT REALIZED <FILE.CSV>"
+                .to_owned();
+            return;
+        }
+        self.status = match self
+            .query
+            .import_realized_gains_csv(&expand_home(&raw_path))
+        {
+            Ok(snapshot) => format!(
+                "IMPORTED {} CLOSED LOTS · {}",
+                snapshot.lots.len(),
+                snapshot.source
+            ),
+            Err(error) => format!("CLOSED-LOT IMPORT ERROR · {error}"),
+        };
+        self.view = PortfolioView::RealizedGains;
+        self.clamp_selection();
+    }
+
     fn reload_positions(&mut self) {
         self.status = match self.query.reload() {
             Ok(snapshot) => format!(
@@ -272,12 +306,25 @@ impl PortfolioWorkspace {
         self.clamp_selection();
     }
 
+    fn reload_realized_gains(&mut self) {
+        self.status = match self.query.reload_realized_gains() {
+            Ok(snapshot) => format!(
+                "RELOADED {} CLOSED LOTS · {}",
+                snapshot.lots.len(),
+                snapshot.source
+            ),
+            Err(error) => format!("CLOSED-LOT RELOAD ERROR · {error}"),
+        };
+        self.clamp_selection();
+    }
+
     fn reload_current(&mut self) {
         match self.view {
             PortfolioView::Positions => self.reload_positions(),
             PortfolioView::Activity => self.reload_activity(),
             PortfolioView::Performance => self.reload_performance(),
             PortfolioView::TaxLots => self.reload_tax_lots(),
+            PortfolioView::RealizedGains => self.reload_realized_gains(),
         }
     }
 }
@@ -297,6 +344,8 @@ impl Workspace for PortfolioWorkspace {
                 "PERFORMANCE",
                 "LOTS",
                 "TAXLOTS",
+                "REALIZED",
+                "CLOSEDLOTS",
             ],
         }
     }
@@ -307,6 +356,7 @@ impl Workspace for PortfolioWorkspace {
             "ACTIVITY" | "TRANSACTIONS" => self.select_view(PortfolioView::Activity),
             "PERFORMANCE" => self.select_view(PortfolioView::Performance),
             "LOTS" | "TAXLOTS" => self.select_view(PortfolioView::TaxLots),
+            "REALIZED" | "CLOSEDLOTS" => self.select_view(PortfolioView::RealizedGains),
             _ => {}
         }
         let Some(operation) = invocation
@@ -321,6 +371,9 @@ impl Workspace for PortfolioWorkspace {
             "ACTIVITY" | "TRANSACTIONS" | "LEDGER" => self.select_view(PortfolioView::Activity),
             "PERFORMANCE" | "PERF" => self.select_view(PortfolioView::Performance),
             "LOTS" | "TAXLOTS" | "TAX-LOTS" => self.select_view(PortfolioView::TaxLots),
+            "REALIZED" | "GAINS" | "CLOSEDLOTS" | "CLOSED-LOTS" => {
+                self.select_view(PortfolioView::RealizedGains)
+            }
             "IMPORT" => {
                 let target = invocation
                     .args
@@ -341,6 +394,10 @@ impl Workspace for PortfolioWorkspace {
                     .is_some_and(|value| matches!(value, "LOTS" | "TAXLOTS" | "TAX-LOTS"))
                 {
                     self.import_tax_lots(invocation.args.get(2..).unwrap_or_default());
+                } else if target.as_deref().is_some_and(|value| {
+                    matches!(value, "REALIZED" | "GAINS" | "CLOSEDLOTS" | "CLOSED-LOTS")
+                }) {
+                    self.import_realized_gains(invocation.args.get(2..).unwrap_or_default());
                 } else {
                     self.import_positions(invocation.args.get(1..).unwrap_or_default());
                 }
@@ -365,6 +422,10 @@ impl Workspace for PortfolioWorkspace {
                     .is_some_and(|value| matches!(value, "LOTS" | "TAXLOTS" | "TAX-LOTS"))
                 {
                     self.reload_tax_lots();
+                } else if target.as_deref().is_some_and(|value| {
+                    matches!(value, "REALIZED" | "GAINS" | "CLOSEDLOTS" | "CLOSED-LOTS")
+                }) {
+                    self.reload_realized_gains();
                 } else {
                     self.reload_positions();
                 }
@@ -398,6 +459,10 @@ impl Workspace for PortfolioWorkspace {
             }
             KeyCode::Char('4') => {
                 self.select_view(PortfolioView::TaxLots);
+                true
+            }
+            KeyCode::Char('5') => {
+                self.select_view(PortfolioView::RealizedGains);
                 true
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -460,12 +525,16 @@ impl Workspace for PortfolioWorkspace {
                     "OPEN LOT BASIS RECONCILES BY CURRENCY · CLOSED TRADES REMAIN SEPARATE"
                         .to_owned()
                 }
+                PortfolioView::RealizedGains => {
+                    "CLOSED-LOT PROCEEDS LESS BASIS RECONCILES BY CURRENCY · NO TAX INFERENCE"
+                        .to_owned()
+                }
             };
             return true;
         }
         if is_primary_click(event, areas.footer) {
             let controls = [
-                (" 1/2/3/4/TAB VIEW  ", Some(KeyCode::Tab)),
+                (" 1/2/3/4/5/TAB VIEW  ", Some(KeyCode::Tab)),
                 ("↑↓/JK SELECT  ", None),
                 ("ENTER/O SECURITY  ", Some(KeyCode::Enter)),
                 ("R RELOAD  ", Some(KeyCode::Char('r'))),
@@ -496,15 +565,19 @@ impl Workspace for PortfolioWorkspace {
         let activity = self.query.load_activity();
         let performance = self.query.load_performance();
         let tax_lots = self.query.load_tax_lots();
+        let realized_gains = self.query.load_realized_gains();
         let areas = portfolio_layout(area);
         render_header(
             frame,
             areas.header,
             self.view,
-            &positions,
-            &activity,
-            &performance,
-            &tax_lots,
+            &PortfolioHeaderData {
+                positions: &positions,
+                activity: &activity,
+                performance: &performance,
+                tax_lots: &tax_lots,
+                realized_gains: &realized_gains,
+            },
         );
         render_tabs(frame, areas.tabs, self.view);
         match self.view {
@@ -523,6 +596,10 @@ impl Workspace for PortfolioWorkspace {
             PortfolioView::TaxLots => {
                 render_tax_lots(frame, areas.main, &tax_lots, self.selected);
                 render_tax_lot_source(frame, areas.side, &tax_lots, &self.status);
+            }
+            PortfolioView::RealizedGains => {
+                render_realized_gains(frame, areas.main, &realized_gains, self.selected);
+                render_realized_gain_source(frame, areas.side, &realized_gains, &self.status);
             }
         }
         render_footer(frame, areas.footer, self.view);
@@ -557,43 +634,60 @@ fn portfolio_layout(area: Rect) -> PortfolioLayout {
     }
 }
 
+struct PortfolioHeaderData<'a> {
+    positions: &'a PortfolioSnapshot,
+    activity: &'a PortfolioActivityLedger,
+    performance: &'a PortfolioPerformanceSnapshot,
+    tax_lots: &'a PortfolioTaxLotSnapshot,
+    realized_gains: &'a PortfolioRealizedGainSnapshot,
+}
+
 fn render_header(
     frame: &mut Frame,
     area: Rect,
     view: PortfolioView,
-    positions: &PortfolioSnapshot,
-    activity: &PortfolioActivityLedger,
-    performance: &PortfolioPerformanceSnapshot,
-    tax_lots: &PortfolioTaxLotSnapshot,
+    data: &PortfolioHeaderData<'_>,
 ) {
     let kpis = Layout::horizontal([Constraint::Ratio(1, 4); 4]).split(area);
     let values = match view {
         PortfolioView::Positions => [
-            ("NET ASSET VALUE", positions.net_asset_value_label()),
-            ("YTD RETURN", positions.ytd_return_label()),
-            ("AVAILABLE CASH", positions.available_cash_label()),
-            ("SHARPE", positions.sharpe_label()),
+            ("NET ASSET VALUE", data.positions.net_asset_value_label()),
+            ("YTD RETURN", data.positions.ytd_return_label()),
+            ("AVAILABLE CASH", data.positions.available_cash_label()),
+            ("SHARPE", data.positions.sharpe_label()),
         ],
         PortfolioView::Activity => [
-            ("ACTIVITY ROWS", activity.entries.len().to_string()),
-            ("PERIOD", activity.period_label().to_owned()),
-            ("NET CASH EFFECT", activity.net_cash_effect_label()),
-            ("CURRENCIES", activity.currency_totals.len().to_string()),
+            ("ACTIVITY ROWS", data.activity.entries.len().to_string()),
+            ("PERIOD", data.activity.period_label().to_owned()),
+            ("NET CASH EFFECT", data.activity.net_cash_effect_label()),
+            (
+                "CURRENCIES",
+                data.activity.currency_totals.len().to_string(),
+            ),
         ],
         PortfolioView::Performance => [
-            ("VALUATION POINTS", performance.point_count().to_string()),
+            (
+                "VALUATION POINTS",
+                data.performance.point_count().to_string(),
+            ),
             (
                 "TIME-WEIGHTED RETURN",
-                performance.time_weighted_return_label(),
+                data.performance.time_weighted_return_label(),
             ),
-            ("BENCHMARK", performance.benchmark_return_label()),
-            ("ACTIVE RETURN", performance.active_return_label()),
+            ("BENCHMARK", data.performance.benchmark_return_label()),
+            ("ACTIVE RETURN", data.performance.active_return_label()),
         ],
         PortfolioView::TaxLots => [
-            ("OPEN LOTS", tax_lots.lots.len().to_string()),
-            ("COST BASIS", tax_lots.cost_basis_label()),
-            ("CURRENT VALUE", tax_lots.current_value_label()),
-            ("UNREALIZED GAIN", tax_lots.unrealized_gain_label()),
+            ("OPEN LOTS", data.tax_lots.lots.len().to_string()),
+            ("COST BASIS", data.tax_lots.cost_basis_label()),
+            ("CURRENT VALUE", data.tax_lots.current_value_label()),
+            ("UNREALIZED GAIN", data.tax_lots.unrealized_gain_label()),
+        ],
+        PortfolioView::RealizedGains => [
+            ("CLOSED LOTS", data.realized_gains.lots.len().to_string()),
+            ("PROCEEDS", data.realized_gains.proceeds_label()),
+            ("COST BASIS", data.realized_gains.cost_basis_label()),
+            ("REALIZED GAIN", data.realized_gains.realized_gain_label()),
         ],
     };
     for (index, (label, value)) in values.into_iter().enumerate() {
@@ -944,6 +1038,126 @@ fn render_tax_lot_source(
     render_side(frame, area, "BASIS", "OPEN LOT RECONCILIATION", lines);
 }
 
+fn render_realized_gains(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &PortfolioRealizedGainSnapshot,
+    selected: usize,
+) {
+    let rows = snapshot
+        .lots
+        .iter()
+        .enumerate()
+        .map(|(index, lot)| {
+            styled_data_row(
+                [
+                    lot.disposed_date.clone(),
+                    lot.acquired_date.clone(),
+                    lot.account_id.as_str().to_owned(),
+                    format!("{} · {}", lot.symbol, lot.currency),
+                    lot.holding_period.label().to_owned(),
+                    lot.quantity_label(),
+                    format_money(lot.proceeds),
+                    format_money(lot.cost_basis),
+                    format_money(lot.realized_gain),
+                    lot.realized_return_label(),
+                ],
+                index,
+                selected,
+            )
+        })
+        .collect::<Vec<_>>();
+    render_table(
+        frame,
+        area,
+        "REAL",
+        "BROKER CLOSED LOTS + REALIZED GAINS",
+        [
+            "SOLD",
+            "ACQUIRED",
+            "ACCOUNT",
+            "SYMBOL · CCY",
+            "TERM",
+            "QTY",
+            "PROCEEDS",
+            "BASIS",
+            "GAIN",
+            "RETURN",
+        ],
+        rows,
+        [
+            Constraint::Percentage(10),
+            Constraint::Percentage(10),
+            Constraint::Percentage(9),
+            Constraint::Percentage(12),
+            Constraint::Percentage(7),
+            Constraint::Percentage(9),
+            Constraint::Percentage(11),
+            Constraint::Percentage(11),
+            Constraint::Percentage(11),
+            Constraint::Percentage(10),
+        ],
+    );
+}
+
+fn render_realized_gain_source(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &PortfolioRealizedGainSnapshot,
+    status: &str,
+) {
+    let mut lines = vec![
+        Line::styled("SOURCE / PERIOD", AMBER),
+        Line::styled(snapshot.source.clone(), INK),
+        Line::styled(snapshot.period.clone(), MUTED),
+        Line::styled(snapshot.input_version.clone(), CYAN),
+        Line::raw(""),
+        Line::styled("REALIZED RECONCILIATION", AMBER),
+    ];
+    for total in &snapshot.currency_totals {
+        lines.extend([
+            Line::styled(
+                format!(
+                    "{} {} LOTS · PROCEEDS {}",
+                    total.currency,
+                    total.lots,
+                    format_money(total.proceeds)
+                ),
+                INK,
+            ),
+            Line::styled(
+                format!(
+                    "  BASIS {} · GAIN {}",
+                    format_money(total.cost_basis),
+                    format_money(total.realized_gain)
+                ),
+                GREEN,
+            ),
+            Line::styled(
+                format!(
+                    "  SHORT {} · LONG {} · UNKNOWN {}",
+                    format_money(total.short_term_gain),
+                    format_money(total.long_term_gain),
+                    format_money(total.unknown_term_gain)
+                ),
+                MUTED,
+            ),
+        ]);
+    }
+    lines.extend([
+        Line::raw(""),
+        Line::styled("METHODOLOGY", AMBER),
+        Line::styled(snapshot.methodology.clone(), MUTED),
+        Line::raw(""),
+        Line::styled(status, YELLOW),
+        Line::styled("PORT IMPORT REALIZED <CSV>", CYAN),
+    ]);
+    for disclosure in snapshot.disclosures.iter().take(7) {
+        lines.push(Line::styled(format!("• {disclosure}"), MUTED));
+    }
+    render_side(frame, area, "GAIN", "CLOSED-LOT RECONCILIATION", lines);
+}
+
 fn render_side(
     frame: &mut Frame,
     area: Rect,
@@ -1060,7 +1274,7 @@ fn render_performance_inputs(
 fn render_footer(frame: &mut Frame, area: Rect, view: PortfolioView) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(" 1/2/3/4/TAB ", AMBER),
+            Span::styled(" 1/2/3/4/5/TAB ", AMBER),
             Span::styled("VIEW  ", MUTED),
             Span::styled("↑↓/JK ", AMBER),
             Span::styled("SELECT  ", MUTED),
@@ -1117,6 +1331,8 @@ mod tests {
         assert_eq!(workspace.view, PortfolioView::Performance);
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
         assert_eq!(workspace.view, PortfolioView::TaxLots);
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert_eq!(workspace.view, PortfolioView::RealizedGains);
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
         assert_eq!(workspace.view, PortfolioView::Positions);
     }
@@ -1186,5 +1402,31 @@ mod tests {
         assert!(rendered.contains("DEMO-TAX-LOTS-V1"));
         assert!(rendered.contains("META"));
         assert!(rendered.contains("$30,000.00"));
+    }
+
+    #[test]
+    fn realized_gain_panel_renders_closed_lot_reconciliation() {
+        let mut app = bootstrap::demo_app();
+        for character in "/REALIZED\n".chars() {
+            let code = match character {
+                '\n' => KeyCode::Enter,
+                character => KeyCode::Char(character),
+            };
+            app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+        terminal.draw(|frame| runtime::render(frame, &app)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("BROKER CLOSED LOTS + REALIZED GAINS"));
+        assert!(rendered.contains("DEMO-REALIZED-GAINS-V1"));
+        assert!(rendered.contains("NVDA"));
+        assert!(rendered.contains("$7,500.00"));
     }
 }

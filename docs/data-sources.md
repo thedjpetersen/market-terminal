@@ -225,6 +225,27 @@ endorsed by, or sponsored by Yahoo.
   is not closed-trade history, a realized-gain ledger, tax advice, contribution,
   or attribution.
 
+### Portfolio closed-lot CSV
+
+- **Role:** optional local broker export for closed lots and realized gains,
+  selected with `PORT IMPORT REALIZED <CSV>` or
+  `MARKET_TERMINAL_PORTFOLIO_REALIZED_GAINS_CSV`.
+- **Required evidence:** symbol, acquisition date, disposal date, positive
+  quantity, non-negative proceeds, and non-negative cost basis on every row.
+  Optional provider gain/loss must exactly equal proceeds less basis.
+- **Bounds:** 10 MB, 100,000 data rows, 128 columns, and a header within the
+  first 32 records; at most eight row-level rejection details are displayed.
+- **Quality:** rows are rejected atomically when dates, currency, quantity,
+  money, chronology, or reported reconciliation is invalid. Exact minor-unit
+  proceeds, basis, realized gain/loss, and holding-period buckets reconcile
+  separately by ISO currency; no FX rate is invented.
+- **Privacy and persistence:** broker account identifiers are replaced with
+  import-local labels. Only the selected path is stored in private crash-safe
+  state; the CSV contents are not copied.
+- **Limitations:** this is provider-reported closed-lot history, not inferred
+  tax-lot matching, a tax return, tax advice, order/fill history, contribution,
+  or attribution.
+
 ## User workbook and CSV
 
 - **Surface:** interactive Spreadsheet workbook and active-sheet CSV exchange.

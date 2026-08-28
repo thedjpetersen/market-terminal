@@ -10,14 +10,15 @@ use csv::StringRecord;
 
 use crate::features::portfolio::{
     PortfolioAccountId, PortfolioActivityLedger, PortfolioCurrencyTotal, PortfolioError,
-    PortfolioImportStateStore, PortfolioPerformanceSnapshot, PortfolioRepository,
-    PortfolioSnapshot, PortfolioTaxLotSnapshot, Position, PositionQuantity,
+    PortfolioImportStateStore, PortfolioPerformanceSnapshot, PortfolioRealizedGainSnapshot,
+    PortfolioRepository, PortfolioSnapshot, PortfolioTaxLotSnapshot, Position, PositionQuantity,
 };
 use crate::foundation::{Currency, InstrumentId, Money};
 
 use super::{
     portfolio_activity_csv::parse_portfolio_activity_csv,
     portfolio_performance_csv::parse_portfolio_performance_csv,
+    portfolio_realized_gain_csv::parse_portfolio_realized_gain_csv,
     portfolio_tax_lot_csv::parse_portfolio_tax_lot_csv,
 };
 
@@ -25,6 +26,7 @@ const MAX_PORTFOLIO_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_ACTIVITY_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PERFORMANCE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_TAX_LOT_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_REALIZED_GAIN_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PORTFOLIO_ROWS: usize = 25_000;
 const MAX_PORTFOLIO_COLUMNS: usize = 256;
 
@@ -37,6 +39,8 @@ pub struct CsvPortfolioRepository {
     performance_path: RwLock<Option<PathBuf>>,
     tax_lots: RwLock<PortfolioTaxLotSnapshot>,
     tax_lot_path: RwLock<Option<PathBuf>>,
+    realized_gains: RwLock<PortfolioRealizedGainSnapshot>,
+    realized_gain_path: RwLock<Option<PathBuf>>,
     state_store: Option<Arc<dyn PortfolioImportStateStore>>,
 }
 
@@ -68,6 +72,10 @@ impl CsvPortfolioRepository {
                 "NO TAX LOTS IMPORTED · USE PORT IMPORT LOTS <FILE.CSV>",
             )),
             tax_lot_path: RwLock::new(None),
+            realized_gains: RwLock::new(PortfolioRealizedGainSnapshot::empty(
+                "NO REALIZED GAINS IMPORTED · USE PORT IMPORT REALIZED <FILE.CSV>",
+            )),
+            realized_gain_path: RwLock::new(None),
             state_store,
         };
         let env_path = env::var_os("MARKET_TERMINAL_PORTFOLIO_CSV")
@@ -215,6 +223,43 @@ impl CsvPortfolioRepository {
                     .source = format!("TAX-LOT AUTO-IMPORT ERROR · {error}");
             }
         }
+        let env_realized_gain_path = env::var_os("MARKET_TERMINAL_PORTFOLIO_REALIZED_GAINS_CSV")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let stored_realized_gain_path = if env_realized_gain_path.is_none() {
+            repository
+                .state_store
+                .as_ref()
+                .map(|store| store.load_realized_gain_import_path())
+                .transpose()
+        } else {
+            Ok(None)
+        };
+        let startup_realized_gain_path = match stored_realized_gain_path {
+            Ok(stored) => env_realized_gain_path.or(stored.flatten()),
+            Err(error) => {
+                repository
+                    .realized_gains
+                    .write()
+                    .expect("portfolio realized-gain lock")
+                    .source = format!("REALIZED-GAIN IMPORT STATE ERROR · {error}");
+                env_realized_gain_path
+            }
+        };
+        if let Some(path) = startup_realized_gain_path {
+            let path = expand_home(path);
+            if let Err(error) = repository.import_realized_gain_path(&path) {
+                *repository
+                    .realized_gain_path
+                    .write()
+                    .expect("portfolio realized-gain path lock") = Some(path);
+                repository
+                    .realized_gains
+                    .write()
+                    .expect("portfolio realized-gain lock")
+                    .source = format!("REALIZED-GAIN AUTO-IMPORT ERROR · {error}");
+            }
+        }
         repository
     }
 
@@ -338,6 +383,43 @@ impl CsvPortfolioRepository {
             .expect("portfolio tax-lot path lock") = Some(path.to_path_buf());
         Ok(tax_lots)
     }
+
+    fn import_realized_gain_path(
+        &self,
+        path: &Path,
+    ) -> Result<PortfolioRealizedGainSnapshot, PortfolioError> {
+        let metadata = fs::metadata(path).map_err(|error| {
+            PortfolioError::Io(format!(
+                "CANNOT READ CLOSED LOTS {} · {error}",
+                display_name(path)
+            ))
+        })?;
+        if metadata.len() > MAX_REALIZED_GAIN_BYTES {
+            return Err(PortfolioError::InvalidCsv(format!(
+                "{} IS TOO LARGE · CLOSED-LOT LIMIT IS 10 MB",
+                display_name(path)
+            )));
+        }
+        let bytes = fs::read(path).map_err(|error| {
+            PortfolioError::Io(format!(
+                "CANNOT READ CLOSED LOTS {} · {error}",
+                display_name(path)
+            ))
+        })?;
+        let realized_gains = parse_portfolio_realized_gain_csv(&bytes, display_name(path))?;
+        if let Some(store) = &self.state_store {
+            store.save_realized_gain_import_path(path)?;
+        }
+        *self
+            .realized_gains
+            .write()
+            .expect("portfolio realized-gain lock") = realized_gains.clone();
+        *self
+            .realized_gain_path
+            .write()
+            .expect("portfolio realized-gain path lock") = Some(path.to_path_buf());
+        Ok(realized_gains)
+    }
 }
 
 impl PortfolioRepository for CsvPortfolioRepository {
@@ -386,6 +468,20 @@ impl PortfolioRepository for CsvPortfolioRepository {
 
     fn import_tax_lots_csv(&self, path: &Path) -> Result<PortfolioTaxLotSnapshot, PortfolioError> {
         self.import_tax_lot_path(path)
+    }
+
+    fn load_realized_gains(&self) -> PortfolioRealizedGainSnapshot {
+        self.realized_gains
+            .read()
+            .expect("portfolio realized-gain lock")
+            .clone()
+    }
+
+    fn import_realized_gains_csv(
+        &self,
+        path: &Path,
+    ) -> Result<PortfolioRealizedGainSnapshot, PortfolioError> {
+        self.import_realized_gain_path(path)
     }
 
     fn reload(&self) -> Result<PortfolioSnapshot, PortfolioError> {
@@ -442,6 +538,20 @@ impl PortfolioRepository for CsvPortfolioRepository {
                 )
             })?;
         self.import_tax_lot_path(&path)
+    }
+
+    fn reload_realized_gains(&self) -> Result<PortfolioRealizedGainSnapshot, PortfolioError> {
+        let path = self
+            .realized_gain_path
+            .read()
+            .expect("portfolio realized-gain path lock")
+            .clone()
+            .ok_or_else(|| {
+                PortfolioError::Unsupported(
+                    "NO IMPORTED REALIZED GAINS · USE PORT IMPORT REALIZED <FILE.CSV>".to_owned(),
+                )
+            })?;
+        self.import_realized_gain_path(&path)
     }
 }
 
@@ -1125,6 +1235,7 @@ mod tests {
         activity_path: Mutex<Option<PathBuf>>,
         performance_path: Mutex<Option<PathBuf>>,
         tax_lot_path: Mutex<Option<PathBuf>>,
+        realized_gain_path: Mutex<Option<PathBuf>>,
     }
 
     impl PortfolioImportStateStore for MemoryImportState {
@@ -1184,6 +1295,22 @@ mod tests {
         fn save_tax_lot_import_path(&self, path: &Path) -> Result<(), PortfolioError> {
             *self
                 .tax_lot_path
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(path.to_path_buf());
+            Ok(())
+        }
+
+        fn load_realized_gain_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+            Ok(self
+                .realized_gain_path
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone())
+        }
+
+        fn save_realized_gain_import_path(&self, path: &Path) -> Result<(), PortfolioError> {
+            *self
+                .realized_gain_path
                 .lock()
                 .unwrap_or_else(|error| error.into_inner()) = Some(path.to_path_buf());
             Ok(())
@@ -1317,6 +1444,8 @@ MSFT,MICROSOFT CORP,4,$500.00,"$2,000.00","$1,600.00",25%,USD
             performance_path: RwLock::new(None),
             tax_lots: RwLock::new(PortfolioTaxLotSnapshot::empty("TEST")),
             tax_lot_path: RwLock::new(None),
+            realized_gains: RwLock::new(PortfolioRealizedGainSnapshot::empty("TEST")),
+            realized_gain_path: RwLock::new(None),
             state_store: None,
         };
         fs::write(&path, "Symbol,Quantity,Market Value\nAAPL,2,400\n").unwrap();
@@ -1435,6 +1564,56 @@ MSFT,MICROSOFT CORP,4,$500.00,"$2,000.00","$1,600.00",25%,USD
         assert_eq!(restored.load_tax_lots().cost_basis_label(), "$250.00");
         assert_eq!(restored.load_tax_lots().unrealized_gain_label(), "$150.00");
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn persistent_repository_restores_realized_gains_independently() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = env::temp_dir().join(format!("market-terminal-realized-gains-{unique}.csv"));
+        fs::write(
+            &path,
+            "Symbol,Date Acquired,Date Sold,Term,Quantity,Proceeds,Cost Basis,Gain/Loss,Currency\nAAPL,2024-01-02,2026-02-03,Long,2,400,250,150,USD\n",
+        )
+        .unwrap();
+        let state = Arc::new(MemoryImportState::default());
+        let first = CsvPortfolioRepository::persistent(state.clone());
+
+        first.import_realized_gains_csv(&path).unwrap();
+        let restored = CsvPortfolioRepository::persistent(state);
+
+        assert_eq!(restored.load_realized_gains().lots.len(), 1);
+        assert_eq!(restored.load_realized_gains().proceeds_label(), "$400.00");
+        assert_eq!(
+            restored.load_realized_gains().realized_gain_label(),
+            "$150.00"
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires MARKET_TERMINAL_PORTFOLIO_REALIZED_GAINS_CSV pointing to a real broker export"]
+    fn live_configured_realized_gains_reconcile_without_demo_fallbacks() {
+        let _ = dotenvy::dotenv();
+        assert!(
+            env::var_os("MARKET_TERMINAL_PORTFOLIO_REALIZED_GAINS_CSV").is_some(),
+            "set MARKET_TERMINAL_PORTFOLIO_REALIZED_GAINS_CSV to an actual closed-lot export"
+        );
+        let repository = CsvPortfolioRepository::from_env();
+        let snapshot = repository.load_realized_gains();
+
+        assert!(!snapshot.lots.is_empty(), "{}", snapshot.source);
+        assert!(snapshot.source.starts_with("CSV ·"), "{}", snapshot.source);
+        assert!(!snapshot.source.contains("DEMO"));
+        assert!(snapshot.input_version.starts_with("CSV-FNV1A64-"));
+        for total in &snapshot.currency_totals {
+            assert_eq!(
+                total.proceeds.minor_units() - total.cost_basis.minor_units(),
+                total.realized_gain.minor_units()
+            );
+        }
     }
 
     #[test]

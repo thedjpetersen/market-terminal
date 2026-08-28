@@ -23,6 +23,7 @@ mod openrouter;
 mod portfolio_activity_csv;
 mod portfolio_csv;
 mod portfolio_performance_csv;
+mod portfolio_realized_gain_csv;
 mod portfolio_risk;
 mod portfolio_tax_lot_csv;
 mod sec_instruments;

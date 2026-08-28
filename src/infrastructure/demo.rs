@@ -3,8 +3,9 @@ use crate::features::{
     news::{Headline, NewsFeed, NewsSnapshot},
     overview::{OverviewQuery, OverviewSnapshot},
     portfolio::{
-        PortfolioAccountId, PortfolioCurrencyTotal, PortfolioPerformanceSeries,
-        PortfolioPerformanceSnapshot, PortfolioRepository, PortfolioSnapshot, PortfolioTaxLot,
+        PortfolioAccountId, PortfolioClosedLot, PortfolioCurrencyTotal, PortfolioPerformanceSeries,
+        PortfolioPerformanceSnapshot, PortfolioRealizedGainCurrencyTotal,
+        PortfolioRealizedGainSnapshot, PortfolioRepository, PortfolioSnapshot, PortfolioTaxLot,
         PortfolioTaxLotCurrencyTotal, PortfolioTaxLotSnapshot, PortfolioValuationPoint, Position,
         PositionQuantity, TaxLotHoldingPeriod,
     },
@@ -519,6 +520,80 @@ impl PortfolioRepository for DemoData {
             disclosures: vec![
                 "DETERMINISTIC GALLERY LOTS · NOT INTERACTIVE USER DATA".to_owned(),
                 "OPEN LOTS ONLY · NO REALIZED-GAIN OR CLOSED-TRADE HISTORY".to_owned(),
+            ],
+        }
+    }
+
+    fn load_realized_gains(&self) -> PortfolioRealizedGainSnapshot {
+        let usd = Currency::new("USD").expect("USD is valid");
+        let lot = |id: &str,
+                   symbol: &str,
+                   acquired: &str,
+                   disposed: &str,
+                   term: TaxLotHoldingPeriod,
+                   quantity: i128,
+                   proceeds: i128,
+                   basis: i128,
+                   return_bps: i32| PortfolioClosedLot {
+            lot_id: id.to_owned(),
+            account_id: PortfolioAccountId::new("DEMO ACCOUNT"),
+            instrument_id: InstrumentId::new(format!(
+                "demo:instrument:{}",
+                symbol.to_ascii_lowercase()
+            )),
+            symbol: symbol.to_owned(),
+            acquired_date: acquired.to_owned(),
+            disposed_date: disposed.to_owned(),
+            holding_period: term,
+            currency: usd,
+            quantity: PositionQuantity::from_scaled_units(quantity),
+            proceeds: Money::from_minor_units(proceeds, usd),
+            cost_basis: Money::from_minor_units(basis, usd),
+            realized_gain: Money::from_minor_units(proceeds - basis, usd),
+            realized_return_bps: Some(return_bps),
+        };
+        PortfolioRealizedGainSnapshot {
+            lots: vec![
+                lot(
+                    "DEMO-CLOSED-1",
+                    "NVDA",
+                    "2024-02-12",
+                    "2026-03-06",
+                    TaxLotHoldingPeriod::LongTerm,
+                    40_000_000,
+                    1_800_000,
+                    900_000,
+                    10_000,
+                ),
+                lot(
+                    "DEMO-CLOSED-2",
+                    "MSFT",
+                    "2026-01-09",
+                    "2026-07-17",
+                    TaxLotHoldingPeriod::ShortTerm,
+                    25_000_000,
+                    1_050_000,
+                    1_200_000,
+                    -1_250,
+                ),
+            ],
+            currency_totals: vec![PortfolioRealizedGainCurrencyTotal {
+                currency: usd,
+                lots: 2,
+                proceeds: Money::from_minor_units(2_850_000, usd),
+                cost_basis: Money::from_minor_units(2_100_000, usd),
+                realized_gain: Money::from_minor_units(750_000, usd),
+                short_term_gain: Money::from_minor_units(-150_000, usd),
+                long_term_gain: Money::from_minor_units(900_000, usd),
+                unknown_term_gain: Money::from_minor_units(0, usd),
+            }],
+            source: "DETERMINISTIC DEMO".to_owned(),
+            period: "2026-03-06 — 2026-07-17".to_owned(),
+            input_version: "DEMO-REALIZED-GAINS-V1".to_owned(),
+            methodology: "DETERMINISTIC CLOSED-LOT FIXTURE · PROCEEDS − BASIS · USD".to_owned(),
+            disclosures: vec![
+                "DETERMINISTIC GALLERY CLOSED LOTS · NOT INTERACTIVE USER DATA".to_owned(),
+                "BROKER-PROVIDED CLOSED LOTS · NOT TAX ADVICE".to_owned(),
             ],
         }
     }

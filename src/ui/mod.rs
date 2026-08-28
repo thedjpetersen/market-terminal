@@ -494,6 +494,8 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw("PORT PERFORMANCE     Show performance input coverage"),
             Line::raw("PORT LOTS            Open exact tax-lot basis"),
             Line::raw("PORT IMPORT LOTS <CSV>  Import broker open lots"),
+            Line::raw("PORT REALIZED        Open closed lots and realized gains"),
+            Line::raw("PORT IMPORT REALIZED <CSV>  Import broker closed lots"),
             Line::raw("PORT RELOAD          Reload positions"),
             Line::raw("SHEET IMPORT <CSV>   Replace active sheet"),
             Line::raw("SHEET EXPORT <CSV>   Export active sheet"),
