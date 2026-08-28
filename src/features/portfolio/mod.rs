@@ -1,8 +1,14 @@
+mod attribution;
 mod contribution;
 mod domain;
 mod port;
 mod workspace;
 
+pub use attribution::{
+    calculate_multi_period_attribution, PortfolioAttributionCurrencyTotal,
+    PortfolioAttributionError, PortfolioAttributionInput, PortfolioAttributionRow,
+    PortfolioAttributionSnapshot,
+};
 pub use contribution::{
     calculate_contribution, PortfolioContributionCurrencyTotal, PortfolioContributionError,
     PortfolioContributionInput, PortfolioContributionInputRow, PortfolioContributionRow,

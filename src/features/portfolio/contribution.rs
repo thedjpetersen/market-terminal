@@ -8,7 +8,7 @@ use super::{format_money, PortfolioAccountId};
 
 const MAX_CONTRIBUTION_ROWS: usize = 25_000;
 /// One unit is one hundredth of a basis point (0.0001%).
-const CONTRIBUTION_SCALE: i128 = 1_000_000;
+pub(super) const CONTRIBUTION_SCALE: i128 = 1_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortfolioContributionInputRow {
@@ -627,7 +627,7 @@ fn checked_add_i64(
         .ok_or_else(|| contribution_error(message))
 }
 
-fn format_centibps(value: i64) -> String {
+pub(super) fn format_centibps(value: i64) -> String {
     let sign = if value > 0 {
         "+"
     } else if value < 0 {

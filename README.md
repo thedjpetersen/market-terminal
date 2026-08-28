@@ -419,7 +419,16 @@ MARKET_TERMINAL_PORTFOLIO_CONTRIBUTION_CSV="~/Downloads/contribution.csv"
 active contribution, currency totals, methodology, input version, and explicit
 rounding residuals. Account identifiers are anonymized before they reach the
 domain. Cash activity plus one positions snapshot is never silently promoted
-into contribution input, and multi-period linking remains future work.
+into contribution input. The Portfolio-owned calculation boundary can now link
+two or more verified, ordered, contiguous periods with the
+[Frongello method](https://frongello.com/support/Works/JPMWinter20022003.pdf):
+each security contribution is scaled by cumulative prior portfolio growth,
+while benchmark contribution is linked independently and active contribution
+is their difference. Currency sets, benchmark coverage, and aggregate ending to
+next-beginning values must remain continuous; returns at or below -100% are
+rejected, and fixed-point linking residuals stay explicit. The current CSV
+command remains deliberately single-period; a verified history import and
+multi-period terminal drill-down remain future work.
 
 Import a broker open-tax-lot export separately from positions and activity:
 

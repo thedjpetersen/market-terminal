@@ -132,6 +132,11 @@ move to its own crate later without changing its public vocabulary.
   strict single-period evidence, complete paired benchmarks, account
   anonymization, independent crash-safe path persistence, Security routing,
   methodology/version disclosure, and explicit rounding residuals.
+- **Complete:** pure multi-period Portfolio attribution boundary using
+  order-dependent Frongello linking over verified contiguous periods, with
+  geometric portfolio and benchmark returns, changing security membership,
+  strict value/currency/benchmark continuity, and explicit centibasis-point
+  linking residuals.
 - **Next:** the remaining Stage 2 portfolio/performance, risk, screening, and
   expanded alert-rule families. Provider availability extends the deployment
   surface; deterministic fixtures remain the Stage 1 acceptance baseline and
@@ -395,7 +400,9 @@ calculates flow-adjusted TWR plus optional benchmark and active return, and the
 first Risk slice consumes positions without storage access. A pure Portfolio
 calculator plus a bounded CSV adapter and terminal drill-down now reconcile
 single-period security contribution and optional benchmark-active attribution;
-multi-period attribution, historical/factor risk, and stress libraries remain.
+the pure multi-period boundary now links ordered security, benchmark, and active
+contributions without Portfolio storage access. A verified history adapter and
+terminal drill-down, historical/factor risk, and stress libraries remain.
 Screening and the additional news/topic, portfolio-threshold, calendar, and
 spreadsheet-expression alert rule families remain separate Stage 2 slices.
 
