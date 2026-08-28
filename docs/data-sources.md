@@ -226,6 +226,29 @@ endorsed by, or sponsored by Yahoo.
   and centibasis-point rounding residuals remain visible. No FX conversion,
   multi-period linking, or inferred history is introduced.
 
+## User portfolio attribution CSV
+
+- **Surface:** Portfolio Attribution and Security drill-through from each
+  linked symbol row.
+- **Source/ownership:** a local verified security-level history selected with
+  `PORT IMPORT ATTRIBUTION <CSV>` or
+  `MARKET_TERMINAL_PORTFOLIO_ATTRIBUTION_CSV`. It uses the contribution
+  columns but requires at least two distinct periods.
+- **Retention/privacy:** parsed rows remain in process and raw contents are not
+  copied. Only this input's independent path is stored in a private, crash-safe
+  feature document. Account identifiers receive stable import-local aliases
+  across the whole history.
+- **Bounds:** files are capped at 10 MB, 25,000 data rows, and 64 columns; the
+  header must occur within the first 32 records. At most eight row-level
+  rejection details are displayed.
+- **Quality:** periods must be ordered and contiguous, keep identical currency
+  and benchmark coverage, and reconcile each aggregate ending value to the next
+  beginning value. Returns at or below -100% are rejected. Portfolio and
+  benchmark contributions are linked independently with prior-period growth;
+  active contribution is their difference. Centibasis-point residuals remain
+  explicit, no currencies are combined, and one invalid row refuses the whole
+  import.
+
 ## User portfolio open-tax-lot CSV
 
 - **Surface:** Portfolio Lots and Security drill-through from each resolved

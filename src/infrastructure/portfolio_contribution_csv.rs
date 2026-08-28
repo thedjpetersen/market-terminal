@@ -16,6 +16,13 @@ use super::portfolio_csv::{csv_input_version, parse_currency, parse_scaled};
 pub(super) const MAX_CONTRIBUTION_ROWS: usize = 25_000;
 pub(super) const MAX_CONTRIBUTION_COLUMNS: usize = 64;
 
+pub(super) struct ParsedContributionHistory {
+    pub periods: Vec<PortfolioContributionInput>,
+    pub source: String,
+    pub input_version: String,
+    pub disclosures: Vec<String>,
+}
+
 #[derive(Debug)]
 struct ContributionColumns {
     account: Option<usize>,
@@ -34,6 +41,23 @@ pub(super) fn parse_portfolio_contribution_csv(
     bytes: &[u8],
     source_name: String,
 ) -> Result<PortfolioContributionSnapshot, PortfolioError> {
+    let mut history = parse_portfolio_contribution_history_csv(bytes, source_name)?;
+    if history.periods.len() != 1 {
+        return Err(PortfolioError::InvalidCsv(
+            "REFUSED PARTIAL CONTRIBUTION IMPORT · INVALID MIXED CONTRIBUTION PERIOD".to_owned(),
+        ));
+    }
+    let mut period = history.periods.pop().expect("exactly one period");
+    period.disclosures.extend(history.disclosures);
+    calculate_contribution(period).map_err(|error| {
+        PortfolioError::InvalidCsv(format!("CONTRIBUTION INPUT INVALID · {error}"))
+    })
+}
+
+pub(super) fn parse_portfolio_contribution_history_csv(
+    bytes: &[u8],
+    source_name: String,
+) -> Result<ParsedContributionHistory, PortfolioError> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
         .flexible(true)
@@ -79,9 +103,9 @@ pub(super) fn parse_portfolio_contribution_csv(
     let usd = Currency::new("USD").expect("USD is a valid currency");
     let benchmark_present = columns.benchmark_beginning_value.is_some();
     let mut account_aliases = BTreeMap::<String, PortfolioAccountId>::new();
-    let mut rows = Vec::new();
+    let mut periods = BTreeMap::<(String, String), Vec<PortfolioContributionInputRow>>::new();
     let mut rejected = Vec::new();
-    let mut period = None::<(String, String)>;
+    let mut last_period = None::<(String, String)>;
     let mut defaulted_currency = false;
     let mut defaulted_flows = 0_usize;
 
@@ -103,14 +127,13 @@ pub(super) fn parse_portfolio_contribution_csv(
         let period_start = period_start.format("%Y-%m-%d").to_string();
         let period_end = period_end.format("%Y-%m-%d").to_string();
         let current_period = (period_start.clone(), period_end.clone());
-        if let Some(expected) = &period {
-            if expected != &current_period {
-                reject(&mut rejected, row_number, "MIXED CONTRIBUTION PERIOD");
+        if let Some(previous) = &last_period {
+            if previous != &current_period && previous.0 >= current_period.0 {
+                reject(&mut rejected, row_number, "UNORDERED CONTRIBUTION PERIOD");
                 continue;
             }
-        } else {
-            period = Some(current_period);
         }
+        last_period = Some(current_period.clone());
         let Some(symbol) = normalize_symbol(record.get(columns.symbol).unwrap_or_default()) else {
             reject(&mut rejected, row_number, "SYMBOL");
             continue;
@@ -184,22 +207,25 @@ pub(super) fn parse_portfolio_contribution_csv(
             .entry(raw_account.to_owned())
             .or_insert_with(|| PortfolioAccountId::new(format!("ACCOUNT {next_account}")))
             .clone();
-        rows.push(PortfolioContributionInputRow {
-            account_id,
-            instrument_id: InstrumentId::new(format!(
-                "unresolved:portfolio:{}",
-                symbol.to_ascii_lowercase()
-            )),
-            symbol,
-            currency,
-            beginning_value: Money::from_minor_units(beginning_minor, currency),
-            external_flow: Money::from_minor_units(external_flow_minor, currency),
-            ending_value: Money::from_minor_units(ending_minor, currency),
-            benchmark_beginning_value: benchmark_beginning_minor
-                .map(|value| Money::from_minor_units(value, currency)),
-            benchmark_ending_value: benchmark_ending_minor
-                .map(|value| Money::from_minor_units(value, currency)),
-        });
+        periods
+            .entry(current_period)
+            .or_default()
+            .push(PortfolioContributionInputRow {
+                account_id,
+                instrument_id: InstrumentId::new(format!(
+                    "unresolved:portfolio:{}",
+                    symbol.to_ascii_lowercase()
+                )),
+                symbol,
+                currency,
+                beginning_value: Money::from_minor_units(beginning_minor, currency),
+                external_flow: Money::from_minor_units(external_flow_minor, currency),
+                ending_value: Money::from_minor_units(ending_minor, currency),
+                benchmark_beginning_value: benchmark_beginning_minor
+                    .map(|value| Money::from_minor_units(value, currency)),
+                benchmark_ending_value: benchmark_ending_minor
+                    .map(|value| Money::from_minor_units(value, currency)),
+            });
     }
 
     if !rejected.is_empty() {
@@ -208,17 +234,15 @@ pub(super) fn parse_portfolio_contribution_csv(
             rejected.join(", ")
         )));
     }
-    if rows.is_empty() {
+    if periods.is_empty() {
         return Err(PortfolioError::InvalidCsv(
             "NO POSITION CONTRIBUTION ROWS WERE FOUND".to_owned(),
         ));
     }
-    let (period_start, period_end) = period.expect("non-empty rows have a period");
     let mut disclosures = vec![
         "BROKER ACCOUNT IDENTIFIERS REPLACED WITH IMPORT-LOCAL LABELS".to_owned(),
         "TICKERS REMAIN UNRESOLVED UNTIL INSTRUMENT-MASTER MATCHING".to_owned(),
-        "CSV ROWS ARE ONE VERIFIED POSITION PERIOD · NOT JOINED FROM UNRELATED SNAPSHOTS"
-            .to_owned(),
+        "CSV ROWS ARE VERIFIED POSITION PERIODS · NOT JOINED FROM UNRELATED SNAPSHOTS".to_owned(),
     ];
     if defaulted_currency {
         disclosures.push("MISSING CURRENCY DEFAULTED TO USD".to_owned());
@@ -232,15 +256,27 @@ pub(super) fn parse_portfolio_contribution_csv(
         disclosures.push("NO BENCHMARK COLUMNS · ACTIVE ATTRIBUTION UNAVAILABLE".to_owned());
     }
 
-    calculate_contribution(PortfolioContributionInput {
-        rows,
-        source: format!("CSV · {source_name}"),
-        period_start,
-        period_end,
-        input_version: csv_input_version(bytes),
+    let source = format!("CSV · {source_name}");
+    let input_version = csv_input_version(bytes);
+    let periods = periods
+        .into_iter()
+        .map(
+            |((period_start, period_end), rows)| PortfolioContributionInput {
+                rows,
+                source: source.clone(),
+                period_start,
+                period_end,
+                input_version: input_version.clone(),
+                disclosures: Vec::new(),
+            },
+        )
+        .collect();
+    Ok(ParsedContributionHistory {
+        periods,
+        source,
+        input_version,
         disclosures,
     })
-    .map_err(|error| PortfolioError::InvalidCsv(format!("CONTRIBUTION INPUT INVALID · {error}")))
 }
 
 impl ContributionColumns {

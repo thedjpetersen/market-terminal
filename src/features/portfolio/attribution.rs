@@ -93,6 +93,39 @@ pub struct PortfolioAttributionSnapshot {
     pub disclosures: Vec<String>,
 }
 
+impl PortfolioAttributionSnapshot {
+    pub fn empty(source: impl Into<String>) -> Self {
+        Self {
+            rows: Vec::new(),
+            currency_totals: Vec::new(),
+            source: source.into(),
+            period: "—".to_owned(),
+            input_version: "—".to_owned(),
+            methodology: "NO VERIFIED MULTI-PERIOD POSITION HISTORY".to_owned(),
+            disclosures: vec![
+                "IMPORT VERIFIED ATTRIBUTION HISTORY TO LINK SECURITY CONTRIBUTIONS".to_owned(),
+                "UNRELATED SINGLE-PERIOD EXPORTS ARE NOT SILENTLY JOINED".to_owned(),
+            ],
+        }
+    }
+
+    pub fn linked_return_label(&self) -> String {
+        match self.currency_totals.as_slice() {
+            [] => "N/A".to_owned(),
+            [total] => total.linked_return_label(),
+            totals => format!("{} CCY · SEE ATTRIBUTION", totals.len()),
+        }
+    }
+
+    pub fn linked_active_return_label(&self) -> String {
+        match self.currency_totals.as_slice() {
+            [] => "N/A".to_owned(),
+            [total] => total.linked_active_return_label(),
+            totals => format!("{} CCY · SEE ATTRIBUTION", totals.len()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortfolioAttributionError(String);
 

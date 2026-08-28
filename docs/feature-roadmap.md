@@ -137,6 +137,10 @@ move to its own crate later without changing its public vocabulary.
   geometric portfolio and benchmark returns, changing security membership,
   strict value/currency/benchmark continuity, and explicit centibasis-point
   linking residuals.
+- **Complete:** bounded multi-period attribution CSV import and terminal
+  drill-down with stable history-wide account anonymization, ordered-period and
+  aggregate valuation continuity, independent crash-safe path persistence,
+  Security routing, and complete methodology/version/residual disclosure.
 - **Next:** the remaining Stage 2 portfolio/performance, risk, screening, and
   expanded alert-rule families. Provider availability extends the deployment
   surface; deterministic fixtures remain the Stage 1 acceptance baseline and
@@ -400,11 +404,11 @@ calculates flow-adjusted TWR plus optional benchmark and active return, and the
 first Risk slice consumes positions without storage access. A pure Portfolio
 calculator plus a bounded CSV adapter and terminal drill-down now reconcile
 single-period security contribution and optional benchmark-active attribution;
-the pure multi-period boundary now links ordered security, benchmark, and active
-contributions without Portfolio storage access. A verified history adapter and
-terminal drill-down, historical/factor risk, and stress libraries remain.
-Screening and the additional news/topic, portfolio-threshold, calendar, and
-spreadsheet-expression alert rule families remain separate Stage 2 slices.
+the multi-period boundary plus its bounded CSV adapter and terminal drill-down
+now link ordered security, benchmark, and active contributions. Historical and
+factor risk and stress libraries remain. Screening and the additional
+news/topic, portfolio-threshold, calendar, and spreadsheet-expression alert
+rule families remain separate Stage 2 slices.
 
 ## Stage 3 — Advanced analytics and paper workflows
 

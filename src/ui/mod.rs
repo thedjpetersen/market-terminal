@@ -583,6 +583,8 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw("PORT IMPORT TRADES <CSV>  Import broker order/fill history"),
             Line::raw("PORT CONTRIBUTION    Open security contribution"),
             Line::raw("PORT IMPORT CONTRIBUTION <CSV>  Import verified position period"),
+            Line::raw("PORT ATTRIBUTION     Open linked multi-period attribution"),
+            Line::raw("PORT IMPORT ATTRIBUTION <CSV>  Import verified period history"),
             Line::raw("PORT RELOAD          Reload positions"),
             Line::raw("SHEET IMPORT <CSV>   Replace active sheet"),
             Line::raw("SHEET EXPORT <CSV>   Export active sheet"),

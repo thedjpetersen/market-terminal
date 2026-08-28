@@ -3,13 +3,15 @@ use crate::features::{
     news::{Headline, NewsFeed, NewsSnapshot},
     overview::{OverviewQuery, OverviewSnapshot},
     portfolio::{
-        calculate_contribution, ExecutionPrice, PortfolioAccountId, PortfolioClosedLot,
-        PortfolioContributionInput, PortfolioContributionInputRow, PortfolioContributionSnapshot,
-        PortfolioCurrencyTotal, PortfolioPerformanceSeries, PortfolioPerformanceSnapshot,
-        PortfolioRealizedGainCurrencyTotal, PortfolioRealizedGainSnapshot, PortfolioRepository,
-        PortfolioSnapshot, PortfolioTaxLot, PortfolioTaxLotCurrencyTotal, PortfolioTaxLotSnapshot,
-        PortfolioTradeCurrencyTotal, PortfolioTradeExecution, PortfolioTradeLedger,
-        PortfolioValuationPoint, Position, PositionQuantity, TaxLotHoldingPeriod, TradeSide,
+        calculate_contribution, calculate_multi_period_attribution, ExecutionPrice,
+        PortfolioAccountId, PortfolioAttributionInput, PortfolioAttributionSnapshot,
+        PortfolioClosedLot, PortfolioContributionInput, PortfolioContributionInputRow,
+        PortfolioContributionSnapshot, PortfolioCurrencyTotal, PortfolioPerformanceSeries,
+        PortfolioPerformanceSnapshot, PortfolioRealizedGainCurrencyTotal,
+        PortfolioRealizedGainSnapshot, PortfolioRepository, PortfolioSnapshot, PortfolioTaxLot,
+        PortfolioTaxLotCurrencyTotal, PortfolioTaxLotSnapshot, PortfolioTradeCurrencyTotal,
+        PortfolioTradeExecution, PortfolioTradeLedger, PortfolioValuationPoint, Position,
+        PositionQuantity, TaxLotHoldingPeriod, TradeSide,
     },
     security::{
         Estimate, Filing, FinancialPeriod, OwnerPosition, PeerComparison, SecurityError,
@@ -485,6 +487,64 @@ impl PortfolioRepository for DemoData {
             ],
         })
         .expect("deterministic contribution fixture reconciles")
+    }
+
+    fn load_attribution(&self) -> PortfolioAttributionSnapshot {
+        let usd = Currency::new("USD").expect("USD is valid");
+        let row = |symbol: &str,
+                   beginning: i128,
+                   ending: i128,
+                   benchmark_beginning: i128,
+                   benchmark_ending: i128| PortfolioContributionInputRow {
+            account_id: PortfolioAccountId::new("DEMO ACCOUNT"),
+            instrument_id: InstrumentId::new(format!(
+                "demo:instrument:{}",
+                symbol.to_ascii_lowercase()
+            )),
+            symbol: symbol.to_owned(),
+            currency: usd,
+            beginning_value: Money::from_minor_units(beginning, usd),
+            external_flow: Money::from_minor_units(0, usd),
+            ending_value: Money::from_minor_units(ending, usd),
+            benchmark_beginning_value: Some(Money::from_minor_units(benchmark_beginning, usd)),
+            benchmark_ending_value: Some(Money::from_minor_units(benchmark_ending, usd)),
+        };
+        let period = |start: &str, end: &str, rows: Vec<PortfolioContributionInputRow>| {
+            PortfolioContributionInput {
+                rows,
+                source: "DETERMINISTIC DEMO".to_owned(),
+                period_start: start.to_owned(),
+                period_end: end.to_owned(),
+                input_version: "DEMO-ATTRIBUTION-V1".to_owned(),
+                disclosures: Vec::new(),
+            }
+        };
+        calculate_multi_period_attribution(PortfolioAttributionInput {
+            periods: vec![
+                period(
+                    "2026-06-01",
+                    "2026-07-01",
+                    vec![
+                        row("META", 60_000_000, 66_000_000, 50_000_000, 52_500_000),
+                        row("AAPL", 40_000_000, 44_000_000, 50_000_000, 52_500_000),
+                    ],
+                ),
+                period(
+                    "2026-07-01",
+                    "2026-08-01",
+                    vec![
+                        row("META", 66_000_000, 59_400_000, 52_500_000, 51_975_000),
+                        row("AAPL", 44_000_000, 48_400_000, 52_500_000, 51_975_000),
+                    ],
+                ),
+            ],
+            source: "DETERMINISTIC DEMO".to_owned(),
+            input_version: "DEMO-ATTRIBUTION-V1".to_owned(),
+            disclosures: vec![
+                "DETERMINISTIC GALLERY ATTRIBUTION · NOT INTERACTIVE USER DATA".to_owned(),
+            ],
+        })
+        .expect("deterministic attribution fixture reconciles")
     }
 
     fn load_tax_lots(&self) -> PortfolioTaxLotSnapshot {

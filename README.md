@@ -338,11 +338,12 @@ return and Sharpe remain `N/A` because a positions snapshot does not contain
 enough transaction history to calculate them honestly. No broker password or
 API credential is required, and the CSV stays local.
 
-Portfolio has seven clickable, keyboard-addressable views: `1` Positions, `2`
+Portfolio has eight clickable, keyboard-addressable views: `1` Positions, `2`
 Activity, `3` Performance, `4` Lots, `5` Realized, `6` Trades, and `7`
-Contribution. `Tab`, `Shift+Tab`, `h/l`, and the arrow keys switch views; `j/k`
-selects rows, and Enter opens a row's resolved security when one exists. Import
-a separate cash-account or broker activity export with:
+Contribution, and `8` Attribution. `Tab`, `Shift+Tab`, `h/l`, and the
+arrow keys switch views; `j/k` selects rows, and Enter opens a row's resolved
+security when one exists. Import a separate cash-account or broker activity
+export with:
 
 ```text
 PORT IMPORT ACTIVITY "~/Downloads/activity.csv"
@@ -426,9 +427,30 @@ each security contribution is scaled by cumulative prior portfolio growth,
 while benchmark contribution is linked independently and active contribution
 is their difference. Currency sets, benchmark coverage, and aggregate ending to
 next-beginning values must remain continuous; returns at or below -100% are
-rejected, and fixed-point linking residuals stay explicit. The current CSV
-command remains deliberately single-period; a verified history import and
-multi-period terminal drill-down remain future work.
+rejected, and fixed-point linking residuals stay explicit.
+
+Import the verified multi-period history independently with:
+
+```text
+PORT IMPORT ATTRIBUTION "~/Downloads/attribution.csv"
+PORT RELOAD ATTRIBUTION
+```
+
+The columns are the same as the single-period contribution input, but the file
+must contain at least two ordered, contiguous periods. Account aliases remain
+stable across the complete import. Every period must preserve its currency set
+and benchmark coverage, and each aggregate ending value must exactly equal the
+next beginning value. One gap, discontinuity, malformed row, or partial
+benchmark refuses the entire file. Configure its separately persisted path
+with:
+
+```dotenv
+MARKET_TERMINAL_PORTFOLIO_ATTRIBUTION_CSV="~/Downloads/attribution.csv"
+```
+
+`PORT ATTRIBUTION` shows linked security, benchmark, and active contribution,
+per-currency geometric return, input version, methodology, and every rounding
+residual. It remains read-only and does not combine currencies.
 
 Import a broker open-tax-lot export separately from positions and activity:
 

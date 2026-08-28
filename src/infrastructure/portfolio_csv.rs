@@ -9,15 +9,17 @@ use chrono::Utc;
 use csv::StringRecord;
 
 use crate::features::portfolio::{
-    PortfolioAccountId, PortfolioActivityLedger, PortfolioContributionSnapshot,
-    PortfolioCurrencyTotal, PortfolioError, PortfolioImportStateStore,
-    PortfolioPerformanceSnapshot, PortfolioRealizedGainSnapshot, PortfolioRepository,
-    PortfolioSnapshot, PortfolioTaxLotSnapshot, PortfolioTradeLedger, Position, PositionQuantity,
+    PortfolioAccountId, PortfolioActivityLedger, PortfolioAttributionSnapshot,
+    PortfolioContributionSnapshot, PortfolioCurrencyTotal, PortfolioError,
+    PortfolioImportStateStore, PortfolioPerformanceSnapshot, PortfolioRealizedGainSnapshot,
+    PortfolioRepository, PortfolioSnapshot, PortfolioTaxLotSnapshot, PortfolioTradeLedger,
+    Position, PositionQuantity,
 };
 use crate::foundation::{Currency, InstrumentId, Money};
 
 use super::{
     portfolio_activity_csv::parse_portfolio_activity_csv,
+    portfolio_attribution_csv::parse_portfolio_attribution_csv,
     portfolio_contribution_csv::parse_portfolio_contribution_csv,
     portfolio_performance_csv::parse_portfolio_performance_csv,
     portfolio_realized_gain_csv::parse_portfolio_realized_gain_csv,
@@ -32,6 +34,7 @@ const MAX_TAX_LOT_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_REALIZED_GAIN_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_TRADE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_CONTRIBUTION_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_ATTRIBUTION_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PORTFOLIO_ROWS: usize = 25_000;
 const MAX_PORTFOLIO_COLUMNS: usize = 256;
 
@@ -50,6 +53,8 @@ pub struct CsvPortfolioRepository {
     trade_path: RwLock<Option<PathBuf>>,
     contribution: RwLock<PortfolioContributionSnapshot>,
     contribution_path: RwLock<Option<PathBuf>>,
+    attribution: RwLock<PortfolioAttributionSnapshot>,
+    attribution_path: RwLock<Option<PathBuf>>,
     state_store: Option<Arc<dyn PortfolioImportStateStore>>,
 }
 
@@ -93,6 +98,10 @@ impl CsvPortfolioRepository {
                 "NO CONTRIBUTION IMPORTED · USE PORT IMPORT CONTRIBUTION <FILE.CSV>",
             )),
             contribution_path: RwLock::new(None),
+            attribution: RwLock::new(PortfolioAttributionSnapshot::empty(
+                "NO ATTRIBUTION IMPORTED · USE PORT IMPORT ATTRIBUTION <FILE.CSV>",
+            )),
+            attribution_path: RwLock::new(None),
             state_store,
         };
         let env_path = env::var_os("MARKET_TERMINAL_PORTFOLIO_CSV")
@@ -351,6 +360,43 @@ impl CsvPortfolioRepository {
                     .source = format!("CONTRIBUTION AUTO-IMPORT ERROR · {error}");
             }
         }
+        let env_attribution_path = env::var_os("MARKET_TERMINAL_PORTFOLIO_ATTRIBUTION_CSV")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let stored_attribution_path = if env_attribution_path.is_none() {
+            repository
+                .state_store
+                .as_ref()
+                .map(|store| store.load_attribution_import_path())
+                .transpose()
+        } else {
+            Ok(None)
+        };
+        let startup_attribution_path = match stored_attribution_path {
+            Ok(stored) => env_attribution_path.or(stored.flatten()),
+            Err(error) => {
+                repository
+                    .attribution
+                    .write()
+                    .expect("portfolio attribution lock")
+                    .source = format!("ATTRIBUTION IMPORT STATE ERROR · {error}");
+                env_attribution_path
+            }
+        };
+        if let Some(path) = startup_attribution_path {
+            let path = expand_home(path);
+            if let Err(error) = repository.import_attribution_path(&path) {
+                *repository
+                    .attribution_path
+                    .write()
+                    .expect("portfolio attribution path lock") = Some(path);
+                repository
+                    .attribution
+                    .write()
+                    .expect("portfolio attribution lock")
+                    .source = format!("ATTRIBUTION AUTO-IMPORT ERROR · {error}");
+            }
+        }
         repository
     }
 
@@ -576,6 +622,43 @@ impl CsvPortfolioRepository {
             .expect("portfolio contribution path lock") = Some(path.to_path_buf());
         Ok(contribution)
     }
+
+    fn import_attribution_path(
+        &self,
+        path: &Path,
+    ) -> Result<PortfolioAttributionSnapshot, PortfolioError> {
+        let metadata = fs::metadata(path).map_err(|error| {
+            PortfolioError::Io(format!(
+                "CANNOT READ ATTRIBUTION {} · {error}",
+                display_name(path)
+            ))
+        })?;
+        if metadata.len() > MAX_ATTRIBUTION_BYTES {
+            return Err(PortfolioError::InvalidCsv(format!(
+                "{} IS TOO LARGE · ATTRIBUTION LIMIT IS 10 MB",
+                display_name(path)
+            )));
+        }
+        let bytes = fs::read(path).map_err(|error| {
+            PortfolioError::Io(format!(
+                "CANNOT READ ATTRIBUTION {} · {error}",
+                display_name(path)
+            ))
+        })?;
+        let attribution = parse_portfolio_attribution_csv(&bytes, display_name(path))?;
+        if let Some(store) = &self.state_store {
+            store.save_attribution_import_path(path)?;
+        }
+        *self
+            .attribution
+            .write()
+            .expect("portfolio attribution lock") = attribution.clone();
+        *self
+            .attribution_path
+            .write()
+            .expect("portfolio attribution path lock") = Some(path.to_path_buf());
+        Ok(attribution)
+    }
 }
 
 impl PortfolioRepository for CsvPortfolioRepository {
@@ -660,6 +743,20 @@ impl PortfolioRepository for CsvPortfolioRepository {
         path: &Path,
     ) -> Result<PortfolioContributionSnapshot, PortfolioError> {
         self.import_contribution_path(path)
+    }
+
+    fn load_attribution(&self) -> PortfolioAttributionSnapshot {
+        self.attribution
+            .read()
+            .expect("portfolio attribution lock")
+            .clone()
+    }
+
+    fn import_attribution_csv(
+        &self,
+        path: &Path,
+    ) -> Result<PortfolioAttributionSnapshot, PortfolioError> {
+        self.import_attribution_path(path)
     }
 
     fn reload(&self) -> Result<PortfolioSnapshot, PortfolioError> {
@@ -758,6 +855,20 @@ impl PortfolioRepository for CsvPortfolioRepository {
                 )
             })?;
         self.import_contribution_path(&path)
+    }
+
+    fn reload_attribution(&self) -> Result<PortfolioAttributionSnapshot, PortfolioError> {
+        let path = self
+            .attribution_path
+            .read()
+            .expect("portfolio attribution path lock")
+            .clone()
+            .ok_or_else(|| {
+                PortfolioError::Unsupported(
+                    "NO IMPORTED ATTRIBUTION · USE PORT IMPORT ATTRIBUTION <FILE.CSV>".to_owned(),
+                )
+            })?;
+        self.import_attribution_path(&path)
     }
 }
 
@@ -1444,6 +1555,7 @@ mod tests {
         realized_gain_path: Mutex<Option<PathBuf>>,
         trade_path: Mutex<Option<PathBuf>>,
         contribution_path: Mutex<Option<PathBuf>>,
+        attribution_path: Mutex<Option<PathBuf>>,
     }
 
     impl PortfolioImportStateStore for MemoryImportState {
@@ -1551,6 +1663,22 @@ mod tests {
         fn save_contribution_import_path(&self, path: &Path) -> Result<(), PortfolioError> {
             *self
                 .contribution_path
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(path.to_path_buf());
+            Ok(())
+        }
+
+        fn load_attribution_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+            Ok(self
+                .attribution_path
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone())
+        }
+
+        fn save_attribution_import_path(&self, path: &Path) -> Result<(), PortfolioError> {
+            *self
+                .attribution_path
                 .lock()
                 .unwrap_or_else(|error| error.into_inner()) = Some(path.to_path_buf());
             Ok(())
@@ -1690,6 +1818,8 @@ MSFT,MICROSOFT CORP,4,$500.00,"$2,000.00","$1,600.00",25%,USD
             trade_path: RwLock::new(None),
             contribution: RwLock::new(PortfolioContributionSnapshot::empty("TEST")),
             contribution_path: RwLock::new(None),
+            attribution: RwLock::new(PortfolioAttributionSnapshot::empty("TEST")),
+            attribution_path: RwLock::new(None),
             state_store: None,
         };
         fs::write(&path, "Symbol,Quantity,Market Value\nAAPL,2,400\n").unwrap();
@@ -1812,6 +1942,36 @@ MSFT,MICROSOFT CORP,4,$500.00,"$2,000.00","$1,600.00",25%,USD
         assert_eq!(
             restored.load_contribution().period,
             "2026-01-01 — 2026-01-31"
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn persistent_repository_restores_attribution_independently() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = env::temp_dir().join(format!("market-terminal-attribution-{unique}.csv"));
+        fs::write(
+            &path,
+            "Symbol,Start Date,End Date,Beginning Value,Ending Value,Currency\nAAPL,2026-01-01,2026-02-01,100,110,USD\nAAPL,2026-02-01,2026-03-01,110,121,USD\n",
+        )
+        .unwrap();
+        let state = Arc::new(MemoryImportState::default());
+        let first = CsvPortfolioRepository::persistent(state.clone());
+
+        first.import_attribution_csv(&path).unwrap();
+        let restored = CsvPortfolioRepository::persistent(state);
+
+        assert_eq!(restored.load_attribution().rows.len(), 1);
+        assert_eq!(
+            restored.load_attribution().linked_return_label(),
+            "+21.0000%"
+        );
+        assert_eq!(
+            restored.load_attribution().period,
+            "2026-01-01 — 2026-03-01"
         );
         fs::remove_file(path).unwrap();
     }

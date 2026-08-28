@@ -4,9 +4,9 @@ use std::{
 };
 
 use super::{
-    PortfolioActivityLedger, PortfolioContributionSnapshot, PortfolioPerformanceSnapshot,
-    PortfolioRealizedGainSnapshot, PortfolioSnapshot, PortfolioTaxLotSnapshot,
-    PortfolioTradeLedger,
+    PortfolioActivityLedger, PortfolioAttributionSnapshot, PortfolioContributionSnapshot,
+    PortfolioPerformanceSnapshot, PortfolioRealizedGainSnapshot, PortfolioSnapshot,
+    PortfolioTaxLotSnapshot, PortfolioTradeLedger,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,6 +153,27 @@ pub trait PortfolioRepository: Send + Sync {
             "NO IMPORTED CONTRIBUTION · USE PORT IMPORT CONTRIBUTION <FILE.CSV>".to_owned(),
         ))
     }
+
+    fn load_attribution(&self) -> PortfolioAttributionSnapshot {
+        PortfolioAttributionSnapshot::empty(
+            "NO ATTRIBUTION IMPORTED · USE PORT IMPORT ATTRIBUTION <FILE.CSV>",
+        )
+    }
+
+    fn import_attribution_csv(
+        &self,
+        _path: &Path,
+    ) -> Result<PortfolioAttributionSnapshot, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS PORTFOLIO PROVIDER DOES NOT SUPPORT ATTRIBUTION CSV IMPORT".to_owned(),
+        ))
+    }
+
+    fn reload_attribution(&self) -> Result<PortfolioAttributionSnapshot, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "NO IMPORTED ATTRIBUTION · USE PORT IMPORT ATTRIBUTION <FILE.CSV>".to_owned(),
+        ))
+    }
 }
 
 /// Persists only the user-selected import location, never portfolio contents.
@@ -217,6 +238,16 @@ pub trait PortfolioImportStateStore: Send + Sync {
     fn save_contribution_import_path(&self, _path: &Path) -> Result<(), PortfolioError> {
         Err(PortfolioError::Unsupported(
             "THIS STATE STORE DOES NOT SUPPORT CONTRIBUTION IMPORT PATHS".to_owned(),
+        ))
+    }
+
+    fn load_attribution_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+        Ok(None)
+    }
+
+    fn save_attribution_import_path(&self, _path: &Path) -> Result<(), PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS STATE STORE DOES NOT SUPPORT ATTRIBUTION IMPORT PATHS".to_owned(),
         ))
     }
 }

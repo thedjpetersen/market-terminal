@@ -413,6 +413,7 @@ fn runtime_settings_summary(
         ("REALIZED", "MARKET_TERMINAL_PORTFOLIO_REALIZED_GAINS_CSV"),
         ("TRADES", "MARKET_TERMINAL_PORTFOLIO_TRADES_CSV"),
         ("CONTRIBUTION", "MARKET_TERMINAL_PORTFOLIO_CONTRIBUTION_CSV"),
+        ("ATTRIBUTION", "MARKET_TERMINAL_PORTFOLIO_ATTRIBUTION_CSV"),
     ]
     .into_iter()
     .filter_map(|(label, variable)| env_present(variable).then_some(label))
