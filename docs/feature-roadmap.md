@@ -218,6 +218,12 @@ move to its own crate later without changing its public vocabulary.
   exact upstream tree, with stable `OTUI-*` IDs, implementation-maturity labels,
   repository-relative evidence, owners, priorities, gaps, acceptance-test IDs,
   and a CI-executed schema/invariant test.
+- **Complete:** fail-closed capability-evidence enforcement for every ledger
+  item marked `covered`. CI resolves its command and Help discovery against the
+  live application catalog, then verifies implementation files, three-size
+  semantic frames, named deterministic contract tests, data-source-register
+  sections, and independently measured performance cases. A regression test
+  proves that deleting any required category rejects the completion claim.
 - **Complete:** executable modular-monolith dependency enforcement. CI scans
   production feature source and rejects direct infrastructure imports,
   cross-bounded-context imports, domain/port dependencies on shell or rendering,
@@ -228,7 +234,7 @@ move to its own crate later without changing its public vocabulary.
   foundation-owned canonical `InstrumentId` directly rather than Market Data's
   compatibility alias.
 - **Next:** execute the OpenTerminalUI parity track below, finishing the P0
-  gallery/evidence enforcement, then the remaining
+  eight-state capability gallery, then the remaining
   Stage 2 risk, screening, and alert-rule families. Provider availability
   extends the deployment surface; deterministic fixtures remain the acceptance
   baseline and opt-in live contracts verify real provider behavior.
@@ -455,8 +461,14 @@ from one geometry model. Selected-cell priority prevents the dense grid from
 starving primary actions; worksheet digests, addresses, indices, viewport checks,
 edit state, and mutable operation prerequisites are revalidated on activation. A
 shell test selects an instrument cell through a generated label and routes it into
-Security. Every current workspace has now adopted the action contract; P0 remains
-open for the full state gallery and capability-evidence enforcement.
+Security. Every current workspace has now adopted the action contract. The
+separate `docs/capability-evidence.json` manifest now enumerates every ledger
+item marked `covered`; `tests/parity_ledger.rs` fails closed unless each item
+resolves through the live Help catalog and checked-in implementation, semantic
+golden, deterministic contract, data-source, and performance evidence. The
+performance gate now budgets command dispatch, visible-action routing, a full
+responsive themed frame, and the 10,000-cell edit path independently. P0 remains
+open only for the full eight-state capability gallery.
 `tests/architecture_boundaries.rs` now enforces
 dependency direction on every CI run. The first remediation moved Assistant's portfolio
 context behind an Assistant-owned port and composition-root translator, and

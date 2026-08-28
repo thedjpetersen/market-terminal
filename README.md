@@ -677,7 +677,13 @@ Set `RUST_LOG` to opt into newline-delimited JSON tracing without changing the
 normal terminal display, for example `RUST_LOG=market_terminal=debug cargo run`.
 CI rejects Clippy warnings, test failures, architecture-boundary violations,
 release-build failures, semantic frame changes at standard terminal sizes, and
-spreadsheet edit p95 above 50 ms with 10,000 populated cells.
+any covered parity capability whose checked-in evidence does not resolve to a
+real command, Help entry, implementation file, semantic golden, deterministic
+contract test, data-source declaration, and performance case. The 50 ms p95
+gate independently measures exact command dispatch, visible-action routing, a
+full 160 × 48 themed render, and spreadsheet edits with 10,000 populated cells.
+The machine-readable mappings live in
+[`docs/capability-evidence.json`](docs/capability-evidence.json).
 
 ## Experience gallery
 

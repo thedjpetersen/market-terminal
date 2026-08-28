@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "required_status": "covered",
+  "semantic_sizes": ["80x24", "120x36", "160x48"],
+  "capabilities": [
+    {
+      "id": "OTUI-001",
+      "commands": ["HELP"],
+      "help_entries": ["HELP"],
+      "implementation_files": [
+        "src/app/mod.rs",
+        "src/app/workspace.rs",
+        "src/ui/mod.rs"
+      ],
+      "semantic_goldens": ["help"],
+      "contract_tests": [
+        {
+          "file": "src/app/workspace.rs",
+          "test": "registry_resolves_exact_commands_and_hotkeys"
+        },
+        {
+          "file": "src/app/mod.rs",
+          "test": "enter_opens_help_command_details_then_invokes_the_exact_command"
+        }
+      ],
+      "data_source_sections": [
+        {
+          "file": "docs/data-sources.md",
+          "section": "Local shell, navigation, and presentation state"
+        }
+      ],
+      "performance_cases": ["command_dispatch"]
+    },
+    {
+      "id": "OTUI-002",
+      "commands": ["HELP"],
+      "help_entries": ["HELP"],
+      "implementation_files": [
+        "src/app/mod.rs",
+        "src/app/workspace.rs",
+        "src/ui/mod.rs"
+      ],
+      "semantic_goldens": ["panel-focus", "follow-hints"],
+      "contract_tests": [
+        {
+          "file": "src/app/mod.rs",
+          "test": "spatial_focus_prefers_aligned_neighbors_and_never_wraps"
+        },
+        {
+          "file": "src/app/mod.rs",
+          "test": "follow_hint_codes_are_prefix_free_and_compact"
+        },
+        {
+          "file": "src/app/mod.rs",
+          "test": "news_reader_traps_shell_navigation_and_limits_follow_hints_to_the_modal"
+        }
+      ],
+      "data_source_sections": [
+        {
+          "file": "docs/data-sources.md",
+          "section": "Local shell, navigation, and presentation state"
+        }
+      ],
+      "performance_cases": ["visible_action_routing"]
+    },
+    {
+      "id": "OTUI-006",
+      "commands": ["THEME NORD"],
+      "help_entries": ["THEME"],
+      "implementation_files": [
+        "src/app/mod.rs",
+        "src/ui/mod.rs",
+        "src/ui/theme.rs"
+      ],
+      "semantic_goldens": ["overview", "help"],
+      "contract_tests": [
+        {
+          "file": "src/app/mod.rs",
+          "test": "theme_command_and_function_keys_select_and_persist_presets"
+        },
+        {
+          "file": "src/ui/theme.rs",
+          "test": "cycle_reaches_every_preset_and_wraps"
+        }
+      ],
+      "data_source_sections": [
+        {
+          "file": "docs/data-sources.md",
+          "section": "Local shell, navigation, and presentation state"
+        }
+      ],
+      "performance_cases": ["responsive_theme_render"]
+    }
+  ]
+}

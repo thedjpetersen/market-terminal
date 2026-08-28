@@ -8,6 +8,22 @@ Across snapshot providers, Monitor retains at most 64 distinct observations per
 instrument for an in-process session sparkline. Cached repeats do not add
 points, and the trace is neither persisted nor synthesized.
 
+## Local shell, navigation, and presentation state
+
+- **Surfaces:** command routing and Help, workspace/panel focus, follow hints,
+  responsive layout, and theme selection.
+- **Source boundary:** these capabilities consume no market, broker, publisher,
+  or third-party reference data. Their inputs are bounded terminal events,
+  feature-owned action descriptors, built-in theme definitions, and the local
+  session document.
+- **Persistence:** only the selected theme, workspace order, active workspace,
+  keymap preferences, and recent commands are eligible for crash-safe local
+  persistence. Visible-action rectangles and follow labels are derived for the
+  current viewport and are never persisted.
+- **Quality and privacy:** command, action, and theme behavior is deterministic
+  under the checked-in fixtures. No command text, focus history, terminal frame,
+  or user interaction is transmitted by these capabilities.
+
 ## Yahoo Finance chart
 
 - **Surfaces:** default interactive Markets/Monitor snapshots,

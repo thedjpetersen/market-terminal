@@ -58,8 +58,13 @@ pub(crate) struct ShellHint {
     pub target: ShellHintTarget,
 }
 
+/// One discoverable command shown by the interactive Help directory.
+///
+/// This is a read-only application contract so evidence checks and alternate
+/// hosts can verify that a routed command remains discoverable without parsing
+/// presentation code.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HelpCommand {
+pub struct HelpCommand {
     pub command: String,
     pub owner: String,
     pub aliases: Vec<String>,
@@ -238,7 +243,8 @@ impl App {
         self.help_visible
     }
 
-    pub(crate) fn help_commands(&self) -> Vec<HelpCommand> {
+    /// Returns the exact command catalog exposed by the interactive Help view.
+    pub fn help_commands(&self) -> Vec<HelpCommand> {
         let mut commands = Vec::new();
         let shell_commands = [
             (

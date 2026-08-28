@@ -1,9 +1,15 @@
 use std::{error::Error, time::Instant};
 
-use market_terminal::features::spreadsheet::{
-    domain::{CellAddress, Workbook, Worksheet},
-    Spreadsheet,
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use market_terminal::{
+    bootstrap,
+    features::spreadsheet::{
+        domain::{CellAddress, Workbook, Worksheet},
+        Spreadsheet,
+    },
+    runtime,
 };
+use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 
 const SHEETS: usize = 5;
 const COLUMNS: u8 = 20;
@@ -16,30 +22,137 @@ fn main() -> Result<(), Box<dyn Error>> {
         .map(|value| value.parse::<f64>())
         .transpose()?
         .unwrap_or(50.0);
-    let mut spreadsheet = seeded_spreadsheet()?;
+    let results = [
+        command_dispatch_case()?,
+        visible_action_routing_case()?,
+        responsive_theme_render_case()?,
+        spreadsheet_edit_case()?,
+    ];
 
-    // Warm allocator and clone paths before recording the bounded sample.
+    for result in results {
+        println!(
+            "{}_p95_ms={:.3} {} samples={SAMPLES}",
+            result.name, result.p95_ms, result.context
+        );
+        if result.p95_ms > limit_ms {
+            return Err(format!(
+                "{} p95 {:.3} ms exceeded {:.3} ms",
+                result.name, result.p95_ms, limit_ms
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+struct CaseResult {
+    name: &'static str,
+    p95_ms: f64,
+    context: String,
+}
+
+fn command_dispatch_case() -> Result<CaseResult, Box<dyn Error>> {
+    let mut app = bootstrap::demo_app();
+    dispatch_help(&mut app);
+    app.handle_key(key(KeyCode::Esc));
+    let p95_ms = measure(|_| {
+        dispatch_help(&mut app);
+        app.handle_key(key(KeyCode::Esc));
+        Ok(())
+    })?;
+    Ok(CaseResult {
+        name: "command_dispatch",
+        p95_ms,
+        context: "exact_help_command=true".to_owned(),
+    })
+}
+
+fn visible_action_routing_case() -> Result<CaseResult, Box<dyn Error>> {
+    let mut app = bootstrap::demo_app();
+    app.set_terminal_area(Rect::new(0, 0, 160, 48));
+    route_visible_action(&mut app);
+    let p95_ms = measure(|_| {
+        route_visible_action(&mut app);
+        Ok(())
+    })?;
+    Ok(CaseResult {
+        name: "visible_action_routing",
+        p95_ms,
+        context: "viewport=160x48".to_owned(),
+    })
+}
+
+fn responsive_theme_render_case() -> Result<CaseResult, Box<dyn Error>> {
+    let mut app = bootstrap::demo_app();
+    app.set_terminal_area(Rect::new(0, 0, 160, 48));
+    dispatch(&mut app, "THEME NORD");
+    let backend = TestBackend::new(160, 48);
+    let mut terminal = Terminal::new(backend)?;
+    terminal.draw(|frame| runtime::render(frame, &app))?;
+    let p95_ms = measure(|_| {
+        terminal.draw(|frame| runtime::render(frame, &app))?;
+        Ok(())
+    })?;
+    Ok(CaseResult {
+        name: "responsive_theme_render",
+        p95_ms,
+        context: "theme=nord viewport=160x48".to_owned(),
+    })
+}
+
+fn spreadsheet_edit_case() -> Result<CaseResult, Box<dyn Error>> {
+    let mut spreadsheet = seeded_spreadsheet()?;
     spreadsheet.set_cell("A1", "1")?;
     spreadsheet.clear_history();
+    let p95_ms = measure(|sample| {
+        spreadsheet.set_cell("A1", sample.to_string())?;
+        spreadsheet.clear_history();
+        Ok(())
+    })?;
+    Ok(CaseResult {
+        name: "spreadsheet_edit",
+        p95_ms,
+        context: format!(
+            "populated_cells={}",
+            SHEETS * usize::from(COLUMNS) * usize::from(ROWS)
+        ),
+    })
+}
 
+fn measure(
+    mut operation: impl FnMut(usize) -> Result<(), Box<dyn Error>>,
+) -> Result<f64, Box<dyn Error>> {
     let mut samples = Vec::with_capacity(SAMPLES);
     for sample in 0..SAMPLES {
         let started = Instant::now();
-        spreadsheet.set_cell("A1", sample.to_string())?;
+        operation(sample)?;
         samples.push(started.elapsed());
-        spreadsheet.clear_history();
     }
     samples.sort_unstable();
     let p95 = samples[(SAMPLES * 95).div_ceil(100) - 1];
-    let p95_ms = p95.as_secs_f64() * 1_000.0;
-    println!(
-        "spreadsheet_edit_p95_ms={p95_ms:.3} populated_cells={} samples={SAMPLES}",
-        SHEETS * usize::from(COLUMNS) * usize::from(ROWS)
-    );
-    if p95_ms > limit_ms {
-        return Err(format!("10k-cell edit p95 {p95_ms:.3} ms exceeded {limit_ms:.3} ms").into());
+    Ok(p95.as_secs_f64() * 1_000.0)
+}
+
+fn dispatch_help(app: &mut market_terminal::App) {
+    dispatch(app, "HELP");
+}
+
+fn dispatch(app: &mut market_terminal::App, command: &str) {
+    app.handle_key(key(KeyCode::Char('/')));
+    for character in command.chars() {
+        app.handle_key(key(KeyCode::Char(character)));
     }
-    Ok(())
+    app.handle_key(key(KeyCode::Enter));
+}
+
+fn route_visible_action(app: &mut market_terminal::App) {
+    app.handle_key(key(KeyCode::Esc));
+    app.handle_key(key(KeyCode::Right));
+    app.handle_key(key(KeyCode::Esc));
+}
+
+fn key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::NONE)
 }
 
 fn seeded_spreadsheet() -> Result<Spreadsheet, Box<dyn Error>> {
