@@ -1665,6 +1665,7 @@ mod tests {
             persistence::{PersistenceError, SessionState},
             portfolio::ID as PORTFOLIO,
             security::ID as SECURITY,
+            spreadsheet::ID as SPREADSHEET,
         },
     };
 
@@ -2789,6 +2790,81 @@ mod tests {
             .workspace_actions(workspace_area, 128)
             .iter()
             .any(|action| action.id == target.id && action.preferred));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let security_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action == "control:security"
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in security_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.advance_tick();
+        assert_eq!(app.active_workspace(), SECURITY);
+        assert!(app.shell_hints().is_none());
+    }
+
+    #[test]
+    fn spreadsheet_follow_hints_select_cells_and_route_to_security() {
+        let mut app = bootstrap::demo_app();
+        let frame_area = Rect::new(0, 0, 160, 48);
+        let workspace_area = crate::ui::ShellLayout::new(frame_area).workspace;
+        app.set_terminal_area(frame_area);
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "SHEET".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.active_workspace(), SPREADSHEET);
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app
+            .focused_workspace_action(workspace_area)
+            .is_some_and(|action| action.id.ends_with(":A1")));
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert!(app
+            .focused_workspace_action(workspace_area)
+            .is_some_and(|action| action.id.ends_with(":B1")));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app
+            .workspace_actions(workspace_area, 676)
+            .iter()
+            .any(|action| action.id.ends_with(":B1") && action.preferred));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let cell_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action.starts_with("cell:") && action.ends_with(":A2")
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in cell_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        assert!(app
+            .workspace_actions(workspace_area, 676)
+            .iter()
+            .any(|action| action.id.ends_with(":A2") && action.preferred));
 
         app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
         let security_code = app

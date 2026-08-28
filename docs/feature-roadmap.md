@@ -204,6 +204,16 @@ move to its own crate later without changing its public vocabulary.
   exercise geometry, disabled controls, stale IDs, pointer activation, generated
   hint labels, and cross-workspace routing, while Alerts frames are locked at all
   three supported sizes.
+- **Complete:** Spreadsheet action routing as the dense-grid reference: selected
+  and visible cells, row headers, formula editing, complete worksheet tabs, and
+  wrapped workflow controls share one responsive geometry across rendering,
+  mouse, spatial focus, and follow hints. Primary destinations precede the bulk
+  grid so bounded registries cannot starve them. Cell and tab IDs carry worksheet
+  identity and fail closed after rename, removal, sheet switch, scroll, or edit;
+  copy/paste, fill, undo/redo, research promotion, and financial refresh recheck
+  their mutable prerequisites. Feature and shell tests route real generated
+  labels from a cell into Security, and populated, error, and editor frames are
+  locked at all three supported sizes.
 - **Complete:** source-derived OpenTerminalUI capability ledger pinned to an
   exact upstream tree, with stable `OTUI-*` IDs, implementation-maturity labels,
   repository-relative evidence, owners, priorities, gaps, acceptance-test IDs,
@@ -217,8 +227,8 @@ move to its own crate later without changing its public vocabulary.
   Portfolio domain types or repository access. Watchlist also consumes the
   foundation-owned canonical `InstrumentId` directly rather than Market Data's
   compatibility alias.
-- **Next:** execute the OpenTerminalUI parity track below, beginning with
-  shell/workspace completion, then finishing the remaining
+- **Next:** execute the OpenTerminalUI parity track below, finishing the P0
+  gallery/evidence enforcement, then the remaining
   Stage 2 risk, screening, and alert-rule families. Provider availability
   extends the deployment surface; deterministic fixtures remain the acceptance
   baseline and opt-in live contracts verify real provider behavior.
@@ -297,7 +307,7 @@ continues.
 | --- | --- | --- | --- |
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
 | Mission Control, launchpad, ticker tape | Partial | Overview, Desk, Markets, persisted active workspace | Add configurable launch tiles, live pulse strip, priority stack, and saved role presets. |
-| Keyboard navigation and icon rail | Partial | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, Chart periods/studies/comparisons/inspection/modes/promotion/refresh, modal-safe News filters/headlines/story/calendar/reader actions, Overview periods/cards/live holdings/headlines/context controls, and Alerts rows/mutations/Security/refresh controls | Adopt the action contract in the remaining Spreadsheet cells, formula controls, table actions, and overlays. |
+| Keyboard navigation and icon rail | Covered | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, Chart periods/studies/comparisons/inspection/modes/promotion/refresh, modal-safe News filters/headlines/story/calendar/reader actions, Overview periods/cards/live holdings/headlines/context controls, Alerts rows/mutations/Security/refresh controls, and Spreadsheet cells/rows/formula/tabs/workflow controls | Preserve the action and modal-trapping contracts as new controls and overlays are added. |
 | Saved views and workspace presets | Partial | Workspace order, active workspace, layout and command history persist | Persist/restore view parameters, filters, selected instrument, table columns, chart state, pane geometry, and Trader/Quant/PM/Risk/Ops presets. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
 | Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
@@ -411,8 +421,8 @@ visible tabs, security-capable rows, and reload as the leaf reference. Desk now
 supplies visible split-pane headers and safely namespaced nested child actions,
 with responsive hidden-pane exclusion. Monitor now supplies its visible rows and
 discrete footer controls from the same geometry used by rendering and mouse input,
-including real nested routing inside Desk. Remaining workspace adopters, gallery
-states, and enforcement that completed capabilities link real implementation
+including real nested routing inside Desk. Remaining gallery states and
+enforcement that completed capabilities link real implementation
 evidence remain. Security now contributes its responsive tabs, live chart,
 Form 4 and regulatory filing rows, peer links, and retry/refresh states from one
 shared geometry model, with stale view/symbol/accession validation and a
@@ -439,8 +449,14 @@ controls from one responsive geometry. Opaque row IDs include the exact domain
 rule ID and are revalidated against the current register; disabled acknowledgement
 actions are excluded by the shell; pointer and keyboard activation share the same
 feature-owned path. A shell test selects a nonpreferred rule through a generated
-label and follows the selected symbol into Security. Spreadsheet is the only
-remaining P0 workspace adopter.
+label and follows the selected symbol into Security. Spreadsheet now derives its
+formula bar, visible grid, row headers, complete tabs, and wrapped workflow strip
+from one geometry model. Selected-cell priority prevents the dense grid from
+starving primary actions; worksheet digests, addresses, indices, viewport checks,
+edit state, and mutable operation prerequisites are revalidated on activation. A
+shell test selects an instrument cell through a generated label and routes it into
+Security. Every current workspace has now adopted the action contract; P0 remains
+open for the full state gallery and capability-evidence enforcement.
 `tests/architecture_boundaries.rs` now enforces
 dependency direction on every CI run. The first remediation moved Assistant's portfolio
 context behind an Assistant-owned port and composition-root translator, and

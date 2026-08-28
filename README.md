@@ -70,8 +70,9 @@ and Quit receives a prefix-free one- or two-letter label. Type a label to route
 there immediately, or press `Esc` to cancel. The labels use the familiar
 Vimium-style link-hint interaction while remaining terminal-native.
 
-Portfolio, Monitor, Desk, Security, Chart, News, Overview, and Alerts extend follow hints
-and spatial focus inside the active panel. Their currently rendered tabs, rows, panes, and controls
+Portfolio, Monitor, Desk, Security, Chart, News, Overview, Alerts, and Spreadsheet
+extend follow hints and spatial focus inside the active panel. Their currently
+rendered tabs, rows, panes, cells, and controls
 receive labels and focus at their actual terminal coordinates; the natural
 selected or primary action becomes the restoration target. Off-screen, disabled,
 duplicate, and stale actions are not routable. Each feature owns activation and
@@ -640,6 +641,15 @@ With a text instrument cell selected, `SHEET FIND`, `SHEET MON`, `SHEET SEC`,
 Press `A` on a selected result in Find, Monitor, Security, Chart, or News to
 insert it back into the selected sheet cell. Feature packages do not import one
 another for this exchange.
+
+Press `Esc` to lift focus to the selected cell, then use spatial arrows and
+`Enter` to route among visible cells, row headers, the formula bar, complete
+worksheet tabs, and the responsive workflow strip. `F` assigns the same targets
+one- or two-letter follow labels. Edit, clear, copy/paste, directional fill,
+undo/redo, Security, Chart, News, and financial refresh controls are enabled only
+when their current workbook state permits the operation. Cell actions carry the
+active worksheet identity and address; tab actions carry their index and name
+identity, so a renamed, removed, switched, or scrolled-away target fails closed.
 
 For live financial formulas, select Alpha Vantage for official daily history;
 reported annual fundamentals always use official SEC Company Facts:

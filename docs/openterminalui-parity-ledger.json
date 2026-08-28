@@ -34,11 +34,11 @@
       "capability": "Keyboard shortcuts, panel focus, and visible-action routing",
       "owner": "Application Shell",
       "priority": "P0",
-      "market_status": "partial",
+      "market_status": "covered",
       "upstream_maturity": "substantive",
       "reference_files": ["frontend/src/components/common/ShortcutOverlay.tsx", "frontend/src/components/layout/commanding.ts", "frontend/tests/e2e/terminal-shell-go-bar.spec.ts"],
       "acceptance_tests": ["SHELL-SPATIAL-FOCUS", "SHELL-FOLLOW-HINTS", "SHELL-FOCUS-RESTORE"],
-      "gap": "Deterministic spatial routing, focus restoration, and follow hints now cover the shell, Portfolio, Desk, Monitor, Security, Chart, News, Overview, and Alerts, including direct periods, composed dashboard cards, durable mutations, live row revalidation, stateful controls, and a keyboard/pointer-trapped reader with modal-only hints. Adopt the viewport-safe action contract in Spreadsheet, then extend modal coverage to every future overlay."
+      "gap": "Deterministic spatial routing, focus restoration, and follow hints cover the shell and every current workspace, including dense Spreadsheet cells, rows, formula editing, tabs, and mutable workflow controls plus a keyboard/pointer-trapped reader with modal-only hints. Preserve viewport-safe routing and modal trapping as future controls and overlays are added."
     },
     {
       "id": "OTUI-003",

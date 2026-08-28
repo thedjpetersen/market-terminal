@@ -120,6 +120,18 @@ and the crash-safe feature-document adapter. The gallery-only constructor
 retains the seeded IBM workbook for deterministic captures; `persistent_app`
 never wires that seed.
 
+Spreadsheet is the dense-grid action reference. A presentation-owned geometry
+module partitions formula bar, grid, worksheet tabs, wrapped workflow controls,
+and status, then supplies the same cell and control rectangles to rendering,
+pointer hit testing, spatial focus, and follow hints. The registry emits the
+selected cell, formula bar, tabs, and controls before the remainder of the visible
+grid so bounded consumers cannot starve primary actions. Cell IDs include the
+active worksheet digest and address; tab IDs include index and name digest.
+Activation rechecks identity, viewport membership, edit state, clipboard source,
+history availability, and selected-cell type before mutating or emitting a kernel
+intent. Inline editing remains feature-owned and commits before a pointer routes
+to a different target.
+
 The interactive Monitor uses the same Alpha Vantage adapter through the
 Market-Data-owned `MarketDataQuery` port. `WatchlistWorkspace` submits snapshots
 to a capacity-one worker and only applies results during polling; construction,

@@ -18,7 +18,7 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "spreadsheet",
         prepare: prepare_spreadsheet,
-        hashes: [0xf064835119e3686b, 0xe2bfaf5777557e38, 0xb2b60469e38e58b9],
+        hashes: [0xde9842c043fdb13c, 0x12cda5e51d679347, 0xfdb113f90e395920],
     },
     Golden {
         name: "instrument-find",
@@ -33,12 +33,12 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "spreadsheet-error",
         prepare: prepare_spreadsheet_error,
-        hashes: [0x3df370b41828843a, 0xe07effa626eb77c1, 0xa5009ce23f8164ce],
+        hashes: [0x8f7d96e4015cc375, 0x0e805fb6022cc0a6, 0x027dfcbf10f4d98b],
     },
     Golden {
         name: "formula-editor",
         prepare: prepare_formula_editor,
-        hashes: [0x1125e167d1dbe683, 0x4bba6d282c26f8e4, 0xc7778e330797e924],
+        hashes: [0xd17d1354baf81fe3, 0x19a563994925ade0, 0x56b9ec16cfaffb09],
     },
     Golden {
         name: "risk",

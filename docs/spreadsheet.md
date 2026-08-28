@@ -105,3 +105,19 @@ The research commands send the selected non-formula text cell through
 `AppIntent::DispatchCommand`. Find, Monitor, Security, Chart, and News send a
 selected instrument back with `SHEET INSERT` when the user presses `A`. This is
 kernel routing rather than direct feature-to-feature coupling.
+
+## Interaction contract
+
+`Esc` lifts focus to the selected cell. Spatial arrows and `Enter`, or `F` and a
+generated one- or two-letter label, address visible cells and row headers, the
+formula bar, complete worksheet tabs, and the workflow controls. The two-row
+control pack wraps only whole controls at narrow sizes and includes edit, clear,
+copy/paste, fill down/right, undo/redo, Security, Chart, News, and financial
+refresh. Disabled operations are visible but excluded from shell routing.
+
+Rendering, pointer input, focus, and follow hints use one geometry model. Cell
+actions include the active worksheet digest and address; worksheet actions carry
+their current index and name digest. Activation revalidates those identities and
+the current viewport, edit mode, clipboard sheet, history stacks, source cells,
+and selected instrument. Stale actions therefore fail closed instead of applying
+to a renamed sheet or a cell that moved outside the viewport.

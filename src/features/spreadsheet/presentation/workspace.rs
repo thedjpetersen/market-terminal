@@ -9,7 +9,7 @@ use std::{
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell as TableCell, Paragraph, Row, Table},
@@ -17,24 +17,27 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
+    app::{AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor},
     ui::{
         components::terminal_block,
-        is_primary_click, scroll_key,
+        contains, is_primary_click, scroll_key,
         theme::{AMBER, BG, CYAN, FOOTER_BG, INK, MUTED, NAV_BG, RED, YELLOW},
     },
 };
 
-use super::super::{
-    domain::{
-        parse_formula, AggregateFunction, CellAddress, CellValue, Expr, MAX_COLUMNS, MAX_ROWS,
+use super::{
+    super::{
+        domain::{
+            parse_formula, AggregateFunction, CellAddress, CellValue, Expr, MAX_COLUMNS, MAX_ROWS,
+        },
+        MarketDataPoint, MarketDataRequest, MarketDataState, Spreadsheet, SpreadsheetFileStore,
+        SpreadsheetMarketData, SpreadsheetWorkbookStore, StoredWorkbook, ID,
     },
-    MarketDataPoint, MarketDataRequest, MarketDataState, Spreadsheet, SpreadsheetFileStore,
-    SpreadsheetMarketData, SpreadsheetWorkbookStore, StoredWorkbook, ID,
+    controls::{
+        formula_action_area, pack_control_areas, pack_tab_areas, spreadsheet_areas, GridGeometry,
+        SpreadsheetControl, CELL_WIDTH, ROW_HEADER_WIDTH,
+    },
 };
-
-const CELL_WIDTH: u16 = 12;
-const ROW_HEADER_WIDTH: u16 = 5;
 
 struct MarketDataRefresh {
     generation: u64,
@@ -296,13 +299,16 @@ impl SpreadsheetWorkspace {
         self.save_workbook(&id, true);
     }
 
-    fn send_selected_instrument(&mut self, target: &str) {
-        let subject = self
-            .spreadsheet
+    fn selected_instrument(&self) -> Option<String> {
+        self.spreadsheet
             .cell(&self.cursor.to_string())
             .ok()
             .map(|cell| cell.raw.trim().to_owned())
-            .filter(|raw| !raw.is_empty() && !raw.starts_with('='));
+            .filter(|raw| !raw.is_empty() && !raw.starts_with('='))
+    }
+
+    fn send_selected_instrument(&mut self, target: &str) {
+        let subject = self.selected_instrument();
         let Some(subject) = subject else {
             self.status = format!("{target} REQUIRES A TEXT INSTRUMENT IN THE SELECTED CELL");
             return;
@@ -312,6 +318,117 @@ impl SpreadsheetWorkspace {
             origin: ID,
         });
         self.status = format!("SENT {subject} TO {target}");
+    }
+
+    fn active_sheet_identity(&self) -> u64 {
+        stable_identity(self.spreadsheet.workbook().active_sheet().name())
+    }
+
+    fn grid_geometry(&self, area: Rect) -> GridGeometry {
+        let grid = GridGeometry::new(area, self.first_column, self.first_row);
+        self.visible_columns.set(grid.columns);
+        self.visible_rows.set(grid.rows);
+        grid
+    }
+
+    fn is_source_cell_populated(&self, vertical: bool) -> bool {
+        let source = if vertical {
+            self.cursor
+                .row()
+                .checked_sub(1)
+                .and_then(|row| CellAddress::new(self.cursor.column(), row).ok())
+        } else {
+            self.cursor
+                .column()
+                .checked_sub(1)
+                .and_then(|column| CellAddress::new(column, self.cursor.row()).ok())
+        };
+        source
+            .and_then(|address| self.spreadsheet.workbook().active_sheet().cell(address))
+            .is_some_and(|cell| !cell.raw().is_empty())
+    }
+
+    fn control_enabled(&self, control: SpreadsheetControl) -> bool {
+        match control {
+            SpreadsheetControl::Edit => self.edit.is_none(),
+            SpreadsheetControl::Clear | SpreadsheetControl::Copy => !self.selected_raw().is_empty(),
+            SpreadsheetControl::Paste => self.clipboard.as_ref().is_some_and(|(sheet, _)| {
+                sheet.eq_ignore_ascii_case(self.spreadsheet.workbook().active_sheet().name())
+            }),
+            SpreadsheetControl::FillDown => self.is_source_cell_populated(true),
+            SpreadsheetControl::FillRight => self.is_source_cell_populated(false),
+            SpreadsheetControl::Undo => self.spreadsheet.can_undo(),
+            SpreadsheetControl::Redo => self.spreadsheet.can_redo(),
+            SpreadsheetControl::Security | SpreadsheetControl::Chart | SpreadsheetControl::News => {
+                self.selected_instrument().is_some()
+            }
+            SpreadsheetControl::Refresh => !self.external_cells.is_empty(),
+        }
+    }
+
+    fn control_label(&self, control: SpreadsheetControl) -> String {
+        match control {
+            SpreadsheetControl::Edit => format!("Edit {}", self.cursor),
+            SpreadsheetControl::Clear => format!("Clear {}", self.cursor),
+            SpreadsheetControl::Copy => format!("Copy {}", self.cursor),
+            SpreadsheetControl::Paste => format!("Paste into {}", self.cursor),
+            SpreadsheetControl::FillDown => format!("Fill {} from the cell above", self.cursor),
+            SpreadsheetControl::FillRight => {
+                format!("Fill {} from the cell to its left", self.cursor)
+            }
+            SpreadsheetControl::Undo => "Undo the last workbook change".to_owned(),
+            SpreadsheetControl::Redo => "Redo the last undone workbook change".to_owned(),
+            SpreadsheetControl::Security => format!(
+                "Open {} in Security",
+                self.selected_instrument()
+                    .unwrap_or_else(|| "selected cell".to_owned())
+            ),
+            SpreadsheetControl::Chart => format!(
+                "Chart {}",
+                self.selected_instrument()
+                    .unwrap_or_else(|| "selected cell".to_owned())
+            ),
+            SpreadsheetControl::News => format!(
+                "Open news for {}",
+                self.selected_instrument()
+                    .unwrap_or_else(|| "selected cell".to_owned())
+            ),
+            SpreadsheetControl::Refresh => "Refresh financial functions".to_owned(),
+        }
+    }
+
+    fn activate_control(&mut self, control: SpreadsheetControl) -> bool {
+        if !self.control_enabled(control) {
+            return false;
+        }
+        match control {
+            SpreadsheetControl::Edit => self.begin_edit(None),
+            SpreadsheetControl::Clear => self.clear_selected(),
+            SpreadsheetControl::Copy => self.copy_selected(),
+            SpreadsheetControl::Paste => self.paste_selected(),
+            SpreadsheetControl::FillDown => self.fill_from_adjacent(true),
+            SpreadsheetControl::FillRight => self.fill_from_adjacent(false),
+            SpreadsheetControl::Undo => self.undo(),
+            SpreadsheetControl::Redo => self.redo(),
+            SpreadsheetControl::Security => self.send_selected_instrument("SEC"),
+            SpreadsheetControl::Chart => self.send_selected_instrument("CHART"),
+            SpreadsheetControl::News => self.send_selected_instrument("NEWS"),
+            SpreadsheetControl::Refresh => self.refresh_market_data(),
+        }
+        true
+    }
+
+    fn tab_areas(&self, area: Rect) -> Vec<(usize, Rect)> {
+        let workbook = self.spreadsheet.workbook();
+        pack_tab_areas(
+            area,
+            std::iter::once((usize::MAX, 3)).chain(workbook.sheets().iter().enumerate().map(
+                |(index, sheet)| {
+                    let label = format!(" {}:{}  ", index + 1, sheet.name());
+                    (index, label.chars().count() as u16)
+                },
+            )),
+        )
     }
 
     fn insert_result(&mut self, value: &str) {
@@ -961,17 +1078,9 @@ impl SpreadsheetWorkspace {
     }
 
     fn render_grid(&self, frame: &mut Frame, area: Rect) {
-        let available_width = area.width.saturating_sub(ROW_HEADER_WIDTH + 3);
-        let columns = (available_width / (CELL_WIDTH + 1))
-            .max(1)
-            .min(u16::from(MAX_COLUMNS - self.first_column + 1)) as u8;
-        let rows = area
-            .height
-            .saturating_sub(3)
-            .max(1)
-            .min(MAX_ROWS - self.first_row + 1);
-        self.visible_columns.set(columns);
-        self.visible_rows.set(rows);
+        let grid = self.grid_geometry(area);
+        let columns = grid.columns;
+        let rows = grid.rows;
         let evaluated = self.evaluated_spreadsheet();
         let visible_values = evaluated
             .visible_region(self.first_column, self.first_row, columns, rows)
@@ -1036,23 +1145,40 @@ impl SpreadsheetWorkspace {
 
     fn render_tabs(&self, frame: &mut Frame, area: Rect) {
         let workbook = self.spreadsheet.workbook();
-        let mut tabs = vec![Span::styled(" + ", Style::new().fg(AMBER.into()).bold())];
-        for (index, sheet) in workbook.sheets().iter().enumerate() {
+        frame.render_widget(
+            Paragraph::new("").style(Style::new().bg(NAV_BG.into())),
+            area,
+        );
+        for (index, tab_area) in self.tab_areas(area) {
+            if index == usize::MAX {
+                frame.render_widget(
+                    Paragraph::new(" + ").style(Style::new().fg(AMBER.into()).bold()),
+                    tab_area,
+                );
+                continue;
+            }
+            let sheet = &workbook.sheets()[index];
             let style = if index == workbook.active_sheet_index() {
                 Style::new().bg(CYAN.into()).fg(BG.into()).bold()
             } else {
                 Style::new().fg(MUTED.into())
             };
-            tabs.push(Span::styled(
-                format!(" {}:{} ", index + 1, sheet.name()),
-                style,
-            ));
-            tabs.push(Span::raw(" "));
+            frame.render_widget(
+                Paragraph::new(format!(" {}:{} ", index + 1, sheet.name())).style(style),
+                tab_area,
+            );
         }
-        frame.render_widget(
-            Paragraph::new(Line::from(tabs)).style(Style::new().bg(NAV_BG.into())),
-            area,
-        );
+    }
+
+    fn render_controls(&self, frame: &mut Frame, area: Rect) {
+        for (control, control_area) in pack_control_areas(area) {
+            let style = if self.control_enabled(control) {
+                Style::new().fg(AMBER.into())
+            } else {
+                Style::new().fg(MUTED.into())
+            };
+            frame.render_widget(Paragraph::new(control.text()).style(style), control_area);
+        }
     }
 
     fn render_status(&self, frame: &mut Frame, area: Rect) {
@@ -1067,10 +1193,6 @@ impl SpreadsheetWorkspace {
                     Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
                 ),
                 Span::styled(format!(" {status}   "), INK),
-                Span::styled(
-                    "F9 REFRESH  Y/P COPY/PASTE  CTRL-D/R FILL  CTRL-Z/Y UNDO/REDO  SHEET SEC|CHART|NEWS",
-                    MUTED,
-                ),
             ]))
             .style(Style::new().bg(FOOTER_BG.into())),
             area,
@@ -1271,95 +1393,226 @@ impl Workspace for SpreadsheetWorkspace {
             KeyCode::Char('=') => self.begin_edit(Some("=")),
             KeyCode::Delete => self.clear_selected(),
             KeyCode::F(9) => self.refresh_market_data(),
+            KeyCode::Char('s') => {
+                if !self.activate_control(SpreadsheetControl::Security) {
+                    return false;
+                }
+            }
+            KeyCode::Char('c') => {
+                if !self.activate_control(SpreadsheetControl::Chart) {
+                    return false;
+                }
+            }
+            KeyCode::Char('n') => {
+                if !self.activate_control(SpreadsheetControl::News) {
+                    return false;
+                }
+            }
             _ => return false,
         }
         true
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
-        let regions = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(area);
-        if let Some(key) = scroll_key(event, regions[1]) {
+        let areas = spreadsheet_areas(area);
+        if let Some(key) = scroll_key(event, areas.grid) {
             return self.handle_key(key);
         }
-        if is_primary_click(event, regions[0]) {
-            if self.edit.is_none() {
-                self.begin_edit(None);
-            }
-            return true;
-        }
-        if is_primary_click(event, regions[2]) {
-            if self.edit.is_some() {
-                self.commit_edit();
-            }
-            let mut x = regions[2].x;
-            if event.column < x.saturating_add(3) {
-                self.add_sheet(None);
-                return true;
-            }
-            x = x.saturating_add(3);
-            let target = self
-                .spreadsheet
-                .workbook()
-                .sheets()
-                .iter()
-                .enumerate()
-                .find_map(|(index, sheet)| {
-                    let width = format!(" {}:{} ", index + 1, sheet.name()).chars().count() as u16;
-                    let hit = event.column >= x && event.column < x.saturating_add(width);
-                    x = x.saturating_add(width).saturating_add(1);
-                    hit.then(|| sheet.name().to_owned())
-                });
-            if let Some(name) = target {
-                self.select_sheet(&name);
-            }
-            return true;
-        }
-        if !is_primary_click(event, regions[1]) {
+        if !is_primary_click(event, area) {
             return false;
         }
         if self.edit.is_some() {
-            self.commit_edit();
-        }
-
-        let grid = regions[1];
-        let available_width = grid.width.saturating_sub(ROW_HEADER_WIDTH + 3);
-        let columns = (available_width / (CELL_WIDTH + 1))
-            .max(1)
-            .min(u16::from(MAX_COLUMNS - self.first_column + 1)) as u8;
-        let rows = grid
-            .height
-            .saturating_sub(3)
-            .max(1)
-            .min(MAX_ROWS - self.first_row + 1);
-        let data_y = grid.y.saturating_add(2);
-        if event.row < data_y || event.row >= data_y.saturating_add(rows) {
-            return true;
-        }
-        let row = self.first_row.saturating_add(event.row - data_y);
-        let row_header_x = grid.x.saturating_add(1);
-        let data_x = row_header_x.saturating_add(ROW_HEADER_WIDTH + 1);
-        let column = if event.column >= row_header_x
-            && event.column < row_header_x.saturating_add(ROW_HEADER_WIDTH)
-        {
-            self.cursor.column()
-        } else if event.column >= data_x {
-            let relative = event.column - data_x;
-            let offset = relative / (CELL_WIDTH + 1);
-            if offset >= u16::from(columns) || relative % (CELL_WIDTH + 1) >= CELL_WIDTH {
+            if contains(formula_action_area(areas.formula), event.column, event.row) {
                 return true;
             }
-            self.first_column.saturating_add(offset as u8)
-        } else {
+            self.commit_edit();
+        }
+        for action in self.actions(area) {
+            if contains(action.area, event.column, event.row) {
+                return !action.enabled || self.activate_action(&action.id);
+            }
+        }
+        true
+    }
+
+    fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
+        let areas = spreadsheet_areas(area);
+        let grid = self.grid_geometry(areas.grid);
+        let sheet_identity = self.active_sheet_identity();
+        let mut actions = Vec::new();
+
+        if let Some(cell_area) = grid.cell_area(self.cursor.column(), self.cursor.row()) {
+            actions.push(
+                WorkspaceAction::new(
+                    format!("cell:{sheet_identity:016x}:{}", self.cursor),
+                    cell_action_label(self.cursor, &self.selected_raw()),
+                    cell_area,
+                )
+                .preferred(),
+            );
+        }
+        let formula_area = formula_action_area(areas.formula);
+        if formula_area.width > 0 && formula_area.height > 0 {
+            let mut formula = WorkspaceAction::new(
+                format!("formula:{sheet_identity:016x}:{}", self.cursor),
+                format!("Edit {} in the formula bar", self.cursor),
+                formula_area,
+            );
+            if self.edit.is_some() {
+                formula = formula.disabled();
+            }
+            actions.push(formula);
+        }
+
+        let workbook = self.spreadsheet.workbook();
+        for (index, tab_area) in self.tab_areas(areas.tabs) {
+            if index == usize::MAX {
+                actions.push(WorkspaceAction::new(
+                    "sheet:add",
+                    "Add a worksheet",
+                    tab_area,
+                ));
+                continue;
+            }
+            let sheet = &workbook.sheets()[index];
+            let identity = stable_identity(sheet.name());
+            actions.push(WorkspaceAction::new(
+                format!("sheet:{index}:{identity:016x}"),
+                format!("Select worksheet {}", sheet.name()),
+                tab_area,
+            ));
+        }
+
+        actions.extend(pack_control_areas(areas.controls).into_iter().map(
+            |(control, control_area)| {
+                let mut action = WorkspaceAction::new(
+                    control.action_id(),
+                    self.control_label(control),
+                    control_area,
+                );
+                if !self.control_enabled(control) {
+                    action = action.disabled();
+                }
+                action
+            },
+        ));
+
+        for row in grid.first_row..grid.first_row.saturating_add(grid.rows) {
+            for column in grid.first_column..grid.first_column.saturating_add(grid.columns) {
+                let address = CellAddress::new(column, row).expect("visible cell is in bounds");
+                if address == self.cursor {
+                    continue;
+                }
+                let raw = workbook
+                    .active_sheet()
+                    .cell(address)
+                    .map_or("", |cell| cell.raw());
+                actions.push(WorkspaceAction::new(
+                    format!("cell:{sheet_identity:016x}:{address}"),
+                    cell_action_label(address, raw),
+                    grid.cell_area(column, row).expect("visible cell geometry"),
+                ));
+            }
+            actions.push(WorkspaceAction::new(
+                format!("row:{sheet_identity:016x}:{row}"),
+                format!("Select row {row} at column {}", self.cursor.column()),
+                grid.row_header_area(row)
+                    .expect("visible row header geometry"),
+            ));
+        }
+        actions
+    }
+
+    fn activate_action(&mut self, id: &str) -> bool {
+        if self.edit.is_some() {
+            return false;
+        }
+        if let Some(control) = SpreadsheetControl::from_action_id(id) {
+            return self.activate_control(control);
+        }
+        if id == "sheet:add" {
+            self.add_sheet(None);
             return true;
+        }
+        if let Some(sheet) = id.strip_prefix("sheet:") {
+            let Some((index, expected_identity)) = sheet.split_once(':') else {
+                return false;
+            };
+            let (Ok(index), Ok(expected_identity)) = (
+                index.parse::<usize>(),
+                u64::from_str_radix(expected_identity, 16),
+            ) else {
+                return false;
+            };
+            let Some(name) = self
+                .spreadsheet
+                .workbook()
+                .sheets()
+                .get(index)
+                .map(|sheet| sheet.name().to_owned())
+            else {
+                return false;
+            };
+            if stable_identity(&name) != expected_identity {
+                return false;
+            }
+            self.select_sheet(&name);
+            return true;
+        }
+        let (edit_formula, cell) = if let Some(row) = id.strip_prefix("row:") {
+            let Some((expected_identity, row)) = row.split_once(':') else {
+                return false;
+            };
+            let (Ok(expected_identity), Ok(row)) = (
+                u64::from_str_radix(expected_identity, 16),
+                row.parse::<u16>(),
+            ) else {
+                return false;
+            };
+            if expected_identity != self.active_sheet_identity()
+                || row < self.first_row
+                || row >= self.first_row.saturating_add(self.visible_rows.get())
+            {
+                return false;
+            }
+            self.cursor = CellAddress::new(self.cursor.column(), row)
+                .expect("visible row and current column are in bounds");
+            self.status = format!("SELECTED {}", self.cursor);
+            return true;
+        } else if let Some(cell) = id.strip_prefix("formula:") {
+            (true, cell)
+        } else if let Some(cell) = id.strip_prefix("cell:") {
+            (false, cell)
+        } else {
+            return false;
         };
-        self.cursor = CellAddress::new(column, row).expect("visible grid click is in bounds");
-        self.status = format!("SELECTED {}", self.cursor);
+        let Some((expected_identity, address)) = cell.split_once(':') else {
+            return false;
+        };
+        let (Ok(expected_identity), Ok(address)) = (
+            u64::from_str_radix(expected_identity, 16),
+            address.parse::<CellAddress>(),
+        ) else {
+            return false;
+        };
+        if expected_identity != self.active_sheet_identity() {
+            return false;
+        }
+        let column_visible = address.column() >= self.first_column
+            && address.column() < self.first_column.saturating_add(self.visible_columns.get());
+        let row_visible = address.row() >= self.first_row
+            && address.row() < self.first_row.saturating_add(self.visible_rows.get());
+        if !column_visible || !row_visible {
+            return false;
+        }
+        if edit_formula && (address != self.cursor || self.edit.is_some()) {
+            return false;
+        }
+        self.cursor = address;
+        self.status = format!("SELECTED {address}");
+        if edit_formula {
+            self.begin_edit(None);
+        }
         true
     }
 
@@ -1375,17 +1628,29 @@ impl Workspace for SpreadsheetWorkspace {
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
-        let regions = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(area);
-        self.render_formula_bar(frame, regions[0]);
-        self.render_grid(frame, regions[1]);
-        self.render_tabs(frame, regions[2]);
-        self.render_status(frame, regions[3]);
+        let areas = spreadsheet_areas(area);
+        self.render_formula_bar(frame, areas.formula);
+        self.render_grid(frame, areas.grid);
+        self.render_tabs(frame, areas.tabs);
+        self.render_controls(frame, areas.controls);
+        self.render_status(frame, areas.status);
+    }
+}
+
+fn stable_identity(value: &str) -> u64 {
+    value
+        .as_bytes()
+        .iter()
+        .fold(0xcbf29ce484222325, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        })
+}
+
+fn cell_action_label(address: CellAddress, raw: &str) -> String {
+    if raw.is_empty() {
+        format!("Select blank cell {address}")
+    } else {
+        format!("Select {address} · {}", truncate(raw, 40))
     }
 }
 
@@ -1439,7 +1704,7 @@ mod tests {
         SpreadsheetWorkbookStore, StoredWorkbook,
     };
     use crossterm::event::{MouseButton, MouseEventKind};
-    use std::sync::Mutex;
+    use std::{collections::HashSet, sync::Mutex};
 
     fn provenance() -> MarketDataProvenance {
         MarketDataProvenance {
@@ -1821,6 +2086,79 @@ mod tests {
 
         assert!(workspace.handle_mouse(click(20, 1), area));
         assert!(workspace.edit.is_some());
+
+        assert!(workspace.handle_key(key(KeyCode::Char('x'))));
+        let row_four = workspace
+            .actions(area)
+            .into_iter()
+            .find(|action| action.id.starts_with("row:") && action.id.ends_with(":4"))
+            .unwrap();
+        assert!(workspace.handle_mouse(click(row_four.area.x, row_four.area.y), area));
+        assert!(workspace.edit.is_none());
+        assert_eq!(workspace.cursor.to_string(), "C4");
+        assert_eq!(workspace.spreadsheet.cell("C3").unwrap().raw, "x");
+    }
+
+    #[test]
+    fn actions_share_geometry_revalidate_sheet_identity_and_route_research() {
+        let mut workspace = workspace();
+        let area = Rect::new(0, 0, 120, 30);
+        let actions = workspace.actions(area);
+        let ids = actions
+            .iter()
+            .map(|action| action.id.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(ids.len(), actions.len());
+        assert!(actions.iter().all(|action| {
+            action.area.width > 0
+                && action.area.height > 0
+                && action.area.x >= area.x
+                && action.area.y >= area.y
+                && action.area.right() <= area.right()
+                && action.area.bottom() <= area.bottom()
+        }));
+        assert!(actions
+            .iter()
+            .any(|action| action.id.ends_with(":A1") && action.preferred));
+
+        let c3 = actions
+            .iter()
+            .find(|action| action.id.starts_with("cell:") && action.id.ends_with(":C3"))
+            .unwrap();
+        assert!(workspace.handle_mouse(click(c3.area.x, c3.area.y), area));
+        assert_eq!(workspace.cursor.to_string(), "C3");
+
+        let a2 = workspace
+            .actions(area)
+            .into_iter()
+            .find(|action| action.id.starts_with("cell:") && action.id.ends_with(":A2"))
+            .unwrap();
+        assert!(workspace.activate_action(&a2.id));
+        assert!(workspace
+            .actions(area)
+            .iter()
+            .any(|action| action.id == "control:security" && action.enabled));
+        assert!(workspace.activate_action("control:security"));
+        assert_eq!(
+            workspace.poll_intents(),
+            vec![AppIntent::DispatchCommand {
+                command: "SEC IBM US Equity".to_owned(),
+                origin: ID,
+            }]
+        );
+
+        let assumptions = workspace
+            .actions(area)
+            .into_iter()
+            .find(|action| action.label == "Select worksheet Assumptions")
+            .unwrap();
+        assert!(workspace.activate_action(&assumptions.id));
+        assert!(!workspace.activate_action(&a2.id));
+        workspace
+            .spreadsheet
+            .rename_active_sheet("Renamed Assumptions")
+            .unwrap();
+        assert!(!workspace.activate_action(&assumptions.id));
     }
 
     #[test]
