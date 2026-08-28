@@ -55,7 +55,7 @@ pub(super) fn is_force_quit(key: KeyEvent) -> bool {
 
 pub(super) fn navigation_action(key: KeyEvent) -> NavigationAction {
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => NavigationAction::Quit,
+        KeyCode::Char('q') => NavigationAction::Quit,
         KeyCode::Char('/') | KeyCode::Char(':') => NavigationAction::OpenCommand,
         KeyCode::Char(character)
             if !key

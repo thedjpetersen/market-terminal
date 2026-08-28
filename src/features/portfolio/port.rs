@@ -4,8 +4,9 @@ use std::{
 };
 
 use super::{
-    PortfolioActivityLedger, PortfolioPerformanceSnapshot, PortfolioRealizedGainSnapshot,
-    PortfolioSnapshot, PortfolioTaxLotSnapshot, PortfolioTradeLedger,
+    PortfolioActivityLedger, PortfolioContributionSnapshot, PortfolioPerformanceSnapshot,
+    PortfolioRealizedGainSnapshot, PortfolioSnapshot, PortfolioTaxLotSnapshot,
+    PortfolioTradeLedger,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,6 +132,27 @@ pub trait PortfolioRepository: Send + Sync {
             "NO IMPORTED TRADES · USE PORT IMPORT TRADES <FILE.CSV>".to_owned(),
         ))
     }
+
+    fn load_contribution(&self) -> PortfolioContributionSnapshot {
+        PortfolioContributionSnapshot::empty(
+            "NO CONTRIBUTION IMPORTED · USE PORT IMPORT CONTRIBUTION <FILE.CSV>",
+        )
+    }
+
+    fn import_contribution_csv(
+        &self,
+        _path: &Path,
+    ) -> Result<PortfolioContributionSnapshot, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS PORTFOLIO PROVIDER DOES NOT SUPPORT CONTRIBUTION CSV IMPORT".to_owned(),
+        ))
+    }
+
+    fn reload_contribution(&self) -> Result<PortfolioContributionSnapshot, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "NO IMPORTED CONTRIBUTION · USE PORT IMPORT CONTRIBUTION <FILE.CSV>".to_owned(),
+        ))
+    }
 }
 
 /// Persists only the user-selected import location, never portfolio contents.
@@ -185,6 +207,16 @@ pub trait PortfolioImportStateStore: Send + Sync {
     fn save_trade_import_path(&self, _path: &Path) -> Result<(), PortfolioError> {
         Err(PortfolioError::Unsupported(
             "THIS STATE STORE DOES NOT SUPPORT EXECUTION IMPORT PATHS".to_owned(),
+        ))
+    }
+
+    fn load_contribution_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+        Ok(None)
+    }
+
+    fn save_contribution_import_path(&self, _path: &Path) -> Result<(), PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS STATE STORE DOES NOT SUPPORT CONTRIBUTION IMPORT PATHS".to_owned(),
         ))
     }
 }

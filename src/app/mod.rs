@@ -36,6 +36,29 @@ pub use workspace::{
     Workspace, WorkspaceDescriptor, WorkspaceId, WorkspaceNavigationItem, WorkspaceRegistry,
 };
 
+const HINT_ALPHABET: &[u8] = b"ASDFGHJKLQWERTYUIOPZXCVBNM";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShellHintTarget {
+    Workspace(WorkspaceId),
+    Command,
+    Help,
+    Settings,
+    Quit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ShellHint {
+    pub code: String,
+    pub target: ShellHintTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HintMode {
+    input: String,
+    hints: Vec<ShellHint>,
+}
+
 struct PendingCommandInference {
     input: String,
     result: mpsc::Receiver<Result<InferredCommand, CommandInferenceError>>,
@@ -55,6 +78,8 @@ pub struct App {
     runtime_settings: RuntimeSettingsSummary,
     keymap: Keymap,
     pub(crate) tmux_prefix_pending: bool,
+    panel_focus: bool,
+    hint_mode: Option<HintMode>,
     assistant_workspace: Option<WorkspaceId>,
     assistant_drawer_visible: bool,
     pub(crate) ticks: u64,
@@ -89,6 +114,8 @@ impl App {
             runtime_settings: RuntimeSettingsSummary::demo(),
             keymap: Keymap::default(),
             tmux_prefix_pending: false,
+            panel_focus: false,
+            hint_mode: None,
             assistant_workspace,
             assistant_drawer_visible: false,
             ticks: 0,
@@ -217,6 +244,16 @@ impl App {
 
     pub fn tmux_prefix_pending(&self) -> bool {
         self.tmux_prefix_pending
+    }
+
+    pub fn panel_focus(&self) -> bool {
+        self.panel_focus
+    }
+
+    pub(crate) fn shell_hints(&self) -> Option<(&str, &[ShellHint])> {
+        self.hint_mode
+            .as_ref()
+            .map(|mode| (mode.input.as_str(), mode.hints.as_slice()))
     }
 
     pub fn assistant_drawer_visible(&self) -> bool {
@@ -363,6 +400,11 @@ impl App {
             return;
         }
 
+        if self.hint_mode.is_some() {
+            self.handle_hint_key(key);
+            return;
+        }
+
         if self.assistant_drawer_visible {
             if self
                 .assistant_workspace
@@ -374,6 +416,24 @@ impl App {
                 self.close_assistant_drawer();
                 return;
             }
+        }
+
+        if self.panel_focus {
+            self.handle_panel_focus_key(key);
+            return;
+        }
+
+        if key.code == KeyCode::Esc {
+            self.enter_panel_focus();
+            return;
+        }
+        if key.code == KeyCode::Char('f')
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            self.open_hints();
+            return;
         }
 
         if self.tmux_prefix_pending {
@@ -470,6 +530,8 @@ impl App {
     /// Applies a terminal mouse event using the geometry of the last rendered frame.
     pub fn handle_mouse(&mut self, event: MouseEvent, frame_area: Rect) {
         self.tmux_prefix_pending = false;
+        self.panel_focus = false;
+        self.hint_mode = None;
         let target = ui::hit_test(self, frame_area, event.column, event.row);
         if !matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
             if let Some(ShellClickTarget::Workspace(area)) = target {
@@ -935,6 +997,122 @@ impl App {
         }
     }
 
+    fn enter_panel_focus(&mut self) {
+        self.close_assistant_drawer();
+        self.workspaces.on_blur(self.active_workspace);
+        self.panel_focus = true;
+        self.command_feedback = None;
+    }
+
+    fn handle_panel_focus_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Left | KeyCode::Up => self.switch_relative_workspace(false),
+            KeyCode::Right | KeyCode::Down => self.switch_relative_workspace(true),
+            KeyCode::Enter | KeyCode::Esc => {
+                self.panel_focus = false;
+                self.workspaces.on_focus(self.active_workspace);
+            }
+            KeyCode::Char('f' | 'F') => self.open_hints(),
+            KeyCode::Char(character @ '1'..='9') => {
+                self.switch_to_navigation_index(character as usize - '1' as usize);
+            }
+            KeyCode::Char('0') => self.switch_to_navigation_index(9),
+            KeyCode::Char('q' | 'Q') => self.should_quit = true,
+            _ => {}
+        }
+    }
+
+    fn open_hints(&mut self) {
+        self.close_assistant_drawer();
+        self.help_visible = false;
+        self.close_settings();
+        self.panel_focus = false;
+        let targets = self
+            .workspaces
+            .navigation_items()
+            .map(|item| ShellHintTarget::Workspace(item.id))
+            .chain([
+                ShellHintTarget::Command,
+                ShellHintTarget::Help,
+                ShellHintTarget::Settings,
+                ShellHintTarget::Quit,
+            ])
+            .collect::<Vec<_>>();
+        let hints = hint_codes(targets.len())
+            .zip(targets)
+            .map(|(code, target)| ShellHint { code, target })
+            .collect();
+        self.hint_mode = Some(HintMode {
+            input: String::new(),
+            hints,
+        });
+    }
+
+    fn handle_hint_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.hint_mode = None;
+                return;
+            }
+            KeyCode::Backspace => {
+                if let Some(mode) = &mut self.hint_mode {
+                    mode.input.pop();
+                }
+                return;
+            }
+            KeyCode::Char(character)
+                if character.is_ascii_alphabetic()
+                    && !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                if let Some(mode) = &mut self.hint_mode {
+                    mode.input.push(character.to_ascii_uppercase());
+                }
+            }
+            _ => return,
+        }
+
+        let Some(mode) = &self.hint_mode else {
+            return;
+        };
+        let input = mode.input.clone();
+        let matches = mode
+            .hints
+            .iter()
+            .filter(|hint| hint.code.starts_with(&input))
+            .collect::<Vec<_>>();
+        if matches.is_empty() {
+            self.hint_mode = None;
+            self.command_feedback = Some(format!("NO HINT · {input}"));
+            return;
+        }
+        let exact = matches
+            .iter()
+            .find(|hint| hint.code == input)
+            .map(|hint| hint.target);
+        if let Some(target) = exact {
+            self.hint_mode = None;
+            self.activate_hint(target);
+        }
+    }
+
+    fn activate_hint(&mut self, target: ShellHintTarget) {
+        match target {
+            ShellHintTarget::Workspace(id) if Some(id) == self.assistant_workspace => {
+                self.open_assistant_drawer();
+            }
+            ShellHintTarget::Workspace(id) => {
+                self.activate_workspace(id);
+                self.workspaces.on_focus(id);
+            }
+            ShellHintTarget::Command => self.open_command(),
+            ShellHintTarget::Help => self.help_visible = true,
+            ShellHintTarget::Settings => self.open_settings(),
+            ShellHintTarget::Quit => self.should_quit = true,
+        }
+    }
+
     fn switch_relative_workspace(&mut self, forward: bool) {
         let navigation = self
             .workspaces
@@ -1111,6 +1289,31 @@ impl App {
             tracing::warn!(error, "shell session persistence failed");
         }
     }
+}
+
+fn hint_codes(count: usize) -> impl Iterator<Item = String> {
+    let alphabet = HINT_ALPHABET
+        .iter()
+        .map(|byte| char::from(*byte))
+        .collect::<Vec<_>>();
+    let radix = alphabet.len();
+    let mut width = 1;
+    let mut capacity = radix;
+    while count > capacity {
+        width += 1;
+        capacity = capacity.saturating_mul(radix);
+    }
+    let codes = (0..count)
+        .map(|mut index| {
+            let mut digits = vec![alphabet[0]; width];
+            for digit in digits.iter_mut().rev() {
+                *digit = alphabet[index % radix];
+                index /= radix;
+            }
+            digits.into_iter().collect()
+        })
+        .collect::<Vec<_>>();
+    codes.into_iter()
 }
 
 fn previous_char_boundary(value: &str, cursor: usize) -> usize {
@@ -1729,6 +1932,78 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT));
 
         assert!(app.help_visible());
+    }
+
+    #[test]
+    fn escape_lifts_focus_and_arrows_move_between_panels() {
+        let mut app = bootstrap::demo_app();
+        let second = app.workspaces.navigation_items().nth(1).unwrap().id;
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.panel_focus());
+
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.active_workspace(), second);
+        assert!(app.panel_focus());
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.panel_focus());
+    }
+
+    #[test]
+    fn follow_hints_route_to_visible_workspaces_and_shell_actions() {
+        let mut app = bootstrap::demo_app();
+        let second = app.workspaces.navigation_items().nth(1).unwrap().id;
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| hint.target == ShellHintTarget::Workspace(second))
+            .unwrap()
+            .code
+            .clone();
+        for character in code.chars() {
+            app.handle_key(KeyEvent::new(
+                KeyCode::Char(character.to_ascii_lowercase()),
+                KeyModifiers::NONE,
+            ));
+        }
+        assert_eq!(app.active_workspace(), second);
+        assert!(app.shell_hints().is_none());
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let help_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| hint.target == ShellHintTarget::Help)
+            .unwrap()
+            .code
+            .clone();
+        for character in help_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        assert!(app.help_visible());
+    }
+
+    #[test]
+    fn follow_hint_codes_are_prefix_free_and_compact() {
+        let short = hint_codes(HINT_ALPHABET.len()).collect::<Vec<_>>();
+        assert!(short.iter().all(|code| code.len() == 1));
+
+        let long = hint_codes(HINT_ALPHABET.len() + 1).collect::<Vec<_>>();
+        assert!(long.iter().all(|code| code.len() == 2));
+        assert_eq!(
+            long.iter().collect::<std::collections::HashSet<_>>().len(),
+            long.len()
+        );
+
+        let exceptional = hint_codes(HINT_ALPHABET.len().pow(2) + 1).collect::<Vec<_>>();
+        assert!(exceptional.iter().all(|code| code.len() == 3));
     }
 
     #[test]

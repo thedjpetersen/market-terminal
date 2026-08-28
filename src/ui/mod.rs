@@ -11,7 +11,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, InputMode, ShellAction, ShellChrome, WorkspaceId};
+use crate::app::{App, InputMode, ShellAction, ShellChrome, ShellHintTarget, WorkspaceId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ShellLayout {
@@ -313,6 +313,8 @@ fn uses_immersive_shell(app: &App) -> bool {
         && app.workspaces.shell_chrome(app.active_workspace()) == ShellChrome::Immersive
         && !app.help_visible()
         && !app.settings_visible()
+        && !app.panel_focus()
+        && app.shell_hints().is_none()
 }
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -343,6 +345,89 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
     if app.settings_visible() {
         render_settings(frame, layout.workspace, app);
+    }
+    if app.shell_hints().is_some() {
+        render_shell_hints(frame, layout, app);
+    }
+}
+
+fn render_shell_hints(frame: &mut Frame, layout: ShellLayout, app: &App) {
+    let Some((input, hints)) = app.shell_hints() else {
+        return;
+    };
+    let badge_style = Style::new()
+        .bg(theme::AMBER.into())
+        .fg(theme::BG.into())
+        .bold();
+
+    let mut item_x = layout.navigation.x;
+    for (index, item) in app.workspaces.navigation_items().enumerate() {
+        let width = chrome::navigation_item_text(index, item).chars().count() as u16;
+        if let Some(hint) = hints.iter().find(|hint| {
+            hint.code.starts_with(input) && hint.target == ShellHintTarget::Workspace(item.id)
+        }) {
+            let badge_width = (hint.code.len() as u16).saturating_add(2).min(width);
+            if item_x < layout.navigation.right() && badge_width > 0 {
+                frame.render_widget(
+                    Paragraph::new(format!(" {} ", hint.code)).style(badge_style),
+                    Rect::new(
+                        item_x,
+                        layout.navigation.y,
+                        badge_width.min(layout.navigation.right().saturating_sub(item_x)),
+                        1,
+                    ),
+                );
+            }
+        }
+        item_x = item_x.saturating_add(width);
+    }
+
+    if let Some(hint) = hints
+        .iter()
+        .find(|hint| hint.code.starts_with(input) && hint.target == ShellHintTarget::Command)
+    {
+        let width = (hint.code.len() as u16)
+            .saturating_add(2)
+            .min(layout.command.width);
+        frame.render_widget(
+            Paragraph::new(format!(" {} ", hint.code)).style(badge_style),
+            Rect::new(
+                layout.command.x.saturating_add(1),
+                layout.command.y.saturating_add(1),
+                width,
+                1,
+            ),
+        );
+    }
+
+    let utility_hints = hints
+        .iter()
+        .filter(|hint| {
+            hint.code.starts_with(input)
+                && matches!(
+                    hint.target,
+                    ShellHintTarget::Help | ShellHintTarget::Settings | ShellHintTarget::Quit
+                )
+        })
+        .map(|hint| {
+            let label = match hint.target {
+                ShellHintTarget::Help => "HELP",
+                ShellHintTarget::Settings => "SETUP",
+                ShellHintTarget::Quit => "QUIT",
+                _ => unreachable!("utility hints are filtered above"),
+            };
+            format!(" {} {label} ", hint.code)
+        })
+        .collect::<String>();
+    if !utility_hints.is_empty() {
+        let width = (utility_hints.chars().count() as u16).min(layout.footer.width);
+        let area = Rect::new(
+            layout.footer.right().saturating_sub(width),
+            layout.footer.y,
+            width,
+            layout.footer.height,
+        );
+        frame.render_widget(Paragraph::new(utility_hints).style(badge_style), area);
     }
 }
 
@@ -448,6 +533,8 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
                 app.key_labels(&[ShellAction::Open])
             )),
             Line::raw("[KEY]      Open labeled workspace"),
+            Line::raw("Esc+arrows Panel focus; Enter interacts"),
+            Line::raw("F          Follow visible one/two-letter hints"),
             Line::raw("A          Toggle AI drawer; Esc closes"),
             Line::raw(format!(
                 "{:<11} Effective settings / setup",
@@ -457,10 +544,7 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
                 "{:<11} Next / previous color theme",
                 app.key_labels(&[ShellAction::NextTheme, ShellAction::PreviousTheme])
             )),
-            Line::raw("Ctrl+B     tmux-style panel prefix"),
-            Line::raw("  ←/→ N/P  Previous / next panel"),
-            Line::raw("  1–9/0    Select numbered panel"),
-            Line::raw("  ?        Open this guide"),
+            Line::raw("Ctrl+B     ←/→ N/P panels · 1–9/0 select · ? help"),
             Line::raw(format!(
                 "{} + JK  Move in lists and tables",
                 app.key_labels(&[
@@ -470,8 +554,7 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
                     ShellAction::Right
                 ])
             )),
-            Line::raw("Mouse      Click controls, rows, and tabs"),
-            Line::raw("Wheel      Scroll navigable areas"),
+            Line::raw("Mouse      Click controls; wheel scrolls"),
             Line::raw(""),
             Line::styled("VI COMMAND EDITING", theme::AMBER),
             Line::raw("Type normally in INSERT mode"),
@@ -498,6 +581,8 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw("PORT IMPORT REALIZED <CSV>  Import broker closed lots"),
             Line::raw("PORT TRADES          Open verified broker executions"),
             Line::raw("PORT IMPORT TRADES <CSV>  Import broker order/fill history"),
+            Line::raw("PORT CONTRIBUTION    Open security contribution"),
+            Line::raw("PORT IMPORT CONTRIBUTION <CSV>  Import verified position period"),
             Line::raw("PORT RELOAD          Reload positions"),
             Line::raw("SHEET IMPORT <CSV>   Replace active sheet"),
             Line::raw("SHEET EXPORT <CSV>   Export active sheet"),

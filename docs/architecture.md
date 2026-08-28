@@ -69,9 +69,11 @@ end-of-period external flows plus optional benchmark beginning and ending
 values. The calculator reconciles exact gain/loss and additive contribution per
 currency, returns active contribution when benchmark coverage is complete, and
 reports centibasis-point rounding residuals rather than hiding them. It does not
-read Portfolio storage, join unrelated snapshots, or convert currencies; a
-future import adapter can validate source-specific identity and history before
-constructing the typed input.
+read Portfolio storage, join unrelated snapshots, or convert currencies. The
+bounded contribution CSV adapter validates a single period, anonymizes account
+identifiers, requires complete benchmark evidence, and constructs this typed
+input; the Portfolio workspace renders the resulting drill-down without taking
+ownership of filesystem persistence.
 
 `LiveOverviewQuery` composes those two already-loaded, in-memory snapshots for
 the interactive Overview. It performs no network or filesystem work and does

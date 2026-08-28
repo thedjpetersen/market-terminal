@@ -132,6 +132,22 @@ pub struct PortfolioContributionSnapshot {
 }
 
 impl PortfolioContributionSnapshot {
+    pub fn empty(source: impl Into<String>) -> Self {
+        Self {
+            rows: Vec::new(),
+            currency_totals: Vec::new(),
+            source: source.into(),
+            period: "—".to_owned(),
+            input_version: "—".to_owned(),
+            methodology: "NO VERIFIED POSITION-PERIOD INPUT".to_owned(),
+            disclosures: vec![
+                "IMPORT VERIFIED CONTRIBUTION HISTORY TO CALCULATE SECURITY CONTRIBUTION"
+                    .to_owned(),
+                "UNRELATED POSITION SNAPSHOTS ARE NOT JOINED INTO PERFORMANCE HISTORY".to_owned(),
+            ],
+        }
+    }
+
     pub fn portfolio_return_label(&self) -> String {
         match self.currency_totals.as_slice() {
             [] => "N/A".to_owned(),

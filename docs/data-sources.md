@@ -202,6 +202,30 @@ endorsed by, or sponsored by Yahoo.
   snapshot has a deterministic input version and methodology, and no
   contribution or attribution is inferred.
 
+## User portfolio contribution CSV
+
+- **Surface:** Portfolio Contribution and Security drill-through from each
+  resolved symbol row.
+- **Source/ownership:** a local security-level, single-period valuation export
+  selected by the user with `PORT IMPORT CONTRIBUTION <CSV>` or
+  `MARKET_TERMINAL_PORTFOLIO_CONTRIBUTION_CSV`. Required inputs are period
+  start/end, symbol, beginning value, and ending value. Account, end-of-period
+  external flow, paired benchmark values, and currency are optional.
+- **Retention/privacy:** parsed rows remain in process and raw CSV contents are
+  not copied. Only the independent selected path is stored in a private,
+  crash-safe feature document. Raw account identifiers become import-local
+  labels before reaching the domain or UI.
+- **Bounds:** files are capped at 10 MB, 25,000 data rows, and 64 columns; the
+  header must occur within the first 32 records. At most eight row-level
+  rejection details are displayed, and malformed or mixed-period input refuses
+  the whole import.
+- **Quality:** exact minor-unit gain/loss and additive contribution reconcile by
+  currency. Benchmark beginning/end values must form a complete pair on every
+  row before benchmark or active contribution is calculated. Missing flows are
+  explicitly treated as zero, missing currency is visibly defaulted to USD,
+  and centibasis-point rounding residuals remain visible. No FX conversion,
+  multi-period linking, or inferred history is introduced.
+
 ## User portfolio open-tax-lot CSV
 
 - **Surface:** Portfolio Lots and Security drill-through from each resolved

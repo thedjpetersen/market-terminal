@@ -70,6 +70,11 @@ move to its own crate later without changing its public vocabulary.
 - **Complete:** toggleable AI drawer with immediate input focus, a warm reusable
   Codex app-server worker, and bounded, transient, on-demand News article
   reading with an explicit publisher-page fallback.
+- **Complete:** shell-level keyboard accessibility with an explicit panel-focus
+  state: `Esc` lifts focus, bare arrows traverse registered workspaces, and
+  `Enter` returns interaction to the selected workspace. Vimium-style `F`
+  follow hints assign prefix-free one- or two-letter labels to visible workspace
+  routes and shell actions, with bounded prefix matching and cancellation.
 - **Complete:** Stage 0 platform foundation for the modular-monolith baseline:
   production-published kernel events, opt-in structured tracing, crash-safe
   feature documents, deterministic semantic frame goldens at 80 x 24,
@@ -122,8 +127,11 @@ move to its own crate later without changing its public vocabulary.
   Portfolio-owned boundary: exact single-period gain/loss, additive security
   contribution, optional benchmark and active contribution, strict per-currency
   reconciliation, typed metadata, complete-benchmark validation, and explicit
-  centibasis-point rounding residuals. Source adapters and terminal drill-down
-  remain separate work.
+  centibasis-point rounding residuals.
+- **Complete:** bounded contribution CSV import and terminal drill-down with
+  strict single-period evidence, complete paired benchmarks, account
+  anonymization, independent crash-safe path persistence, Security routing,
+  methodology/version disclosure, and explicit rounding residuals.
 - **Next:** the remaining Stage 2 portfolio/performance, risk, screening, and
   expanded alert-rule families. Provider availability extends the deployment
   surface; deterministic fixtures remain the Stage 1 acceptance baseline and
@@ -385,8 +393,8 @@ cash/activity ledger, dated per-currency valuations, and broker open-tax-lot
 exports supply separate versioned Portfolio inputs. The first Performance slice
 calculates flow-adjusted TWR plus optional benchmark and active return, and the
 first Risk slice consumes positions without storage access. A pure Portfolio
-calculator now reconciles single-period security contribution and optional
-benchmark-active attribution; verified history import and terminal drill-down,
+calculator plus a bounded CSV adapter and terminal drill-down now reconcile
+single-period security contribution and optional benchmark-active attribution;
 multi-period attribution, historical/factor risk, and stress libraries remain.
 Screening and the additional news/topic, portfolio-threshold, calendar, and
 spreadsheet-expression alert rule families remain separate Stage 2 slices.

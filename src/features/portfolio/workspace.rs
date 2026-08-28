@@ -19,9 +19,9 @@ use crate::{
 };
 
 use super::{
-    format_money, PortfolioActivityLedger, PortfolioPerformanceSnapshot,
-    PortfolioRealizedGainSnapshot, PortfolioRepository, PortfolioSnapshot, PortfolioTaxLotSnapshot,
-    PortfolioTradeLedger, ID,
+    format_money, PortfolioActivityLedger, PortfolioContributionSnapshot,
+    PortfolioPerformanceSnapshot, PortfolioRealizedGainSnapshot, PortfolioRepository,
+    PortfolioSnapshot, PortfolioTaxLotSnapshot, PortfolioTradeLedger, ID,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,16 +32,18 @@ enum PortfolioView {
     TaxLots,
     RealizedGains,
     Trades,
+    Contribution,
 }
 
 impl PortfolioView {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Positions,
         Self::Activity,
         Self::Performance,
         Self::TaxLots,
         Self::RealizedGains,
         Self::Trades,
+        Self::Contribution,
     ];
 
     const fn label(self) -> &'static str {
@@ -52,6 +54,7 @@ impl PortfolioView {
             Self::TaxLots => "LOTS",
             Self::RealizedGains => "REALIZED",
             Self::Trades => "TRADES",
+            Self::Contribution => "CONTRIB",
         }
     }
 
@@ -95,6 +98,7 @@ impl PortfolioWorkspace {
             PortfolioView::TaxLots => self.query.load_tax_lots().source,
             PortfolioView::RealizedGains => self.query.load_realized_gains().source,
             PortfolioView::Trades => self.query.load_trades().source,
+            PortfolioView::Contribution => self.query.load_contribution().source,
         };
     }
 
@@ -106,6 +110,7 @@ impl PortfolioWorkspace {
             PortfolioView::TaxLots => self.query.load_tax_lots().lots.len(),
             PortfolioView::RealizedGains => self.query.load_realized_gains().lots.len(),
             PortfolioView::Trades => self.query.load_trades().executions.len(),
+            PortfolioView::Contribution => self.query.load_contribution().rows.len(),
         }
     }
 
@@ -158,6 +163,12 @@ impl PortfolioWorkspace {
                 .executions
                 .get(self.selected)
                 .map(|execution| execution.symbol.clone()),
+            PortfolioView::Contribution => self
+                .query
+                .load_contribution()
+                .rows
+                .get(self.selected)
+                .map(|row| row.symbol.clone()),
         };
         let Some(symbol) = symbol else {
             self.status = "SELECTED ROW HAS NO SECURITY TO OPEN".to_owned();
@@ -288,6 +299,26 @@ impl PortfolioWorkspace {
         self.clamp_selection();
     }
 
+    fn import_contribution(&mut self, args: &[String]) {
+        let raw_path = args.join(" ");
+        if raw_path.is_empty() {
+            self.status =
+                "CONTRIBUTION IMPORT REQUIRES A CSV PATH · PORT IMPORT CONTRIBUTION <FILE.CSV>"
+                    .to_owned();
+            return;
+        }
+        self.status = match self.query.import_contribution_csv(&expand_home(&raw_path)) {
+            Ok(snapshot) => format!(
+                "IMPORTED {} CONTRIBUTION ROWS · {}",
+                snapshot.rows.len(),
+                snapshot.source
+            ),
+            Err(error) => format!("CONTRIBUTION IMPORT ERROR · {error}"),
+        };
+        self.view = PortfolioView::Contribution;
+        self.clamp_selection();
+    }
+
     fn reload_positions(&mut self) {
         self.status = match self.query.reload() {
             Ok(snapshot) => format!(
@@ -360,6 +391,18 @@ impl PortfolioWorkspace {
         self.clamp_selection();
     }
 
+    fn reload_contribution(&mut self) {
+        self.status = match self.query.reload_contribution() {
+            Ok(snapshot) => format!(
+                "RELOADED {} CONTRIBUTION ROWS · {}",
+                snapshot.rows.len(),
+                snapshot.source
+            ),
+            Err(error) => format!("CONTRIBUTION RELOAD ERROR · {error}"),
+        };
+        self.clamp_selection();
+    }
+
     fn reload_current(&mut self) {
         match self.view {
             PortfolioView::Positions => self.reload_positions(),
@@ -368,6 +411,7 @@ impl PortfolioWorkspace {
             PortfolioView::TaxLots => self.reload_tax_lots(),
             PortfolioView::RealizedGains => self.reload_realized_gains(),
             PortfolioView::Trades => self.reload_trades(),
+            PortfolioView::Contribution => self.reload_contribution(),
         }
     }
 }
@@ -391,6 +435,8 @@ impl Workspace for PortfolioWorkspace {
                 "CLOSEDLOTS",
                 "TRADES",
                 "FILLS",
+                "CONTRIBUTION",
+                "ATTRIBUTION",
             ],
         }
     }
@@ -403,6 +449,7 @@ impl Workspace for PortfolioWorkspace {
             "LOTS" | "TAXLOTS" => self.select_view(PortfolioView::TaxLots),
             "REALIZED" | "CLOSEDLOTS" => self.select_view(PortfolioView::RealizedGains),
             "TRADES" | "FILLS" => self.select_view(PortfolioView::Trades),
+            "CONTRIBUTION" | "ATTRIBUTION" => self.select_view(PortfolioView::Contribution),
             _ => {}
         }
         let Some(operation) = invocation
@@ -421,6 +468,9 @@ impl Workspace for PortfolioWorkspace {
                 self.select_view(PortfolioView::RealizedGains)
             }
             "TRADES" | "FILLS" | "EXECUTIONS" => self.select_view(PortfolioView::Trades),
+            "CONTRIBUTION" | "CONTRIB" | "ATTRIBUTION" => {
+                self.select_view(PortfolioView::Contribution)
+            }
             "IMPORT" => {
                 let target = invocation
                     .args
@@ -450,6 +500,10 @@ impl Workspace for PortfolioWorkspace {
                     .is_some_and(|value| matches!(value, "TRADES" | "FILLS" | "EXECUTIONS"))
                 {
                     self.import_trades(invocation.args.get(2..).unwrap_or_default());
+                } else if target.as_deref().is_some_and(|value| {
+                    matches!(value, "CONTRIBUTION" | "CONTRIB" | "ATTRIBUTION")
+                }) {
+                    self.import_contribution(invocation.args.get(2..).unwrap_or_default());
                 } else {
                     self.import_positions(invocation.args.get(1..).unwrap_or_default());
                 }
@@ -483,6 +537,10 @@ impl Workspace for PortfolioWorkspace {
                     .is_some_and(|value| matches!(value, "TRADES" | "FILLS" | "EXECUTIONS"))
                 {
                     self.reload_trades();
+                } else if target.as_deref().is_some_and(|value| {
+                    matches!(value, "CONTRIBUTION" | "CONTRIB" | "ATTRIBUTION")
+                }) {
+                    self.reload_contribution();
                 } else {
                     self.reload_positions();
                 }
@@ -524,6 +582,10 @@ impl Workspace for PortfolioWorkspace {
             }
             KeyCode::Char('6') => {
                 self.select_view(PortfolioView::Trades);
+                true
+            }
+            KeyCode::Char('7') => {
+                self.select_view(PortfolioView::Contribution);
                 true
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -594,12 +656,15 @@ impl Workspace for PortfolioWorkspace {
                     "EXECUTION GROSS, FEES, AND NET CASH RECONCILE BY CURRENCY · READ ONLY"
                         .to_owned()
                 }
+                PortfolioView::Contribution => {
+                    "GAIN/LOSS AND ADDITIVE CONTRIBUTION RECONCILE BY CURRENCY · NO FX".to_owned()
+                }
             };
             return true;
         }
         if is_primary_click(event, areas.footer) {
             let controls = [
-                (" 1/2/3/4/5/6/TAB VIEW  ", Some(KeyCode::Tab)),
+                (" 1/2/3/4/5/6/7/TAB VIEW  ", Some(KeyCode::Tab)),
                 ("↑↓/JK SELECT  ", None),
                 ("ENTER/O SECURITY  ", Some(KeyCode::Enter)),
                 ("R RELOAD  ", Some(KeyCode::Char('r'))),
@@ -632,6 +697,7 @@ impl Workspace for PortfolioWorkspace {
         let tax_lots = self.query.load_tax_lots();
         let realized_gains = self.query.load_realized_gains();
         let trades = self.query.load_trades();
+        let contribution = self.query.load_contribution();
         let areas = portfolio_layout(area);
         render_header(
             frame,
@@ -644,6 +710,7 @@ impl Workspace for PortfolioWorkspace {
                 tax_lots: &tax_lots,
                 realized_gains: &realized_gains,
                 trades: &trades,
+                contribution: &contribution,
             },
         );
         render_tabs(frame, areas.tabs, self.view);
@@ -671,6 +738,10 @@ impl Workspace for PortfolioWorkspace {
             PortfolioView::Trades => {
                 render_trades(frame, areas.main, &trades, self.selected);
                 render_trade_source(frame, areas.side, &trades, &self.status);
+            }
+            PortfolioView::Contribution => {
+                render_contribution(frame, areas.main, &contribution, self.selected);
+                render_contribution_source(frame, areas.side, &contribution, &self.status);
             }
         }
         render_footer(frame, areas.footer, self.view);
@@ -712,6 +783,7 @@ struct PortfolioHeaderData<'a> {
     tax_lots: &'a PortfolioTaxLotSnapshot,
     realized_gains: &'a PortfolioRealizedGainSnapshot,
     trades: &'a PortfolioTradeLedger,
+    contribution: &'a PortfolioContributionSnapshot,
 }
 
 fn render_header(
@@ -766,6 +838,15 @@ fn render_header(
             ("BUYS", data.trades.buy_fill_count().to_string()),
             ("SELLS", data.trades.sell_fill_count().to_string()),
             ("NET CASH", data.trades.net_cash_effect_label()),
+        ],
+        PortfolioView::Contribution => [
+            ("POSITIONS", data.contribution.rows.len().to_string()),
+            ("PERIOD", data.contribution.period.clone()),
+            (
+                "PORTFOLIO RETURN",
+                data.contribution.portfolio_return_label(),
+            ),
+            ("ACTIVE RETURN", data.contribution.active_return_label()),
         ],
     };
     for (index, (label, value)) in values.into_iter().enumerate() {
@@ -1343,6 +1424,135 @@ fn render_trade_source(frame: &mut Frame, area: Rect, ledger: &PortfolioTradeLed
     render_side(frame, area, "EXEC", "READ-ONLY ORDER/FILL LEDGER", lines);
 }
 
+fn render_contribution(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &PortfolioContributionSnapshot,
+    selected: usize,
+) {
+    let rows = snapshot
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            styled_data_row(
+                [
+                    row.account_id.as_str().to_owned(),
+                    format!("{} · {}", row.symbol, row.currency),
+                    row.beginning_value_label(),
+                    row.external_flow_label(),
+                    row.ending_value_label(),
+                    row.gain_loss_label(),
+                    row.contribution_label(),
+                    row.benchmark_contribution_label(),
+                    row.active_contribution_label(),
+                ],
+                index,
+                selected,
+            )
+        })
+        .collect::<Vec<_>>();
+    render_table(
+        frame,
+        area,
+        "ATTR",
+        "SINGLE-PERIOD SECURITY CONTRIBUTION",
+        [
+            "ACCOUNT",
+            "SYMBOL · CCY",
+            "BEGIN",
+            "FLOW",
+            "END",
+            "GAIN/LOSS",
+            "CONTRIB",
+            "BENCH",
+            "ACTIVE",
+        ],
+        rows,
+        [
+            Constraint::Percentage(9),
+            Constraint::Percentage(13),
+            Constraint::Percentage(12),
+            Constraint::Percentage(10),
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
+            Constraint::Percentage(11),
+            Constraint::Percentage(10),
+            Constraint::Percentage(11),
+        ],
+    );
+}
+
+fn render_contribution_source(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &PortfolioContributionSnapshot,
+    status: &str,
+) {
+    let mut lines = vec![
+        Line::styled("SOURCE / PERIOD", AMBER),
+        Line::styled(snapshot.source.clone(), INK),
+        Line::styled(snapshot.period.clone(), MUTED),
+        Line::styled(snapshot.input_version.clone(), CYAN),
+        Line::raw(""),
+        Line::styled("CONTRIBUTION RECONCILIATION", AMBER),
+    ];
+    for total in &snapshot.currency_totals {
+        lines.extend([
+            Line::styled(
+                format!(
+                    "{} {} POSITIONS · BEGIN {}",
+                    total.currency,
+                    total.positions,
+                    format_money(total.beginning_value)
+                ),
+                INK,
+            ),
+            Line::styled(
+                format!(
+                    "  FLOW {} · END {} · GAIN {}",
+                    format_money(total.external_flow),
+                    format_money(total.ending_value),
+                    format_money(total.gain_loss)
+                ),
+                MUTED,
+            ),
+            Line::styled(
+                format!(
+                    "  RETURN {} · BENCH {} · ACTIVE {}",
+                    total.portfolio_return_label(),
+                    total.benchmark_return_label(),
+                    total.active_return_label()
+                ),
+                GREEN,
+            ),
+            Line::styled(
+                format!(
+                    "  ROUNDING RESIDUAL {} cbp{}",
+                    total.contribution_rounding_residual_centibps,
+                    total
+                        .active_rounding_residual_centibps
+                        .map(|value| format!(" · ACTIVE {value} cbp"))
+                        .unwrap_or_default()
+                ),
+                MUTED,
+            ),
+        ]);
+    }
+    lines.extend([
+        Line::raw(""),
+        Line::styled("METHODOLOGY", AMBER),
+        Line::styled(snapshot.methodology.clone(), MUTED),
+        Line::raw(""),
+        Line::styled(status, YELLOW),
+        Line::styled("PORT IMPORT CONTRIBUTION <CSV>", CYAN),
+    ]);
+    for disclosure in snapshot.disclosures.iter().take(8) {
+        lines.push(Line::styled(format!("• {disclosure}"), MUTED));
+    }
+    render_side(frame, area, "ATTR", "ADDITIVE CONTRIBUTION", lines);
+}
+
 fn render_side(
     frame: &mut Frame,
     area: Rect,
@@ -1459,7 +1669,7 @@ fn render_performance_inputs(
 fn render_footer(frame: &mut Frame, area: Rect, view: PortfolioView) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(" 1/2/3/4/5/6/TAB ", AMBER),
+            Span::styled(" 1/2/3/4/5/6/7/TAB ", AMBER),
             Span::styled("VIEW  ", MUTED),
             Span::styled("↑↓/JK ", AMBER),
             Span::styled("SELECT  ", MUTED),
@@ -1520,6 +1730,8 @@ mod tests {
         assert_eq!(workspace.view, PortfolioView::RealizedGains);
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
         assert_eq!(workspace.view, PortfolioView::Trades);
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert_eq!(workspace.view, PortfolioView::Contribution);
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
         assert_eq!(workspace.view, PortfolioView::Positions);
     }
@@ -1641,5 +1853,32 @@ mod tests {
         assert!(rendered.contains("DEMO-TRADES-V1"));
         assert!(rendered.contains("META"));
         assert!(rendered.contains("$2,217.00"));
+    }
+
+    #[test]
+    fn contribution_panel_renders_additive_active_attribution() {
+        let mut app = bootstrap::demo_app();
+        for character in "/CONTRIBUTION\n".chars() {
+            let code = match character {
+                '\n' => KeyCode::Enter,
+                character => KeyCode::Char(character),
+            };
+            app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+        terminal.draw(|frame| runtime::render(frame, &app)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("SINGLE-PERIOD SECURITY CONTRIBUTION"));
+        assert!(rendered.contains("DEMO-CONTRIBUTION-V1"));
+        assert!(rendered.contains("META"));
+        assert!(rendered.contains("+7.0000%"));
+        assert!(rendered.contains("+2.0000%"));
     }
 }

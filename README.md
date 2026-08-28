@@ -58,6 +58,14 @@ I/O while rendering. Persistent workspaces do not substitute deterministic
 gallery analytics when an external source is missing; the separate gallery
 host remains available for screenshots and tests.
 
+From any workspace, press `Esc` to lift focus to the workspace rail. Bare arrow
+keys then move between panels without being consumed by the panel underneath;
+press `Enter` to interact with the selected panel again. Press `F` to enter
+follow-hint mode: every visible workspace plus the command bar, Help, Setup,
+and Quit receives a prefix-free one- or two-letter label. Type a label to route
+there immediately, or press `Esc` to cancel. The labels use the familiar
+Vimium-style link-hint interaction while remaining terminal-native.
+
 `DESK` (aliases `SPLIT` and `DASHBOARD`) opens the combined workspace adapted
 from `alphai-tui`. Press `Tab`/`Shift+Tab` or `1`/`2`/`3` to focus Monitor,
 Chart, or News. Clicking inside a pane focuses it and sends subsequent keys to
@@ -110,7 +118,7 @@ Key names use `[ctrl-][alt-][shift-]key`, where `key` is a character, `F1`–
 `next_panel`, `previous_panel`, `settings`, `help`, `next_theme`,
 `previous_theme`, `refresh`, `up`, `down`, `left`, `right`, `page_up`,
 `page_down`, and `open`. Invalid, duplicate, reserved, and conflicting entries
-fall back safely and are counted in Settings. `Esc`, `Ctrl+C`, `Ctrl+B`, direct
+fall back safely and are counted in Settings. `Esc`, `F`, `Ctrl+C`, `Ctrl+B`, direct
 workspace hotkeys, the tmux post-prefix keys, and command-mode Vim/Emacs editing
 remain fixed escape routes.
 
@@ -330,11 +338,11 @@ return and Sharpe remain `N/A` because a positions snapshot does not contain
 enough transaction history to calculate them honestly. No broker password or
 API credential is required, and the CSV stays local.
 
-Portfolio has six clickable, keyboard-addressable views: `1` Positions, `2`
-Activity, `3` Performance, `4` Lots, `5` Realized, and `6` Trades. `Tab`, `Shift+Tab`, `h/l`, and the
-arrow keys switch views; `j/k` selects rows, and Enter opens a row's resolved
-security when one exists. Import a separate cash-account or broker activity
-export with:
+Portfolio has seven clickable, keyboard-addressable views: `1` Positions, `2`
+Activity, `3` Performance, `4` Lots, `5` Realized, `6` Trades, and `7`
+Contribution. `Tab`, `Shift+Tab`, `h/l`, and the arrow keys switch views; `j/k`
+selects rows, and Enter opens a row's resolved security when one exists. Import
+a separate cash-account or broker activity export with:
 
 ```text
 PORT IMPORT ACTIVITY "~/Downloads/activity.csv"
@@ -384,12 +392,34 @@ before the sub-period return is linked. Optional benchmark valuations produce
 benchmark and active returns. The panel keeps currencies separate, carries a
 deterministic input version and methodology, and rejects malformed or partial
 rows instead of manufacturing a result. Portfolio's storage-independent
-contribution engine now accepts verified beginning values, ending values, and
+contribution engine accepts verified beginning values, ending values, and
 end-of-period external flows for one period. It calculates additive security
 contribution plus optional benchmark and active contribution with exact money,
-per-currency separation, and explicit centibasis-point rounding residuals. A
-CSV adapter and terminal drill-down still require position-period history; cash
-activity plus one positions snapshot is not silently promoted into that input.
+per-currency separation, and explicit centibasis-point rounding residuals.
+
+Import that independently verified security-level period with:
+
+```text
+PORT IMPORT CONTRIBUTION "~/Downloads/contribution.csv"
+PORT RELOAD CONTRIBUTION
+```
+
+Required columns are period start, period end, symbol, beginning value, and
+ending value. Optional columns are account, end-of-period external flow,
+benchmark beginning/end values, and currency. Benchmark values must be supplied
+as a complete pair on every row or omitted entirely. All rows must describe the
+same period; invalid or partial evidence refuses the whole import. Configure the
+independent, privately persisted startup path with:
+
+```dotenv
+MARKET_TERMINAL_PORTFOLIO_CONTRIBUTION_CSV="~/Downloads/contribution.csv"
+```
+
+`PORT CONTRIBUTION` shows exact gain, contribution, benchmark contribution,
+active contribution, currency totals, methodology, input version, and explicit
+rounding residuals. Account identifiers are anonymized before they reach the
+domain. Cash activity plus one positions snapshot is never silently promoted
+into contribution input, and multi-period linking remains future work.
 
 Import a broker open-tax-lot export separately from positions and activity:
 

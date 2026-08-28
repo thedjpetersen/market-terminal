@@ -3,8 +3,9 @@ use crate::features::{
     news::{Headline, NewsFeed, NewsSnapshot},
     overview::{OverviewQuery, OverviewSnapshot},
     portfolio::{
-        ExecutionPrice, PortfolioAccountId, PortfolioClosedLot, PortfolioCurrencyTotal,
-        PortfolioPerformanceSeries, PortfolioPerformanceSnapshot,
+        calculate_contribution, ExecutionPrice, PortfolioAccountId, PortfolioClosedLot,
+        PortfolioContributionInput, PortfolioContributionInputRow, PortfolioContributionSnapshot,
+        PortfolioCurrencyTotal, PortfolioPerformanceSeries, PortfolioPerformanceSnapshot,
         PortfolioRealizedGainCurrencyTotal, PortfolioRealizedGainSnapshot, PortfolioRepository,
         PortfolioSnapshot, PortfolioTaxLot, PortfolioTaxLotCurrencyTotal, PortfolioTaxLotSnapshot,
         PortfolioTradeCurrencyTotal, PortfolioTradeExecution, PortfolioTradeLedger,
@@ -444,6 +445,46 @@ impl PortfolioRepository for DemoData {
                 "NO POSITION CONTRIBUTION OR FACTOR ATTRIBUTION".to_owned(),
             ],
         }
+    }
+
+    fn load_contribution(&self) -> PortfolioContributionSnapshot {
+        let usd = Currency::new("USD").expect("USD is valid");
+        let row = |symbol: &str,
+                   beginning: i128,
+                   flow: i128,
+                   ending: i128,
+                   benchmark_beginning: i128,
+                   benchmark_ending: i128| PortfolioContributionInputRow {
+            account_id: PortfolioAccountId::new("DEMO ACCOUNT"),
+            instrument_id: InstrumentId::new(format!(
+                "demo:instrument:{}",
+                symbol.to_ascii_lowercase()
+            )),
+            symbol: symbol.to_owned(),
+            currency: usd,
+            beginning_value: Money::from_minor_units(beginning, usd),
+            external_flow: Money::from_minor_units(flow, usd),
+            ending_value: Money::from_minor_units(ending, usd),
+            benchmark_beginning_value: Some(Money::from_minor_units(benchmark_beginning, usd)),
+            benchmark_ending_value: Some(Money::from_minor_units(benchmark_ending, usd)),
+        };
+        calculate_contribution(PortfolioContributionInput {
+            rows: vec![
+                row("META", 50_000_000, 0, 58_000_000, 50_000_000, 53_000_000),
+                row(
+                    "AAPL", 30_000_000, 10_000_000, 31_000_000, 30_000_000, 31_000_000,
+                ),
+                row("CASH", 20_000_000, 0, 28_000_000, 20_000_000, 21_000_000),
+            ],
+            source: "DETERMINISTIC DEMO".to_owned(),
+            period_start: "2026-07-01".to_owned(),
+            period_end: "2026-08-25".to_owned(),
+            input_version: "DEMO-CONTRIBUTION-V1".to_owned(),
+            disclosures: vec![
+                "DETERMINISTIC GALLERY CONTRIBUTION · NOT INTERACTIVE USER DATA".to_owned(),
+            ],
+        })
+        .expect("deterministic contribution fixture reconciles")
     }
 
     fn load_tax_lots(&self) -> PortfolioTaxLotSnapshot {

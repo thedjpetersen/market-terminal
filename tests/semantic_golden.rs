@@ -18,32 +18,42 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "spreadsheet",
         prepare: prepare_spreadsheet,
-        hashes: [0xad1bc4ee81ae2cfe, 0x4d20ca09a3d22f4c, 0xd0e190e8afc5a282],
+        hashes: [0xf064835119e3686b, 0xe2bfaf5777557e38, 0xb2b60469e38e58b9],
     },
     Golden {
         name: "instrument-find",
         prepare: prepare_find,
-        hashes: [0xf3034720659b3376, 0x22352acf1570e01d, 0x0365978e6ccaabc2],
+        hashes: [0x7bf921a1d5542973, 0xec4a6d37ee19d5c6, 0x82f485327339bd79],
     },
     Golden {
         name: "help",
         prepare: prepare_help,
-        hashes: [0xa8d3eaac702baf6e, 0x099ebc523995616d, 0x85505e8c5a3640d8],
+        hashes: [0x9633e81a01822201, 0xb9a367ae67273d60, 0xded1509f1ea7c3a7],
     },
     Golden {
         name: "spreadsheet-error",
         prepare: prepare_spreadsheet_error,
-        hashes: [0x41f72239d704a8df, 0xa813ee830550ef95, 0xbfb9d82710c0884d],
+        hashes: [0x3df370b41828843a, 0xe07effa626eb77c1, 0xa5009ce23f8164ce],
     },
     Golden {
         name: "formula-editor",
         prepare: prepare_formula_editor,
-        hashes: [0x49878e462c384b06, 0xd4ba18ca262ec3b0, 0xb3674bef15fa7a9b],
+        hashes: [0x1125e167d1dbe683, 0x4bba6d282c26f8e4, 0xc7778e330797e924],
     },
     Golden {
         name: "risk",
         prepare: prepare_risk,
-        hashes: [0x9bd087033e7bd7c7, 0x7f2840bdfcfe8647, 0xfa7908ae7d2649e8],
+        hashes: [0xe570caf107bce632, 0x8b0a1c661f723f5e, 0x916b6d994e0e14b5],
+    },
+    Golden {
+        name: "panel-focus",
+        prepare: prepare_panel_focus,
+        hashes: [0x7ebdacfecbc1930a, 0x02f1b26523ec2274, 0x3dadc10d07350d4f],
+    },
+    Golden {
+        name: "follow-hints",
+        prepare: prepare_follow_hints,
+        hashes: [0xe2f842a7fda34a62, 0x7d8ba10c4a0f4fe1, 0xce5fec314a6f72cd],
     },
 ];
 
@@ -105,6 +115,14 @@ fn prepare_help(app: &mut App) {
 
 fn prepare_risk(app: &mut App) {
     dispatch(app, "RISK");
+}
+
+fn prepare_panel_focus(app: &mut App) {
+    app.handle_key(key(KeyCode::Esc));
+}
+
+fn prepare_follow_hints(app: &mut App) {
+    app.handle_key(key(KeyCode::Char('f')));
 }
 
 fn prepare_spreadsheet_error(app: &mut App) {

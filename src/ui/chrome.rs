@@ -28,7 +28,15 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         columns[0],
     );
 
-    let command = if app.tmux_prefix_pending() {
+    let command = if let Some((input, _)) = app.shell_hints() {
+        if input.is_empty() {
+            "FOLLOW HINT · TYPE A LABEL"
+        } else {
+            "FOLLOW HINT · KEEP TYPING"
+        }
+    } else if app.panel_focus() {
+        "PANEL FOCUS · ARROWS MOVE · ENTER INTERACT · F HINTS"
+    } else if app.tmux_prefix_pending() {
         "TMUX PREFIX · ←/→ OR N/P · 1–9/0 SELECT · ? HELP"
     } else if let Some(feedback) = app.command_feedback() {
         feedback
@@ -37,7 +45,11 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         app.command.as_str()
     };
-    let command_border = if app.input_mode == InputMode::Command || app.tmux_prefix_pending() {
+    let command_border = if app.input_mode == InputMode::Command
+        || app.tmux_prefix_pending()
+        || app.panel_focus()
+        || app.shell_hints().is_some()
+    {
         CYAN
     } else {
         MUTED
@@ -137,7 +149,14 @@ pub fn render_navigation(frame: &mut Frame, area: Rect, app: &App) {
     for (index, item) in app.workspaces.navigation_items().enumerate() {
         let text = navigation_item_text(index, item);
         let style = if item.id == app.active_workspace {
-            Style::new().bg(CYAN.into()).fg(BG.into()).bold()
+            Style::new()
+                .bg(if app.panel_focus() {
+                    AMBER.into()
+                } else {
+                    CYAN.into()
+                })
+                .fg(BG.into())
+                .bold()
         } else if app.assistant_drawer_visible() && Some(item.id) == app.assistant_workspace() {
             Style::new().bg(AMBER.into()).fg(BG.into()).bold()
         } else {
@@ -242,6 +261,34 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
         );
         return;
     }
+    if app.shell_hints().is_some() {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    " FOLLOW HINT ",
+                    Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
+                ),
+                Span::raw("  TYPE LABEL   BACKSPACE EDIT   ESC CANCEL"),
+            ]))
+            .style(Style::new().bg(FOOTER_BG.into())),
+            area,
+        );
+        return;
+    }
+    if app.panel_focus() {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    " PANEL FOCUS ",
+                    Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
+                ),
+                Span::raw("  ←/↑ PREVIOUS   →/↓ NEXT   ENTER INTERACT   F HINTS   ESC CANCEL"),
+            ]))
+            .style(Style::new().bg(FOOTER_BG.into())),
+            area,
+        );
+        return;
+    }
     if app.input_mode() == InputMode::Command {
         let (mode, bindings) = match app.command_edit_mode() {
             CommandEditMode::Insert => (
@@ -275,7 +322,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
         "news" => "LIVE NEWS · VERIFY PUBLISHER SOURCE",
         "portfolio" if gallery_replay => "GALLERY PORTFOLIO SNAPSHOT · NOT YOUR POSITIONS",
         "portfolio" => {
-            "VERSIONED POSITIONS + ACTIVITY + PERFORMANCE + LOTS + FILLS · VERIFY EACH SOURCE"
+            "VERSIONED POSITIONS + ACTIVITY + PERFORMANCE + LOTS + FILLS + ATTRIBUTION · VERIFY EACH SOURCE"
         }
         "instrument_search" if gallery_replay => "GALLERY INSTRUMENT MASTER · NOT LIVE",
         "instrument_search" => "LIVE SEC INSTRUMENT MASTER",
@@ -292,10 +339,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(" {}/ESC ", app.key_labels(&[ShellAction::Quit])),
-                AMBER,
-            ),
+            Span::styled(format!(" {} ", app.key_labels(&[ShellAction::Quit])), AMBER),
             Span::raw("QUIT   "),
             Span::styled("[KEY] ", AMBER),
             Span::raw("FAVORITES   "),
@@ -319,6 +363,10 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
                 AMBER,
             ),
             Span::raw("PANELS   "),
+            Span::styled("ESC ", AMBER),
+            Span::raw("FOCUS   "),
+            Span::styled("F ", AMBER),
+            Span::raw("HINTS   "),
             Span::styled(
                 format!(
                     "{}/JK ",

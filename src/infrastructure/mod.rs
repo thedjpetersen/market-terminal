@@ -21,6 +21,7 @@ mod local_persistence;
 mod market_data_demo;
 mod openrouter;
 mod portfolio_activity_csv;
+mod portfolio_contribution_csv;
 mod portfolio_csv;
 mod portfolio_performance_csv;
 mod portfolio_realized_gain_csv;
