@@ -5,7 +5,7 @@ use std::{
 
 use super::{
     PortfolioActivityLedger, PortfolioPerformanceSnapshot, PortfolioRealizedGainSnapshot,
-    PortfolioSnapshot, PortfolioTaxLotSnapshot,
+    PortfolioSnapshot, PortfolioTaxLotSnapshot, PortfolioTradeLedger,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +115,22 @@ pub trait PortfolioRepository: Send + Sync {
             "NO IMPORTED REALIZED GAINS · USE PORT IMPORT REALIZED <FILE.CSV>".to_owned(),
         ))
     }
+
+    fn load_trades(&self) -> PortfolioTradeLedger {
+        PortfolioTradeLedger::empty("NO TRADES IMPORTED · USE PORT IMPORT TRADES <FILE.CSV>")
+    }
+
+    fn import_trades_csv(&self, _path: &Path) -> Result<PortfolioTradeLedger, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS PORTFOLIO PROVIDER DOES NOT SUPPORT EXECUTION CSV IMPORT".to_owned(),
+        ))
+    }
+
+    fn reload_trades(&self) -> Result<PortfolioTradeLedger, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "NO IMPORTED TRADES · USE PORT IMPORT TRADES <FILE.CSV>".to_owned(),
+        ))
+    }
 }
 
 /// Persists only the user-selected import location, never portfolio contents.
@@ -159,6 +175,16 @@ pub trait PortfolioImportStateStore: Send + Sync {
     fn save_realized_gain_import_path(&self, _path: &Path) -> Result<(), PortfolioError> {
         Err(PortfolioError::Unsupported(
             "THIS STATE STORE DOES NOT SUPPORT CLOSED-LOT IMPORT PATHS".to_owned(),
+        ))
+    }
+
+    fn load_trade_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+        Ok(None)
+    }
+
+    fn save_trade_import_path(&self, _path: &Path) -> Result<(), PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS STATE STORE DOES NOT SUPPORT EXECUTION IMPORT PATHS".to_owned(),
         ))
     }
 }

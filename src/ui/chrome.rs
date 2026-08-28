@@ -275,7 +275,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
         "news" => "LIVE NEWS · VERIFY PUBLISHER SOURCE",
         "portfolio" if gallery_replay => "GALLERY PORTFOLIO SNAPSHOT · NOT YOUR POSITIONS",
         "portfolio" => {
-            "VERSIONED POSITIONS + ACTIVITY + PERFORMANCE + OPEN/CLOSED LOTS · VERIFY EACH SOURCE"
+            "VERSIONED POSITIONS + ACTIVITY + PERFORMANCE + LOTS + FILLS · VERIFY EACH SOURCE"
         }
         "instrument_search" if gallery_replay => "GALLERY INSTRUMENT MASTER · NOT LIVE",
         "instrument_search" => "LIVE SEC INSTRUMENT MASTER",

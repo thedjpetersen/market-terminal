@@ -227,6 +227,129 @@ pub struct PortfolioRealizedGainSnapshot {
     pub disclosures: Vec<String>,
 }
 
+/// Exact broker execution price with six decimal places. Cash reconciliation
+/// still occurs in the currency's minor units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ExecutionPrice(i128);
+
+impl ExecutionPrice {
+    pub const fn from_scaled_units(value: i128) -> Self {
+        Self(value)
+    }
+
+    pub const fn scaled_units(self) -> i128 {
+        self.0
+    }
+
+    pub fn label(self) -> String {
+        format_scaled(self.0, 6)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TradeSide {
+    Buy,
+    Sell,
+}
+
+impl TradeSide {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Buy => "BUY",
+            Self::Sell => "SELL",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioTradeExecution {
+    pub execution_id: String,
+    pub order_id: String,
+    pub account_id: PortfolioAccountId,
+    pub instrument_id: InstrumentId,
+    pub symbol: String,
+    pub executed_at: String,
+    pub side: TradeSide,
+    pub currency: Currency,
+    pub quantity: PositionQuantity,
+    pub fill_price: ExecutionPrice,
+    pub gross_amount: Money,
+    pub fees: Money,
+    pub net_cash_effect: Money,
+}
+
+impl PortfolioTradeExecution {
+    pub fn quantity_label(&self) -> String {
+        self.quantity.label()
+    }
+
+    pub fn fill_price_label(&self) -> String {
+        self.fill_price.label()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioTradeCurrencyTotal {
+    pub currency: Currency,
+    pub fills: usize,
+    pub buy_fills: usize,
+    pub sell_fills: usize,
+    pub buy_gross: Money,
+    pub sell_gross: Money,
+    pub fees: Money,
+    pub net_cash_effect: Money,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioTradeLedger {
+    pub executions: Vec<PortfolioTradeExecution>,
+    pub currency_totals: Vec<PortfolioTradeCurrencyTotal>,
+    pub source: String,
+    pub period: String,
+    pub input_version: String,
+    pub methodology: String,
+    pub disclosures: Vec<String>,
+}
+
+impl PortfolioTradeLedger {
+    pub fn empty(source: impl Into<String>) -> Self {
+        Self {
+            executions: Vec::new(),
+            currency_totals: Vec::new(),
+            source: source.into(),
+            period: "—".to_owned(),
+            input_version: "—".to_owned(),
+            methodology: "NO VERIFIED ORDER/FILL INPUT".to_owned(),
+            disclosures: vec![
+                "IMPORT A BROKER EXECUTION EXPORT TO BUILD VERIFIED TRADE HISTORY".to_owned(),
+                "CASH ACTIVITY IS NOT INVENTED AS ORDER OR FILL EVIDENCE".to_owned(),
+            ],
+        }
+    }
+
+    pub fn net_cash_effect_label(&self) -> String {
+        match self.currency_totals.as_slice() {
+            [] => "N/A".to_owned(),
+            [total] => format_money(total.net_cash_effect),
+            totals => format!("{} CCY · SEE TRADES", totals.len()),
+        }
+    }
+
+    pub fn buy_fill_count(&self) -> usize {
+        self.currency_totals
+            .iter()
+            .map(|total| total.buy_fills)
+            .sum()
+    }
+
+    pub fn sell_fill_count(&self) -> usize {
+        self.currency_totals
+            .iter()
+            .map(|total| total.sell_fills)
+            .sum()
+    }
+}
+
 impl PortfolioRealizedGainSnapshot {
     pub fn empty(source: impl Into<String>) -> Self {
         Self {
@@ -709,6 +832,10 @@ mod tests {
         assert_eq!(
             format_money(Money::from_minor_units(123_456, kwd)),
             "KWD 123.456"
+        );
+        assert_eq!(
+            ExecutionPrice::from_scaled_units(123_456_789).label(),
+            "123.456789"
         );
     }
 

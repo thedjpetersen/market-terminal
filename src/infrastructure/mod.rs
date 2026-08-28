@@ -26,6 +26,7 @@ mod portfolio_performance_csv;
 mod portfolio_realized_gain_csv;
 mod portfolio_risk;
 mod portfolio_tax_lot_csv;
+mod portfolio_trade_csv;
 mod sec_instruments;
 mod spreadsheet_demo;
 mod spreadsheet_files;

@@ -330,8 +330,8 @@ return and Sharpe remain `N/A` because a positions snapshot does not contain
 enough transaction history to calculate them honestly. No broker password or
 API credential is required, and the CSV stays local.
 
-Portfolio has five clickable, keyboard-addressable views: `1` Positions, `2`
-Activity, `3` Performance, `4` Lots, and `5` Realized. `Tab`, `Shift+Tab`, `h/l`, and the
+Portfolio has six clickable, keyboard-addressable views: `1` Positions, `2`
+Activity, `3` Performance, `4` Lots, `5` Realized, and `6` Trades. `Tab`, `Shift+Tab`, `h/l`, and the
 arrow keys switch views; `j/k` selects rows, and Enter opens a row's resolved
 security when one exists. Import a separate cash-account or broker activity
 export with:
@@ -436,6 +436,30 @@ replaced with import-local labels, unlike currencies are never combined, and
 zero-basis rows retain their exact gain without inventing a return. This is a
 broker-provided closed-lot history—not tax advice or inferred lot matching from
 cash activity.
+
+Import a broker execution export separately from the general activity ledger:
+
+```text
+PORT IMPORT TRADES "~/Downloads/trades.csv"
+PORT RELOAD TRADES
+```
+
+Required columns are execution time or trade date, side, symbol, positive
+quantity, and positive fill price. Optional columns include account, broker
+order ID, gross amount, commission, other fees, signed net amount, and
+currency. Configure the independent startup input with:
+
+```dotenv
+MARKET_TERMINAL_PORTFOLIO_TRADES_CSV="~/Downloads/trades.csv"
+```
+
+`PORT TRADES` treats each row as broker execution evidence. Prices and
+quantities retain six decimal places; gross cash is checked against quantity ×
+price in exact currency minor units. Buy net cash must equal `-(gross + fees)`,
+and sell net cash must equal `gross - fees`. Missing gross or net
+columns are derived with explicit disclosures; conflicting provider values
+refuse the entire import. Account and order IDs are replaced with import-local
+labels. This is a read-only ledger and cannot route or submit an order.
 
 Overview immediately reflects the same in-memory imported portfolio and live
 news cache. A point-in-time positions export does not contain a return series,

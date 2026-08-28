@@ -246,6 +246,29 @@ endorsed by, or sponsored by Yahoo.
   tax-lot matching, a tax return, tax advice, order/fill history, contribution,
   or attribution.
 
+### Portfolio broker execution CSV
+
+- **Role:** optional local broker order/fill export selected with
+  `PORT IMPORT TRADES <CSV>` or `MARKET_TERMINAL_PORTFOLIO_TRADES_CSV`.
+- **Required evidence:** execution timestamp or trade date, buy/sell side,
+  symbol, positive quantity, and positive execution price on every row.
+  Account, broker order ID, gross amount, commission, fees, signed net amount,
+  and currency are optional.
+- **Bounds:** 10 MB, 100,000 data rows, 128 columns, and a header within the
+  first 32 records; at most eight row-level rejection details are displayed.
+- **Quality:** quantity and price retain six decimal places. Gross is rounded
+  once into the currency's exact minor units and, when supplied, must match
+  quantity × price. Buy net cash is `-(gross + fees)` and sell net cash is
+  `gross - fees`; conflicting supplied values reject the entire import.
+  Currency totals and timestamp-precision limitations remain explicit, and no
+  FX conversion is invented.
+- **Privacy and persistence:** broker account and order identifiers are
+  replaced with import-local labels. Only the selected path is stored in
+  private crash-safe state; CSV contents are not copied.
+- **Limitations:** this is read-only execution history. It cannot stage, route,
+  submit, cancel, or modify an order and does not infer fills from cash
+  activity.
+
 ## User workbook and CSV
 
 - **Surface:** interactive Spreadsheet workbook and active-sheet CSV exchange.

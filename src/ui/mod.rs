@@ -496,6 +496,8 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw("PORT IMPORT LOTS <CSV>  Import broker open lots"),
             Line::raw("PORT REALIZED        Open closed lots and realized gains"),
             Line::raw("PORT IMPORT REALIZED <CSV>  Import broker closed lots"),
+            Line::raw("PORT TRADES          Open verified broker executions"),
+            Line::raw("PORT IMPORT TRADES <CSV>  Import broker order/fill history"),
             Line::raw("PORT RELOAD          Reload positions"),
             Line::raw("SHEET IMPORT <CSV>   Replace active sheet"),
             Line::raw("SHEET EXPORT <CSV>   Export active sheet"),

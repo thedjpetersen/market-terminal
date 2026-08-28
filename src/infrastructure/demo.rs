@@ -3,11 +3,12 @@ use crate::features::{
     news::{Headline, NewsFeed, NewsSnapshot},
     overview::{OverviewQuery, OverviewSnapshot},
     portfolio::{
-        PortfolioAccountId, PortfolioClosedLot, PortfolioCurrencyTotal, PortfolioPerformanceSeries,
-        PortfolioPerformanceSnapshot, PortfolioRealizedGainCurrencyTotal,
-        PortfolioRealizedGainSnapshot, PortfolioRepository, PortfolioSnapshot, PortfolioTaxLot,
-        PortfolioTaxLotCurrencyTotal, PortfolioTaxLotSnapshot, PortfolioValuationPoint, Position,
-        PositionQuantity, TaxLotHoldingPeriod,
+        ExecutionPrice, PortfolioAccountId, PortfolioClosedLot, PortfolioCurrencyTotal,
+        PortfolioPerformanceSeries, PortfolioPerformanceSnapshot,
+        PortfolioRealizedGainCurrencyTotal, PortfolioRealizedGainSnapshot, PortfolioRepository,
+        PortfolioSnapshot, PortfolioTaxLot, PortfolioTaxLotCurrencyTotal, PortfolioTaxLotSnapshot,
+        PortfolioTradeCurrencyTotal, PortfolioTradeExecution, PortfolioTradeLedger,
+        PortfolioValuationPoint, Position, PositionQuantity, TaxLotHoldingPeriod, TradeSide,
     },
     security::{
         Estimate, Filing, FinancialPeriod, OwnerPosition, PeerComparison, SecurityError,
@@ -594,6 +595,95 @@ impl PortfolioRepository for DemoData {
             disclosures: vec![
                 "DETERMINISTIC GALLERY CLOSED LOTS · NOT INTERACTIVE USER DATA".to_owned(),
                 "BROKER-PROVIDED CLOSED LOTS · NOT TAX ADVICE".to_owned(),
+            ],
+        }
+    }
+
+    fn load_trades(&self) -> PortfolioTradeLedger {
+        let usd = Currency::new("USD").expect("USD is valid");
+        let execution = |id: &str,
+                         order: &str,
+                         timestamp: &str,
+                         side: TradeSide,
+                         symbol: &str,
+                         quantity: i128,
+                         price: i128,
+                         gross: i128,
+                         fees: i128,
+                         net: i128| PortfolioTradeExecution {
+            execution_id: id.to_owned(),
+            order_id: order.to_owned(),
+            account_id: PortfolioAccountId::new("DEMO ACCOUNT"),
+            instrument_id: InstrumentId::new(format!(
+                "demo:instrument:{}",
+                symbol.to_ascii_lowercase()
+            )),
+            symbol: symbol.to_owned(),
+            executed_at: timestamp.to_owned(),
+            side,
+            currency: usd,
+            quantity: PositionQuantity::from_scaled_units(quantity),
+            fill_price: ExecutionPrice::from_scaled_units(price),
+            gross_amount: Money::from_minor_units(gross, usd),
+            fees: Money::from_minor_units(fees, usd),
+            net_cash_effect: Money::from_minor_units(net, usd),
+        };
+        PortfolioTradeLedger {
+            executions: vec![
+                execution(
+                    "DEMO-FILL-3",
+                    "ORDER 3",
+                    "2026-08-20T18:30:00Z",
+                    TradeSide::Sell,
+                    "META",
+                    5_000_000,
+                    600_000_000,
+                    300_000,
+                    100,
+                    299_900,
+                ),
+                execution(
+                    "DEMO-FILL-2",
+                    "ORDER 2",
+                    "2026-06-15T15:00:00Z",
+                    TradeSide::Sell,
+                    "AAPL",
+                    4_000_000,
+                    180_000_000,
+                    72_000,
+                    100,
+                    71_900,
+                ),
+                execution(
+                    "DEMO-FILL-1",
+                    "ORDER 1",
+                    "2026-02-03T14:30:00Z",
+                    TradeSide::Buy,
+                    "AAPL",
+                    10_000_000,
+                    150_000_000,
+                    150_000,
+                    100,
+                    -150_100,
+                ),
+            ],
+            currency_totals: vec![PortfolioTradeCurrencyTotal {
+                currency: usd,
+                fills: 3,
+                buy_fills: 1,
+                sell_fills: 2,
+                buy_gross: Money::from_minor_units(150_000, usd),
+                sell_gross: Money::from_minor_units(372_000, usd),
+                fees: Money::from_minor_units(300, usd),
+                net_cash_effect: Money::from_minor_units(221_700, usd),
+            }],
+            source: "DETERMINISTIC DEMO".to_owned(),
+            period: "2026-02-03 — 2026-08-20".to_owned(),
+            input_version: "DEMO-TRADES-V1".to_owned(),
+            methodology: "DETERMINISTIC BROKER EXECUTION FIXTURE · USD".to_owned(),
+            disclosures: vec![
+                "DETERMINISTIC GALLERY FILLS · NOT INTERACTIVE USER DATA".to_owned(),
+                "READ-ONLY EXECUTION HISTORY · NO ORDER ROUTING".to_owned(),
             ],
         }
     }

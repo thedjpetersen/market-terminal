@@ -21,7 +21,7 @@ use crate::{
 use super::{
     format_money, PortfolioActivityLedger, PortfolioPerformanceSnapshot,
     PortfolioRealizedGainSnapshot, PortfolioRepository, PortfolioSnapshot, PortfolioTaxLotSnapshot,
-    ID,
+    PortfolioTradeLedger, ID,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,15 +31,17 @@ enum PortfolioView {
     Performance,
     TaxLots,
     RealizedGains,
+    Trades,
 }
 
 impl PortfolioView {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Positions,
         Self::Activity,
         Self::Performance,
         Self::TaxLots,
         Self::RealizedGains,
+        Self::Trades,
     ];
 
     const fn label(self) -> &'static str {
@@ -49,6 +51,7 @@ impl PortfolioView {
             Self::Performance => "PERFORMANCE",
             Self::TaxLots => "LOTS",
             Self::RealizedGains => "REALIZED",
+            Self::Trades => "TRADES",
         }
     }
 
@@ -91,6 +94,7 @@ impl PortfolioWorkspace {
             PortfolioView::Performance => self.query.load_performance().source,
             PortfolioView::TaxLots => self.query.load_tax_lots().source,
             PortfolioView::RealizedGains => self.query.load_realized_gains().source,
+            PortfolioView::Trades => self.query.load_trades().source,
         };
     }
 
@@ -101,6 +105,7 @@ impl PortfolioWorkspace {
             PortfolioView::Performance => self.query.load_performance().series.len(),
             PortfolioView::TaxLots => self.query.load_tax_lots().lots.len(),
             PortfolioView::RealizedGains => self.query.load_realized_gains().lots.len(),
+            PortfolioView::Trades => self.query.load_trades().executions.len(),
         }
     }
 
@@ -147,6 +152,12 @@ impl PortfolioWorkspace {
                 .lots
                 .get(self.selected)
                 .map(|lot| lot.symbol.clone()),
+            PortfolioView::Trades => self
+                .query
+                .load_trades()
+                .executions
+                .get(self.selected)
+                .map(|execution| execution.symbol.clone()),
         };
         let Some(symbol) = symbol else {
             self.status = "SELECTED ROW HAS NO SECURITY TO OPEN".to_owned();
@@ -258,6 +269,25 @@ impl PortfolioWorkspace {
         self.clamp_selection();
     }
 
+    fn import_trades(&mut self, args: &[String]) {
+        let raw_path = args.join(" ");
+        if raw_path.is_empty() {
+            self.status =
+                "TRADE IMPORT REQUIRES A CSV PATH · PORT IMPORT TRADES <FILE.CSV>".to_owned();
+            return;
+        }
+        self.status = match self.query.import_trades_csv(&expand_home(&raw_path)) {
+            Ok(ledger) => format!(
+                "IMPORTED {} EXECUTIONS · {}",
+                ledger.executions.len(),
+                ledger.source
+            ),
+            Err(error) => format!("TRADE IMPORT ERROR · {error}"),
+        };
+        self.view = PortfolioView::Trades;
+        self.clamp_selection();
+    }
+
     fn reload_positions(&mut self) {
         self.status = match self.query.reload() {
             Ok(snapshot) => format!(
@@ -318,6 +348,18 @@ impl PortfolioWorkspace {
         self.clamp_selection();
     }
 
+    fn reload_trades(&mut self) {
+        self.status = match self.query.reload_trades() {
+            Ok(ledger) => format!(
+                "RELOADED {} EXECUTIONS · {}",
+                ledger.executions.len(),
+                ledger.source
+            ),
+            Err(error) => format!("TRADE RELOAD ERROR · {error}"),
+        };
+        self.clamp_selection();
+    }
+
     fn reload_current(&mut self) {
         match self.view {
             PortfolioView::Positions => self.reload_positions(),
@@ -325,6 +367,7 @@ impl PortfolioWorkspace {
             PortfolioView::Performance => self.reload_performance(),
             PortfolioView::TaxLots => self.reload_tax_lots(),
             PortfolioView::RealizedGains => self.reload_realized_gains(),
+            PortfolioView::Trades => self.reload_trades(),
         }
     }
 }
@@ -346,6 +389,8 @@ impl Workspace for PortfolioWorkspace {
                 "TAXLOTS",
                 "REALIZED",
                 "CLOSEDLOTS",
+                "TRADES",
+                "FILLS",
             ],
         }
     }
@@ -357,6 +402,7 @@ impl Workspace for PortfolioWorkspace {
             "PERFORMANCE" => self.select_view(PortfolioView::Performance),
             "LOTS" | "TAXLOTS" => self.select_view(PortfolioView::TaxLots),
             "REALIZED" | "CLOSEDLOTS" => self.select_view(PortfolioView::RealizedGains),
+            "TRADES" | "FILLS" => self.select_view(PortfolioView::Trades),
             _ => {}
         }
         let Some(operation) = invocation
@@ -374,6 +420,7 @@ impl Workspace for PortfolioWorkspace {
             "REALIZED" | "GAINS" | "CLOSEDLOTS" | "CLOSED-LOTS" => {
                 self.select_view(PortfolioView::RealizedGains)
             }
+            "TRADES" | "FILLS" | "EXECUTIONS" => self.select_view(PortfolioView::Trades),
             "IMPORT" => {
                 let target = invocation
                     .args
@@ -398,6 +445,11 @@ impl Workspace for PortfolioWorkspace {
                     matches!(value, "REALIZED" | "GAINS" | "CLOSEDLOTS" | "CLOSED-LOTS")
                 }) {
                     self.import_realized_gains(invocation.args.get(2..).unwrap_or_default());
+                } else if target
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "TRADES" | "FILLS" | "EXECUTIONS"))
+                {
+                    self.import_trades(invocation.args.get(2..).unwrap_or_default());
                 } else {
                     self.import_positions(invocation.args.get(1..).unwrap_or_default());
                 }
@@ -426,6 +478,11 @@ impl Workspace for PortfolioWorkspace {
                     matches!(value, "REALIZED" | "GAINS" | "CLOSEDLOTS" | "CLOSED-LOTS")
                 }) {
                     self.reload_realized_gains();
+                } else if target
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "TRADES" | "FILLS" | "EXECUTIONS"))
+                {
+                    self.reload_trades();
                 } else {
                     self.reload_positions();
                 }
@@ -463,6 +520,10 @@ impl Workspace for PortfolioWorkspace {
             }
             KeyCode::Char('5') => {
                 self.select_view(PortfolioView::RealizedGains);
+                true
+            }
+            KeyCode::Char('6') => {
+                self.select_view(PortfolioView::Trades);
                 true
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -529,12 +590,16 @@ impl Workspace for PortfolioWorkspace {
                     "CLOSED-LOT PROCEEDS LESS BASIS RECONCILES BY CURRENCY · NO TAX INFERENCE"
                         .to_owned()
                 }
+                PortfolioView::Trades => {
+                    "EXECUTION GROSS, FEES, AND NET CASH RECONCILE BY CURRENCY · READ ONLY"
+                        .to_owned()
+                }
             };
             return true;
         }
         if is_primary_click(event, areas.footer) {
             let controls = [
-                (" 1/2/3/4/5/TAB VIEW  ", Some(KeyCode::Tab)),
+                (" 1/2/3/4/5/6/TAB VIEW  ", Some(KeyCode::Tab)),
                 ("↑↓/JK SELECT  ", None),
                 ("ENTER/O SECURITY  ", Some(KeyCode::Enter)),
                 ("R RELOAD  ", Some(KeyCode::Char('r'))),
@@ -566,6 +631,7 @@ impl Workspace for PortfolioWorkspace {
         let performance = self.query.load_performance();
         let tax_lots = self.query.load_tax_lots();
         let realized_gains = self.query.load_realized_gains();
+        let trades = self.query.load_trades();
         let areas = portfolio_layout(area);
         render_header(
             frame,
@@ -577,6 +643,7 @@ impl Workspace for PortfolioWorkspace {
                 performance: &performance,
                 tax_lots: &tax_lots,
                 realized_gains: &realized_gains,
+                trades: &trades,
             },
         );
         render_tabs(frame, areas.tabs, self.view);
@@ -600,6 +667,10 @@ impl Workspace for PortfolioWorkspace {
             PortfolioView::RealizedGains => {
                 render_realized_gains(frame, areas.main, &realized_gains, self.selected);
                 render_realized_gain_source(frame, areas.side, &realized_gains, &self.status);
+            }
+            PortfolioView::Trades => {
+                render_trades(frame, areas.main, &trades, self.selected);
+                render_trade_source(frame, areas.side, &trades, &self.status);
             }
         }
         render_footer(frame, areas.footer, self.view);
@@ -640,6 +711,7 @@ struct PortfolioHeaderData<'a> {
     performance: &'a PortfolioPerformanceSnapshot,
     tax_lots: &'a PortfolioTaxLotSnapshot,
     realized_gains: &'a PortfolioRealizedGainSnapshot,
+    trades: &'a PortfolioTradeLedger,
 }
 
 fn render_header(
@@ -688,6 +760,12 @@ fn render_header(
             ("PROCEEDS", data.realized_gains.proceeds_label()),
             ("COST BASIS", data.realized_gains.cost_basis_label()),
             ("REALIZED GAIN", data.realized_gains.realized_gain_label()),
+        ],
+        PortfolioView::Trades => [
+            ("FILLS", data.trades.executions.len().to_string()),
+            ("BUYS", data.trades.buy_fill_count().to_string()),
+            ("SELLS", data.trades.sell_fill_count().to_string()),
+            ("NET CASH", data.trades.net_cash_effect_label()),
         ],
     };
     for (index, (label, value)) in values.into_iter().enumerate() {
@@ -1158,6 +1236,113 @@ fn render_realized_gain_source(
     render_side(frame, area, "GAIN", "CLOSED-LOT RECONCILIATION", lines);
 }
 
+fn render_trades(frame: &mut Frame, area: Rect, ledger: &PortfolioTradeLedger, selected: usize) {
+    let rows = ledger
+        .executions
+        .iter()
+        .enumerate()
+        .map(|(index, execution)| {
+            styled_data_row(
+                [
+                    execution.executed_at.clone(),
+                    execution.order_id.clone(),
+                    execution.account_id.as_str().to_owned(),
+                    execution.side.label().to_owned(),
+                    format!("{} · {}", execution.symbol, execution.currency),
+                    execution.quantity_label(),
+                    execution.fill_price_label(),
+                    format_money(execution.gross_amount),
+                    format_money(execution.fees),
+                    format_money(execution.net_cash_effect),
+                ],
+                index,
+                selected,
+            )
+        })
+        .collect::<Vec<_>>();
+    render_table(
+        frame,
+        area,
+        "FILL",
+        "VERIFIED BROKER ORDER/FILL HISTORY",
+        [
+            "EXECUTED",
+            "ORDER",
+            "ACCOUNT",
+            "SIDE",
+            "SYMBOL · CCY",
+            "QTY",
+            "PRICE",
+            "GROSS",
+            "FEES",
+            "NET CASH",
+        ],
+        rows,
+        [
+            Constraint::Percentage(15),
+            Constraint::Percentage(8),
+            Constraint::Percentage(8),
+            Constraint::Percentage(6),
+            Constraint::Percentage(11),
+            Constraint::Percentage(9),
+            Constraint::Percentage(10),
+            Constraint::Percentage(10),
+            Constraint::Percentage(9),
+            Constraint::Percentage(14),
+        ],
+    );
+}
+
+fn render_trade_source(frame: &mut Frame, area: Rect, ledger: &PortfolioTradeLedger, status: &str) {
+    let mut lines = vec![
+        Line::styled("SOURCE / PERIOD", AMBER),
+        Line::styled(ledger.source.clone(), INK),
+        Line::styled(ledger.period.clone(), MUTED),
+        Line::styled(ledger.input_version.clone(), CYAN),
+        Line::raw(""),
+        Line::styled("EXECUTION RECONCILIATION", AMBER),
+    ];
+    for total in &ledger.currency_totals {
+        lines.extend([
+            Line::styled(
+                format!(
+                    "{} {} FILLS · BUY {} · SELL {}",
+                    total.currency, total.fills, total.buy_fills, total.sell_fills
+                ),
+                INK,
+            ),
+            Line::styled(
+                format!(
+                    "  BUY {} · SELL {}",
+                    format_money(total.buy_gross),
+                    format_money(total.sell_gross)
+                ),
+                MUTED,
+            ),
+            Line::styled(
+                format!(
+                    "  FEES {} · NET {}",
+                    format_money(total.fees),
+                    format_money(total.net_cash_effect)
+                ),
+                GREEN,
+            ),
+        ]);
+    }
+    lines.extend([
+        Line::raw(""),
+        Line::styled("METHODOLOGY", AMBER),
+        Line::styled(ledger.methodology.clone(), MUTED),
+        Line::raw(""),
+        Line::styled(status, YELLOW),
+        Line::styled("PORT IMPORT TRADES <CSV>", CYAN),
+    ]);
+    for disclosure in ledger.disclosures.iter().take(8) {
+        lines.push(Line::styled(format!("• {disclosure}"), MUTED));
+    }
+    render_side(frame, area, "EXEC", "READ-ONLY ORDER/FILL LEDGER", lines);
+}
+
 fn render_side(
     frame: &mut Frame,
     area: Rect,
@@ -1274,7 +1459,7 @@ fn render_performance_inputs(
 fn render_footer(frame: &mut Frame, area: Rect, view: PortfolioView) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(" 1/2/3/4/5/TAB ", AMBER),
+            Span::styled(" 1/2/3/4/5/6/TAB ", AMBER),
             Span::styled("VIEW  ", MUTED),
             Span::styled("↑↓/JK ", AMBER),
             Span::styled("SELECT  ", MUTED),
@@ -1333,6 +1518,8 @@ mod tests {
         assert_eq!(workspace.view, PortfolioView::TaxLots);
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
         assert_eq!(workspace.view, PortfolioView::RealizedGains);
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert_eq!(workspace.view, PortfolioView::Trades);
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
         assert_eq!(workspace.view, PortfolioView::Positions);
     }
@@ -1428,5 +1615,31 @@ mod tests {
         assert!(rendered.contains("DEMO-REALIZED-GAINS-V1"));
         assert!(rendered.contains("NVDA"));
         assert!(rendered.contains("$7,500.00"));
+    }
+
+    #[test]
+    fn trade_panel_renders_verified_fill_reconciliation() {
+        let mut app = bootstrap::demo_app();
+        for character in "/TRADES\n".chars() {
+            let code = match character {
+                '\n' => KeyCode::Enter,
+                character => KeyCode::Char(character),
+            };
+            app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+        terminal.draw(|frame| runtime::render(frame, &app)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("VERIFIED BROKER ORDER/FILL HISTORY"));
+        assert!(rendered.contains("DEMO-TRADES-V1"));
+        assert!(rendered.contains("META"));
+        assert!(rendered.contains("$2,217.00"));
     }
 }

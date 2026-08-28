@@ -365,6 +365,47 @@ impl PortfolioImportStateStore for LocalPersistence {
         .map_err(|error| PortfolioError::Io(error.to_string()))?;
         FeatureDocumentRepository::save(self, &document).map_err(portfolio_persistence_error)
     }
+
+    fn load_trade_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+        let feature = portfolio_feature_key()?;
+        let id = portfolio_trade_import_document_id()?;
+        let document = FeatureDocumentRepository::load(self, &feature, &id)
+            .map_err(portfolio_persistence_error)?;
+        document
+            .map(|document| {
+                let path = document
+                    .payload()
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|path| !path.trim().is_empty() && path.len() <= 4_096)
+                    .ok_or_else(|| {
+                        PortfolioError::InvalidCsv(
+                            "PERSISTED PORTFOLIO TRADE IMPORT PATH IS INVALID".to_owned(),
+                        )
+                    })?;
+                Ok(PathBuf::from(path))
+            })
+            .transpose()
+    }
+
+    fn save_trade_import_path(&self, path: &Path) -> Result<(), PortfolioError> {
+        let path = path
+            .to_str()
+            .filter(|path| path.len() <= 4_096)
+            .ok_or_else(|| {
+                PortfolioError::Unsupported(
+                    "PORTFOLIO TRADE IMPORT PATH MUST BE UTF-8 AND AT MOST 4096 BYTES".to_owned(),
+                )
+            })?;
+        let document = FeatureDocument::new(
+            portfolio_feature_key()?,
+            portfolio_trade_import_document_id()?,
+            1,
+            serde_json::json!({"path": path}),
+        )
+        .map_err(|error| PortfolioError::Io(error.to_string()))?;
+        FeatureDocumentRepository::save(self, &document).map_err(portfolio_persistence_error)
+    }
 }
 
 impl AlertStateStore for LocalPersistence {
@@ -427,6 +468,10 @@ fn portfolio_tax_lot_import_document_id() -> Result<DocumentId, PortfolioError> 
 fn portfolio_realized_gain_import_document_id() -> Result<DocumentId, PortfolioError> {
     DocumentId::new("active_realized_gain_import")
         .map_err(|error| PortfolioError::Io(error.to_string()))
+}
+
+fn portfolio_trade_import_document_id() -> Result<DocumentId, PortfolioError> {
+    DocumentId::new("active_trade_import").map_err(|error| PortfolioError::Io(error.to_string()))
 }
 
 fn portfolio_persistence_error(error: PersistenceError) -> PortfolioError {
@@ -1033,6 +1078,31 @@ mod tests {
             .join("documents")
             .join("portfolio")
             .join("active_realized_gain_import.json");
+        assert!(document.is_file());
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(document).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn portfolio_trade_import_path_is_private_and_separate() {
+        let directory = TestDirectory::new("portfolio-trade-import");
+        let repository = LocalPersistence::new(&directory.0);
+        let trades = PathBuf::from("/Users/example/Documents/trades.csv");
+
+        PortfolioImportStateStore::save_trade_import_path(&repository, &trades).unwrap();
+
+        assert_eq!(
+            PortfolioImportStateStore::load_trade_import_path(&repository).unwrap(),
+            Some(trades)
+        );
+        let document = directory
+            .0
+            .join("documents")
+            .join("portfolio")
+            .join("active_trade_import.json");
         assert!(document.is_file());
         #[cfg(unix)]
         assert_eq!(
