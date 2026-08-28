@@ -48,7 +48,7 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "panel-focus",
         prepare: prepare_panel_focus,
-        hashes: [0x7ebdacfecbc1930a, 0x02f1b26523ec2274, 0x3dadc10d07350d4f],
+        hashes: [0x083f507844abbfca, 0xc81d613d8914778c, 0x7f9d0ce5b3f01b47],
     },
     Golden {
         name: "follow-hints",

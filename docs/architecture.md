@@ -141,7 +141,9 @@ on that concrete adapter.
    hotkey, and command aliases. Publish visible rows, tabs, and controls through
    `actions` and handle their opaque IDs through `activate_action` when the
    feature has local destinations that should participate in follow/spatial
-   routing.
+   routing. Mark at most one natural restoration target as `preferred`; the
+   shell chooses the first valid preference, then navigates non-wrapping action
+   rectangles with lane-first distance and stable geometry/ID tie-breakers.
 3. Add an infrastructure adapter for the feature-owned port.
 4. Register the workspace in `bootstrap.rs`.
 
@@ -149,7 +151,10 @@ No root router match, shared screen state, or central data trait needs to be
 edited. The registry validates duplicate IDs and hotkeys at startup. Follow
 hints remain shell-owned, but their feature targets and activation semantics do
 not leak into the shell; Portfolio's tabs, security rows, and reload control are
-the initial reference implementation.
+the initial reference implementation. The same action snapshot drives follow
+badges, spatial focus styling, arrow routing, activation revalidation, resize
+recovery, and async-state recovery, so the shell never keeps a second geometry
+model.
 
 ## Cross-feature events
 

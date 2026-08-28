@@ -65,6 +65,14 @@ struct HintMode {
     workspace_area: Rect,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpatialDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 struct PendingCommandInference {
     input: String,
     result: mpsc::Receiver<Result<InferredCommand, CommandInferenceError>>,
@@ -85,6 +93,7 @@ pub struct App {
     keymap: Keymap,
     pub(crate) tmux_prefix_pending: bool,
     panel_focus: bool,
+    focused_action: Option<String>,
     hint_mode: Option<HintMode>,
     terminal_area: Rect,
     assistant_workspace: Option<WorkspaceId>,
@@ -122,6 +131,7 @@ impl App {
             keymap: Keymap::default(),
             tmux_prefix_pending: false,
             panel_focus: false,
+            focused_action: None,
             hint_mode: None,
             terminal_area: Rect::new(0, 0, 120, 36),
             assistant_workspace,
@@ -258,6 +268,19 @@ impl App {
         self.panel_focus
     }
 
+    pub(crate) fn focused_workspace_action(&self, area: Rect) -> Option<WorkspaceAction> {
+        let focused = self.focused_action.as_deref()?;
+        self.workspace_actions(area, workspace::MAX_WORKSPACE_ACTIONS)
+            .into_iter()
+            .find(|action| action.id == focused)
+    }
+
+    pub(crate) fn focused_action_label(&self) -> Option<String> {
+        let area = ui::ShellLayout::new(self.terminal_area).workspace;
+        self.focused_workspace_action(area)
+            .map(|action| action.label)
+    }
+
     pub fn set_terminal_area(&mut self, area: Rect) {
         if area.width == 0 || area.height == 0 || area == self.terminal_area {
             return;
@@ -265,6 +288,9 @@ impl App {
         self.terminal_area = area;
         if self.hint_mode.take().is_some() {
             self.command_feedback = Some("HINTS CANCELED · TERMINAL RESIZED".to_owned());
+        }
+        if self.panel_focus {
+            self.refresh_spatial_focus();
         }
     }
 
@@ -314,11 +340,17 @@ impl App {
         self.ticks = self.ticks.wrapping_add(1);
         self.poll_command_inference();
         self.workspaces.update_shell_context(self.active_workspace);
+        if self.panel_focus {
+            self.refresh_spatial_focus();
+        }
         let intents = self.workspaces.poll_intents();
         for intent in intents {
             self.apply_intent(intent);
         }
         self.workspaces.update_shell_context(self.active_workspace);
+        if self.panel_focus {
+            self.refresh_spatial_focus();
+        }
     }
 
     /// Applies a key press to application state without performing terminal I/O.
@@ -553,6 +585,7 @@ impl App {
     pub fn handle_mouse(&mut self, event: MouseEvent, frame_area: Rect) {
         self.tmux_prefix_pending = false;
         self.panel_focus = false;
+        self.focused_action = None;
         self.hint_mode = None;
         let target = ui::hit_test(self, frame_area, event.column, event.row);
         if !matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
@@ -1023,24 +1056,109 @@ impl App {
         self.close_assistant_drawer();
         self.workspaces.on_blur(self.active_workspace);
         self.panel_focus = true;
+        self.focused_action = None;
+        self.refresh_spatial_focus();
         self.command_feedback = None;
     }
 
     fn handle_panel_focus_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Left | KeyCode::Up => self.switch_relative_workspace(false),
-            KeyCode::Right | KeyCode::Down => self.switch_relative_workspace(true),
-            KeyCode::Enter | KeyCode::Esc => {
+            KeyCode::Left => self.move_spatial_focus(SpatialDirection::Left),
+            KeyCode::Right => self.move_spatial_focus(SpatialDirection::Right),
+            KeyCode::Up => self.move_spatial_focus(SpatialDirection::Up),
+            KeyCode::Down => self.move_spatial_focus(SpatialDirection::Down),
+            KeyCode::Enter => self.activate_spatial_focus(),
+            KeyCode::Esc => {
                 self.panel_focus = false;
+                self.focused_action = None;
                 self.workspaces.on_focus(self.active_workspace);
             }
             KeyCode::Char('f' | 'F') => self.open_hints(),
             KeyCode::Char(character @ '1'..='9') => {
                 self.switch_to_navigation_index(character as usize - '1' as usize);
+                self.refresh_spatial_focus();
             }
-            KeyCode::Char('0') => self.switch_to_navigation_index(9),
+            KeyCode::Char('0') => {
+                self.switch_to_navigation_index(9);
+                self.refresh_spatial_focus();
+            }
             KeyCode::Char('q' | 'Q') => self.should_quit = true,
             _ => {}
+        }
+    }
+
+    fn refresh_spatial_focus(&mut self) {
+        if !self.panel_focus {
+            self.focused_action = None;
+            return;
+        }
+        let area = ui::ShellLayout::new(self.terminal_area).workspace;
+        let actions = self.workspace_actions(area, workspace::MAX_WORKSPACE_ACTIONS);
+        if self
+            .focused_action
+            .as_ref()
+            .is_some_and(|focused| actions.iter().any(|action| action.id == *focused))
+        {
+            return;
+        }
+        self.focused_action = actions
+            .iter()
+            .find(|action| action.preferred)
+            .or_else(|| actions.first())
+            .map(|action| action.id.clone());
+    }
+
+    fn move_spatial_focus(&mut self, direction: SpatialDirection) {
+        let area = ui::ShellLayout::new(self.terminal_area).workspace;
+        let actions = self.workspace_actions(area, workspace::MAX_WORKSPACE_ACTIONS);
+        if actions.is_empty() {
+            self.switch_relative_workspace(matches!(
+                direction,
+                SpatialDirection::Right | SpatialDirection::Down
+            ));
+            self.focused_action = None;
+            self.refresh_spatial_focus();
+            return;
+        }
+
+        let Some(current) = self
+            .focused_action
+            .as_deref()
+            .and_then(|focused| actions.iter().find(|action| action.id == focused))
+        else {
+            self.focused_action = actions
+                .iter()
+                .find(|action| action.preferred)
+                .or_else(|| actions.first())
+                .map(|action| action.id.clone());
+            self.command_feedback = Some("FOCUS RESET · VISIBLE ACTIONS CHANGED".to_owned());
+            return;
+        };
+
+        if let Some(target) = spatial_target(&actions, current, direction) {
+            self.focused_action = Some(target.id.clone());
+            self.command_feedback = None;
+        }
+    }
+
+    fn activate_spatial_focus(&mut self) {
+        let area = ui::ShellLayout::new(self.terminal_area).workspace;
+        let Some(action) = self.focused_action.clone() else {
+            self.panel_focus = false;
+            self.workspaces.on_focus(self.active_workspace);
+            return;
+        };
+        if self
+            .workspaces
+            .activate_action(self.active_workspace, &action, area)
+        {
+            self.panel_focus = false;
+            self.focused_action = None;
+            self.workspaces.on_focus(self.active_workspace);
+        } else {
+            self.focused_action = None;
+            self.refresh_spatial_focus();
+            self.command_feedback = Some(format!("ACTION UNAVAILABLE · {action}"));
         }
     }
 
@@ -1049,6 +1167,7 @@ impl App {
         self.help_visible = false;
         self.close_settings();
         self.panel_focus = false;
+        self.focused_action = None;
         let mut targets = self
             .workspaces
             .navigation_items()
@@ -1199,6 +1318,10 @@ impl App {
         self.active_workspace = target;
         self.publish_workspace_activation(previous);
         self.persist_session();
+        self.focused_action = None;
+        if self.panel_focus {
+            self.refresh_spatial_focus();
+        }
     }
 
     fn publish_workspace_activation(&mut self, previous: WorkspaceId) {
@@ -1301,6 +1424,7 @@ impl App {
             || previous_order != self.workspaces.workspace_order()
         {
             if previous_active != self.active_workspace {
+                self.focused_action = None;
                 self.workspaces.on_blur(previous_active);
                 self.publish_workspace_activation(previous_active);
             }
@@ -1332,6 +1456,83 @@ impl App {
             tracing::warn!(error, "shell session persistence failed");
         }
     }
+}
+
+fn spatial_target<'a>(
+    actions: &'a [WorkspaceAction],
+    current: &WorkspaceAction,
+    direction: SpatialDirection,
+) -> Option<&'a WorkspaceAction> {
+    actions
+        .iter()
+        .filter(|candidate| candidate.id != current.id)
+        .filter_map(|candidate| {
+            spatial_score(current.area, candidate.area, direction).map(|score| (candidate, score))
+        })
+        .min_by(|(left_action, left_score), (right_action, right_score)| {
+            left_score
+                .cmp(right_score)
+                .then_with(|| left_action.area.y.cmp(&right_action.area.y))
+                .then_with(|| left_action.area.x.cmp(&right_action.area.x))
+                .then_with(|| left_action.id.cmp(&right_action.id))
+        })
+        .map(|(action, _)| action)
+}
+
+fn spatial_score(
+    current: Rect,
+    candidate: Rect,
+    direction: SpatialDirection,
+) -> Option<(u8, u16, u16, u32)> {
+    let (primary_gap, orthogonal_gap, orthogonal_center_delta) = match direction {
+        SpatialDirection::Left if candidate.right() <= current.x => (
+            current.x.saturating_sub(candidate.right()),
+            interval_gap(current.y, current.bottom(), candidate.y, candidate.bottom()),
+            center_twice(current.y, current.height)
+                .abs_diff(center_twice(candidate.y, candidate.height)),
+        ),
+        SpatialDirection::Right if candidate.x >= current.right() => (
+            candidate.x.saturating_sub(current.right()),
+            interval_gap(current.y, current.bottom(), candidate.y, candidate.bottom()),
+            center_twice(current.y, current.height)
+                .abs_diff(center_twice(candidate.y, candidate.height)),
+        ),
+        SpatialDirection::Up if candidate.bottom() <= current.y => (
+            current.y.saturating_sub(candidate.bottom()),
+            interval_gap(current.x, current.right(), candidate.x, candidate.right()),
+            center_twice(current.x, current.width)
+                .abs_diff(center_twice(candidate.x, candidate.width)),
+        ),
+        SpatialDirection::Down if candidate.y >= current.bottom() => (
+            candidate.y.saturating_sub(current.bottom()),
+            interval_gap(current.x, current.right(), candidate.x, candidate.right()),
+            center_twice(current.x, current.width)
+                .abs_diff(center_twice(candidate.x, candidate.width)),
+        ),
+        _ => return None,
+    };
+    Some((
+        u8::from(orthogonal_gap > 0),
+        primary_gap,
+        orthogonal_gap,
+        orthogonal_center_delta,
+    ))
+}
+
+fn interval_gap(first_start: u16, first_end: u16, second_start: u16, second_end: u16) -> u16 {
+    if second_start >= first_end {
+        second_start.saturating_sub(first_end)
+    } else if first_start >= second_end {
+        first_start.saturating_sub(second_end)
+    } else {
+        0
+    }
+}
+
+fn center_twice(start: u16, length: u16) -> u32 {
+    u32::from(start)
+        .saturating_mul(2)
+        .saturating_add(u32::from(length.saturating_sub(1)))
 }
 
 fn hint_codes(count: usize) -> impl Iterator<Item = String> {
@@ -1991,6 +2192,83 @@ mod tests {
 
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(!app.panel_focus());
+    }
+
+    #[test]
+    fn spatial_focus_prefers_aligned_neighbors_and_never_wraps() {
+        let actions = vec![
+            WorkspaceAction::new("current", "Current", Rect::new(10, 10, 6, 2)),
+            WorkspaceAction::new("right-diagonal", "Diagonal", Rect::new(16, 2, 4, 1)),
+            WorkspaceAction::new("right-aligned", "Aligned", Rect::new(20, 10, 4, 1)),
+            WorkspaceAction::new("left", "Left", Rect::new(2, 10, 4, 1)),
+            WorkspaceAction::new("up", "Up", Rect::new(10, 4, 6, 2)),
+            WorkspaceAction::new("down", "Down", Rect::new(10, 16, 6, 2)),
+        ];
+        let current = &actions[0];
+
+        assert_eq!(
+            spatial_target(&actions, current, SpatialDirection::Right).map(|action| &*action.id),
+            Some("right-aligned")
+        );
+        assert_eq!(
+            spatial_target(&actions, current, SpatialDirection::Left).map(|action| &*action.id),
+            Some("left")
+        );
+        assert_eq!(
+            spatial_target(&actions, current, SpatialDirection::Up).map(|action| &*action.id),
+            Some("up")
+        );
+        assert_eq!(
+            spatial_target(&actions, current, SpatialDirection::Down).map(|action| &*action.id),
+            Some("down")
+        );
+        assert!(spatial_target(&actions, &actions[2], SpatialDirection::Right).is_none());
+    }
+
+    #[test]
+    fn portfolio_spatial_focus_moves_visible_rows_and_opens_the_target() {
+        let mut app = bootstrap::demo_app();
+        let frame_area = Rect::new(0, 0, 160, 48);
+        app.set_terminal_area(frame_area);
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "PORT".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let workspace_area = crate::ui::ShellLayout::new(frame_area).workspace;
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let first = app.focused_workspace_action(workspace_area).unwrap();
+        assert!(first.id.starts_with("row:positions:0:"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let second = app.focused_workspace_action(workspace_area).unwrap();
+        assert!(second.id.starts_with("row:positions:1:"));
+        assert_ne!(first.id, second.id);
+
+        let mut terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render(frame, &app))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let focus_index = usize::from(second.area.y) * usize::from(buffer.area.width)
+            + usize::from(second.area.x);
+        assert_eq!(
+            buffer.content()[focus_index].bg,
+            crate::ui::theme::CYAN.into()
+        );
+        assert_eq!(
+            buffer.content()[focus_index].fg,
+            crate::ui::theme::BG.into()
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.panel_focus());
+        app.advance_tick();
+        assert_eq!(
+            app.active_workspace(),
+            app.workspaces.resolve_target("security").unwrap()
+        );
     }
 
     #[test]

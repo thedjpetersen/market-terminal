@@ -703,13 +703,17 @@ impl Workspace for PortfolioWorkspace {
     fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
         let areas = portfolio_layout(area);
         let mut actions = Vec::new();
+        let visible_rows =
+            usize::from(areas.main.height.saturating_sub(4)).min(self.selection_count());
+        let selected_row_is_actionable =
+            self.selected < visible_rows && self.symbol_at(self.selected).is_some();
         let mut x = areas.tabs.x;
         for (index, view) in PortfolioView::ALL.into_iter().enumerate() {
             let width = format!(" {} {} ", index + 1, view.label()).chars().count() as u16;
             if x >= areas.tabs.right() {
                 break;
             }
-            actions.push(WorkspaceAction::new(
+            let mut action = WorkspaceAction::new(
                 view.action_id(),
                 format!("Open {} portfolio view", view.label()),
                 Rect::new(
@@ -718,17 +722,19 @@ impl Workspace for PortfolioWorkspace {
                     width.min(areas.tabs.right().saturating_sub(x)),
                     1,
                 ),
-            ));
+            );
+            if view == self.view && !selected_row_is_actionable {
+                action = action.preferred();
+            }
+            actions.push(action);
             x = x.saturating_add(width);
         }
 
-        let visible_rows =
-            usize::from(areas.main.height.saturating_sub(4)).min(self.selection_count());
         for index in 0..visible_rows {
             let Some(symbol) = self.symbol_at(index) else {
                 continue;
             };
-            actions.push(WorkspaceAction::new(
+            let mut action = WorkspaceAction::new(
                 format!("row:{}:{index}:{symbol}", self.view.action_key()),
                 format!("Open {symbol} security research"),
                 Rect::new(
@@ -737,7 +743,11 @@ impl Workspace for PortfolioWorkspace {
                     areas.main.width.saturating_sub(2),
                     1,
                 ),
-            ));
+            );
+            if index == self.selected {
+                action = action.preferred();
+            }
+            actions.push(action);
         }
 
         actions.push(WorkspaceAction::new(

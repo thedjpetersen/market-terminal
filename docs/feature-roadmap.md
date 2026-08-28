@@ -71,8 +71,10 @@ move to its own crate later without changing its public vocabulary.
   Codex app-server worker, and bounded, transient, on-demand News article
   reading with an explicit publisher-page fallback.
 - **Complete:** shell-level keyboard accessibility with an explicit panel-focus
-  state: `Esc` lifts focus, bare arrows traverse registered workspaces, and
-  `Enter` returns interaction to the selected workspace. Vimium-style `F`
+  state: `Esc` lifts focus to a preferred feature action, bare arrows navigate
+  registered rectangles with deterministic lane-first, non-wrapping selection,
+  and `Enter` revalidates and activates the target. Workspaces without feature
+  actions fall back to workspace traversal. Vimium-style `F`
   follow hints assign prefix-free one- or two-letter labels to visible workspace
   routes and shell actions, with bounded prefix matching and cancellation.
 - **Complete:** Stage 0 platform foundation for the modular-monolith baseline:
@@ -229,7 +231,7 @@ continues.
 | --- | --- | --- | --- |
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
 | Mission Control, launchpad, ticker tape | Partial | Overview, Desk, Markets, persisted active workspace | Add configurable launch tiles, live pulse strip, priority stack, and saved role presets. |
-| Keyboard navigation and icon rail | Partial | `Esc` panel focus, arrows, Enter, tmux prefix, remappable keys, shell-level `F` hints, and feature-owned hints for visible Portfolio tabs/rows/reload | Adopt the action contract in remaining workspace rows, buttons, chart controls, and tables, then add spatial routing between their rectangles. |
+| Keyboard navigation and icon rail | Partial | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, and feature-owned focus/hints for visible Portfolio tabs/rows/reload | Adopt the action contract in remaining workspace rows, buttons, chart controls, panes, and tables. |
 | Saved views and workspace presets | Partial | Workspace order, active workspace, layout and command history persist | Persist/restore view parameters, filters, selected instrument, table columns, chart state, pane geometry, and Trader/Quant/PM/Risk/Ops presets. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
 | Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
@@ -331,8 +333,12 @@ prioritized, and validated by `tests/parity_ledger.rs`. The bounded feature-acti
 contract now filters invalid, disabled, duplicate, off-screen, and excess actions,
 assigns at most two-letter codes, renders badges at feature-owned rectangles, and
 revalidates activation.
-Portfolio supplies visible tabs, security-capable rows, and reload as the first
-adopter. Spatial rectangle routing, remaining workspace adopters, gallery states,
+The shell now restores a feature-preferred action, navigates validated rectangles
+with lane-first distance and stable tie-breakers, refuses edge wrapping, falls
+back to workspace traversal when no local actions exist, revalidates on Enter,
+and refreshes focus after resize or asynchronous state changes. Portfolio supplies
+visible tabs, security-capable rows, and reload as the first adopter. Remaining
+workspace adopters, representative split/nested-pane evidence, gallery states,
 and enforcement that completed capabilities link real implementation evidence
 remain.
 

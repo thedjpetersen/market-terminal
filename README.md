@@ -58,9 +58,12 @@ I/O while rendering. Persistent workspaces do not substitute deterministic
 gallery analytics when an external source is missing; the separate gallery
 host remains available for screenshots and tests.
 
-From any workspace, press `Esc` to lift focus to the workspace rail. Bare arrow
-keys then move between panels without being consumed by the panel underneath;
-press `Enter` to interact with the selected panel again. Press `F` to enter
+From any workspace, press `Esc` to lift focus to the feature's preferred visible
+action. Bare arrows move spatially among registered rows, tabs, controls, and
+panes without being consumed by the panel underneath; movement is lane-first,
+deterministic, and does not wrap at an edge. `Enter` activates the highlighted
+action and returns interaction to the destination. Workspaces without registered
+actions retain arrow-based workspace-rail navigation. Press `F` to enter
 follow-hint mode: every visible workspace plus the command bar, Help, Setup,
 and Quit receives a prefix-free one- or two-letter label. Type a label to route
 there immediately, or press `Esc` to cancel. The labels use the familiar
@@ -68,7 +71,8 @@ Vimium-style link-hint interaction while remaining terminal-native.
 
 Portfolio is the first workspace to extend follow hints inside the active
 panel. Its currently rendered view tabs, security-capable table rows, and reload
-control receive labels at their actual terminal coordinates; off-screen,
+control receive labels and spatial focus at their actual terminal coordinates;
+the currently selected actionable row is the focus-restoration target. Off-screen,
 disabled, duplicate, and stale actions are not routable. The bounded
 feature-owned action contract will be adopted by the remaining workspaces
 without teaching the shell their domain behavior.

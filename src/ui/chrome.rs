@@ -276,13 +276,17 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
     if app.panel_focus() {
+        let target = app
+            .focused_action_label()
+            .unwrap_or_else(|| "WORKSPACE RAIL".to_owned());
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(
                     " PANEL FOCUS ",
                     Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
                 ),
-                Span::raw("  ←/↑ PREVIOUS   →/↓ NEXT   ENTER INTERACT   F HINTS   ESC CANCEL"),
+                Span::styled(format!("  {target}  "), Style::new().fg(CYAN.into()).bold()),
+                Span::raw("ARROWS MOVE   ENTER OPEN   F HINTS   ESC RETURN"),
             ]))
             .style(Style::new().bg(FOOTER_BG.into())),
             area,

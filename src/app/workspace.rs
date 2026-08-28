@@ -6,7 +6,7 @@ use ratatui::{layout::Rect, Frame};
 pub(super) const MAX_COMMAND_BYTES: usize = 4_096;
 const MAX_COMMAND_TOKENS: usize = 64;
 const MAX_COMMAND_TOKEN_BYTES: usize = 512;
-const MAX_WORKSPACE_ACTIONS: usize = 26 * 26;
+pub(super) const MAX_WORKSPACE_ACTIONS: usize = 26 * 26;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WorkspaceId(&'static str);
@@ -204,6 +204,12 @@ pub struct WorkspaceAction {
     pub label: String,
     pub area: Rect,
     pub enabled: bool,
+    /// The feature's best focus-restoration target for the current frame.
+    ///
+    /// The registry permits more than one preferred action but the shell always
+    /// chooses the first valid one, keeping feature order as the deterministic
+    /// tie-breaker.
+    pub preferred: bool,
 }
 
 impl WorkspaceAction {
@@ -213,11 +219,17 @@ impl WorkspaceAction {
             label: label.into(),
             area,
             enabled: true,
+            preferred: false,
         }
     }
 
     pub fn disabled(mut self) -> Self {
         self.enabled = false;
+        self
+    }
+
+    pub fn preferred(mut self) -> Self {
+        self.preferred = true;
         self
     }
 }

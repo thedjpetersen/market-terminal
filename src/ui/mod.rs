@@ -336,6 +336,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     chrome::render_navigation(frame, layout.navigation, app);
     app.workspaces
         .render(app.active_workspace, frame, layout.workspace);
+    render_spatial_focus(frame, layout.workspace, app);
     chrome::render_footer(frame, layout.footer, app);
     if app.assistant_drawer_visible() {
         render_assistant_drawer(frame, layout.workspace, app);
@@ -349,6 +350,22 @@ pub fn render(frame: &mut Frame, app: &App) {
     if app.shell_hints().is_some() {
         render_shell_hints(frame, layout, app);
     }
+}
+
+fn render_spatial_focus(frame: &mut Frame, area: Rect, app: &App) {
+    if !app.panel_focus() {
+        return;
+    }
+    let Some(action) = app.focused_workspace_action(area) else {
+        return;
+    };
+    frame.buffer_mut().set_style(
+        action.area,
+        Style::new()
+            .bg(theme::CYAN.into())
+            .fg(theme::BG.into())
+            .bold(),
+    );
 }
 
 fn render_shell_hints(frame: &mut Frame, layout: ShellLayout, app: &App) {
