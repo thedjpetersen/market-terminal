@@ -38,7 +38,7 @@
       "upstream_maturity": "substantive",
       "reference_files": ["frontend/src/components/common/ShortcutOverlay.tsx", "frontend/src/components/layout/commanding.ts", "frontend/tests/e2e/terminal-shell-go-bar.spec.ts"],
       "acceptance_tests": ["SHELL-SPATIAL-FOCUS", "SHELL-FOLLOW-HINTS", "SHELL-FOCUS-RESTORE"],
-      "gap": "Portfolio now publishes viewport-safe actions. Add deterministic rectangle-based arrow routing, modal trapping, focus restoration, and action adoption by Overview, Desk, Security, Chart, News, Alerts, and Spreadsheet."
+      "gap": "Deterministic spatial routing, focus restoration, and follow hints now cover the shell, Portfolio, Desk, Monitor, and Security. Complete modal trapping and adopt the viewport-safe action contract in Overview, Chart, News, Alerts, and Spreadsheet."
     },
     {
       "id": "OTUI-003",

@@ -14,7 +14,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
+    app::{AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor},
     ui::{
         components::{render_pairs, render_table, styled_row, terminal_block},
         is_primary_click, table_row_at,
@@ -35,6 +35,81 @@ struct SecurityRefresh {
 struct SecurityRefreshResult {
     generation: u64,
     result: Result<SecurityPage, SecurityError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SecurityAreas {
+    header: Rect,
+    chart: Rect,
+    tabs: Rect,
+    research: Rect,
+    statistics: Rect,
+    sources: Rect,
+}
+
+fn security_areas(area: Rect) -> SecurityAreas {
+    let rows = Layout::vertical([Constraint::Length(4), Constraint::Min(12)]).split(area);
+    let grid = Layout::horizontal([
+        Constraint::Percentage(62),
+        Constraint::Percentage(19),
+        Constraint::Percentage(19),
+    ])
+    .split(rows[1]);
+    let left =
+        Layout::vertical([Constraint::Percentage(58), Constraint::Percentage(42)]).split(grid[0]);
+    let research = Layout::vertical([Constraint::Length(1), Constraint::Min(3)]).split(left[1]);
+    SecurityAreas {
+        header: rows[0],
+        chart: left[0],
+        tabs: research[0],
+        research: research[1],
+        statistics: grid[1],
+        sources: grid[2],
+    }
+}
+
+fn research_action_key(view: ResearchView) -> &'static str {
+    match view {
+        ResearchView::Financials => "financials",
+        ResearchView::Estimates => "estimates",
+        ResearchView::Ownership => "ownership",
+        ResearchView::Filings => "filings",
+        ResearchView::Peers => "peers",
+    }
+}
+
+fn research_view_from_action(id: &str) -> Option<ResearchView> {
+    match id.strip_prefix("view:")? {
+        "financials" => Some(ResearchView::Financials),
+        "estimates" => Some(ResearchView::Estimates),
+        "ownership" => Some(ResearchView::Ownership),
+        "filings" => Some(ResearchView::Filings),
+        "peers" => Some(ResearchView::Peers),
+        _ => None,
+    }
+}
+
+fn research_tab_areas(area: Rect) -> Vec<(ResearchView, Rect)> {
+    let mut x = area.x;
+    let mut tabs = Vec::new();
+    for (index, view) in ResearchView::ALL.into_iter().enumerate() {
+        if x >= area.right() {
+            break;
+        }
+        let width = format!(" {} {} ", index + 1, view.label()).chars().count() as u16;
+        tabs.push((
+            view,
+            Rect::new(x, area.y, width.min(area.right().saturating_sub(x)), 1),
+        ));
+        x = x.saturating_add(width);
+    }
+    tabs
+}
+
+fn research_row_area(area: Rect, index: usize) -> Option<Rect> {
+    let y = area.y.saturating_add(3 + u16::try_from(index).ok()?);
+    (y < area.bottom())
+        .then(|| Rect::new(area.x.saturating_add(1), y, area.width.saturating_sub(2), 1))
 }
 
 pub struct SecurityWorkspace {
@@ -145,26 +220,101 @@ impl SecurityWorkspace {
     }
 
     fn open_selected_insider_filing(&mut self) {
-        let Some(transaction) = self.page.as_ref().and_then(|page| {
-            page.research
+        let Some((url, accession)) = self.page.as_ref().and_then(|page| {
+            let transaction = page
+                .research
                 .insider_transactions
-                .get(self.selected_insider)
+                .get(self.selected_insider)?;
+            Some((
+                transaction.document_url.clone(),
+                transaction.accession.clone(),
+            ))
         }) else {
             self.document_status = "NO FORM 4 TRANSACTION SELECTED".to_owned();
             return;
         };
-        let Some(url) = transaction.document_url.as_deref() else {
+        let Some(url) = url else {
             self.document_status = "SELECTED FORM 4 HAS NO PUBLISHER LINK".to_owned();
             return;
         };
-        let Some(opener) = &self.document_opener else {
+        self.open_document(&url, &accession);
+    }
+
+    fn open_document(&mut self, url: &str, label: &str) -> bool {
+        let Some(opener) = self.document_opener.clone() else {
             self.document_status = "DOCUMENT OPENER UNAVAILABLE".to_owned();
-            return;
+            return true;
         };
         self.document_status = match opener.open(url) {
-            Ok(()) => format!("OPENED {}", transaction.accession),
+            Ok(()) => format!("OPENED {label}"),
             Err(error) => error.to_string(),
         };
+        true
+    }
+
+    fn open_insider_action(&mut self, index: usize, expected_accession: &str) -> bool {
+        if self.research_view != ResearchView::Ownership {
+            return false;
+        }
+        let Some((url, accession)) = self.page.as_ref().and_then(|page| {
+            let transaction = page.research.insider_transactions.get(index)?;
+            (transaction.accession == expected_accession).then(|| {
+                (
+                    transaction.document_url.clone(),
+                    transaction.accession.clone(),
+                )
+            })
+        }) else {
+            return false;
+        };
+        self.selected_insider = index;
+        let Some(url) = url else {
+            self.document_status = "SELECTED FORM 4 HAS NO PUBLISHER LINK".to_owned();
+            return true;
+        };
+        self.open_document(&url, &accession)
+    }
+
+    fn open_filing_action(&mut self, index: usize, expected_accession: &str) -> bool {
+        if self.research_view != ResearchView::Filings {
+            return false;
+        }
+        let Some((url, accession)) = self.page.as_ref().and_then(|page| {
+            let filing = page.research.filings.get(index)?;
+            (filing.accession == expected_accession)
+                .then(|| (filing.document_url.clone(), filing.accession.clone()))
+        }) else {
+            return false;
+        };
+        let Some(url) = url else {
+            self.document_status = "SELECTED FILING HAS NO PUBLISHER LINK".to_owned();
+            return true;
+        };
+        self.open_document(&url, &accession)
+    }
+
+    fn open_peer_action(&mut self, index: usize, expected_symbol: &str) -> bool {
+        if self.research_view != ResearchView::Peers {
+            return false;
+        }
+        let Some(symbol) = self.page.as_ref().and_then(|page| {
+            let peer = page.research.peers.get(index)?;
+            (peer.symbol == expected_symbol).then(|| peer.symbol.clone())
+        }) else {
+            return false;
+        };
+        self.pending_intents.push(AppIntent::DispatchCommand {
+            command: format!("SEC {symbol}"),
+            origin: ID,
+        });
+        true
+    }
+
+    fn open_chart(&mut self) {
+        self.pending_intents.push(AppIntent::DispatchCommand {
+            command: format!("CHART {}", self.symbol),
+            origin: ID,
+        });
     }
 
     fn ticker(&self) -> &str {
@@ -309,10 +459,7 @@ impl Workspace for SecurityWorkspace {
                 command: format!("NEWS --symbol={}", self.ticker()),
                 origin: ID,
             }),
-            KeyCode::Char('c') => self.pending_intents.push(AppIntent::DispatchCommand {
-                command: format!("CHART {}", self.symbol),
-                origin: ID,
-            }),
+            KeyCode::Char('c') => self.open_chart(),
             KeyCode::Char('a') => self.pending_intents.push(AppIntent::DispatchCommand {
                 command: format!("SHEET INSERT {}", self.symbol),
                 origin: ID,
@@ -324,26 +471,18 @@ impl Workspace for SecurityWorkspace {
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
-        let rows = Layout::vertical([Constraint::Length(4), Constraint::Min(12)]).split(area);
-        if is_primary_click(event, rows[0]) {
+        let areas = security_areas(area);
+        if is_primary_click(event, areas.header) {
             return self.handle_key(KeyEvent::new(
                 KeyCode::F(9),
                 crossterm::event::KeyModifiers::NONE,
             ));
         }
-        let grid = Layout::horizontal([
-            Constraint::Percentage(62),
-            Constraint::Percentage(19),
-            Constraint::Percentage(19),
-        ])
-        .split(rows[1]);
-        let left = Layout::vertical([Constraint::Percentage(58), Constraint::Percentage(42)])
-            .split(grid[0]);
-        if is_primary_click(event, left[0]) {
+        if is_primary_click(event, areas.chart) {
             if self.research_view == ResearchView::Ownership {
                 if let Some(index) = self.page.as_ref().and_then(|page| {
                     super::insider_chart::selected_at_column(
-                        left[0],
+                        areas.chart,
                         &page.research.insider_transactions,
                         event.column,
                     )
@@ -352,29 +491,22 @@ impl Workspace for SecurityWorkspace {
                 }
                 return true;
             }
-            self.pending_intents.push(AppIntent::DispatchCommand {
-                command: format!("CHART {}", self.symbol),
-                origin: ID,
-            });
+            self.open_chart();
             return true;
         }
-        let research = Layout::vertical([Constraint::Length(1), Constraint::Min(3)]).split(left[1]);
-        if is_primary_click(event, research[0]) {
-            let mut x = research[0].x;
-            for (index, view) in ResearchView::ALL.into_iter().enumerate() {
-                let width = format!(" {} {} ", index + 1, view.label()).chars().count() as u16;
-                if event.column >= x && event.column < x.saturating_add(width) {
+        if is_primary_click(event, areas.tabs) {
+            for (view, tab_area) in research_tab_areas(areas.tabs) {
+                if crate::ui::contains(tab_area, event.column, event.row) {
                     self.research_view = view;
                     return true;
                 }
-                x = x.saturating_add(width);
             }
             return true;
         }
         if self.research_view == ResearchView::Ownership {
             if let Some(index) = table_row_at(
                 event,
-                research[1],
+                areas.research,
                 self.page
                     .as_ref()
                     .map_or(0, |page| page.research.insider_transactions.len()),
@@ -383,7 +515,203 @@ impl Workspace for SecurityWorkspace {
                 return true;
             }
         }
+        if self.research_view == ResearchView::Filings {
+            if let Some(index) = table_row_at(
+                event,
+                areas.research,
+                self.page
+                    .as_ref()
+                    .map_or(0, |page| page.research.filings.len()),
+            ) {
+                let Some(accession) = self.page.as_ref().and_then(|page| {
+                    page.research
+                        .filings
+                        .get(index)
+                        .map(|filing| filing.accession.clone())
+                }) else {
+                    return false;
+                };
+                return self.open_filing_action(index, &accession);
+            }
+        }
+        if self.research_view == ResearchView::Peers {
+            if let Some(index) = table_row_at(
+                event,
+                areas.research,
+                self.page
+                    .as_ref()
+                    .map_or(0, |page| page.research.peers.len()),
+            ) {
+                let Some(symbol) = self.page.as_ref().and_then(|page| {
+                    page.research
+                        .peers
+                        .get(index)
+                        .map(|peer| peer.symbol.clone())
+                }) else {
+                    return false;
+                };
+                return self.open_peer_action(index, &symbol);
+            }
+        }
         false
+    }
+
+    fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
+        if self.page.is_none() {
+            return vec![WorkspaceAction::new(
+                "refresh",
+                format!("Retry {} security research", self.symbol),
+                area,
+            )
+            .preferred()];
+        }
+
+        let areas = security_areas(area);
+        let page = self.page.as_ref().expect("page was checked above");
+        let has_preferred_content = match self.research_view {
+            ResearchView::Financials | ResearchView::Estimates => true,
+            ResearchView::Ownership => page
+                .research
+                .insider_transactions
+                .get(self.selected_insider)
+                .is_some_and(|transaction| transaction.document_url.is_some()),
+            ResearchView::Filings => page
+                .research
+                .filings
+                .iter()
+                .take(usize::from(areas.research.height.saturating_sub(3)))
+                .any(|filing| filing.document_url.is_some()),
+            ResearchView::Peers => !page.research.peers.is_empty(),
+        };
+        let mut actions = research_tab_areas(areas.tabs)
+            .into_iter()
+            .map(|(view, tab_area)| {
+                let action = WorkspaceAction::new(
+                    format!("view:{}", research_action_key(view)),
+                    format!("Open {} research", view.label()),
+                    tab_area,
+                );
+                if view == self.research_view && !has_preferred_content {
+                    action.preferred()
+                } else {
+                    action
+                }
+            })
+            .collect::<Vec<_>>();
+
+        match self.research_view {
+            ResearchView::Financials | ResearchView::Estimates => {
+                actions.push(
+                    WorkspaceAction::new(
+                        format!("chart:{}", self.symbol),
+                        format!("Open {} chart", self.symbol),
+                        areas.chart,
+                    )
+                    .preferred(),
+                );
+            }
+            ResearchView::Ownership => {
+                actions.extend(
+                    page.research
+                        .insider_transactions
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, transaction)| {
+                            let row_area = research_row_area(areas.research, index)?;
+                            transaction.document_url.as_ref()?;
+                            let action = WorkspaceAction::new(
+                                format!("ownership:{index}:{}", transaction.accession),
+                                format!(
+                                    "Open {} Form 4 filing from {}",
+                                    transaction.owner, transaction.transaction_date
+                                ),
+                                row_area,
+                            );
+                            Some(if index == self.selected_insider {
+                                action.preferred()
+                            } else {
+                                action
+                            })
+                        }),
+                );
+            }
+            ResearchView::Filings => {
+                let mut preferred = false;
+                actions.extend(page.research.filings.iter().enumerate().filter_map(
+                    |(index, filing)| {
+                        let row_area = research_row_area(areas.research, index)?;
+                        filing.document_url.as_ref()?;
+                        let action = WorkspaceAction::new(
+                            format!("filing:{index}:{}", filing.accession),
+                            format!("Open {} {} filing", filing.form, filing.filed),
+                            row_area,
+                        );
+                        if preferred {
+                            Some(action)
+                        } else {
+                            preferred = true;
+                            Some(action.preferred())
+                        }
+                    },
+                ));
+            }
+            ResearchView::Peers => {
+                actions.extend(page.research.peers.iter().enumerate().filter_map(
+                    |(index, peer)| {
+                        let row_area = research_row_area(areas.research, index)?;
+                        let action = WorkspaceAction::new(
+                            format!("peer:{index}:{}", peer.symbol),
+                            format!("Open {} security research", peer.symbol),
+                            row_area,
+                        );
+                        Some(if index == 0 {
+                            action.preferred()
+                        } else {
+                            action
+                        })
+                    },
+                ));
+            }
+        }
+
+        actions.push(WorkspaceAction::new(
+            "refresh",
+            format!("Refresh {} security research", self.symbol),
+            areas.header,
+        ));
+        actions
+    }
+
+    fn activate_action(&mut self, id: &str) -> bool {
+        if id == "refresh" {
+            self.refresh_live();
+            return true;
+        }
+        if let Some(view) = research_view_from_action(id) {
+            self.research_view = view;
+            return true;
+        }
+        if let Some(expected_symbol) = id.strip_prefix("chart:") {
+            if self.research_view == ResearchView::Ownership || self.symbol != expected_symbol {
+                return false;
+            }
+            self.open_chart();
+            return true;
+        }
+        let mut parts = id.splitn(3, ':');
+        let (Some(kind), Some(index), Some(identity)) = (parts.next(), parts.next(), parts.next())
+        else {
+            return false;
+        };
+        let Ok(index) = index.parse::<usize>() else {
+            return false;
+        };
+        match kind {
+            "ownership" => self.open_insider_action(index, identity),
+            "filing" => self.open_filing_action(index, identity),
+            "peer" => self.open_peer_action(index, identity),
+            _ => false,
+        }
     }
 
     fn poll_intents(&mut self) -> Vec<AppIntent> {
@@ -392,7 +720,7 @@ impl Workspace for SecurityWorkspace {
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
-        let rows = Layout::vertical([Constraint::Length(4), Constraint::Min(12)]).split(area);
+        let areas = security_areas(area);
         let Some(page) = &self.page else {
             let (title, detail, style) = match &self.error {
                 Some(error) => ("SECURITY DATA FAILED", error.to_string(), RED),
@@ -438,21 +766,13 @@ impl Workspace for SecurityWorkspace {
             ]))
             .block(Block::new().borders(Borders::ALL).border_style(AMBER))
             .alignment(Alignment::Center),
-            rows[0],
+            areas.header,
         );
 
-        let grid = Layout::horizontal([
-            Constraint::Percentage(62),
-            Constraint::Percentage(19),
-            Constraint::Percentage(19),
-        ])
-        .split(rows[1]);
-        let left = Layout::vertical([Constraint::Percentage(58), Constraint::Percentage(42)])
-            .split(grid[0]);
         if self.research_view == ResearchView::Ownership {
             super::insider_chart::render(
                 frame,
-                left[0],
+                areas.chart,
                 &research.insider_transactions,
                 self.selected_insider,
             );
@@ -488,10 +808,8 @@ impl Workspace for SecurityWorkspace {
                     ])
                     .style(AMBER),
             );
-            frame.render_widget(chart, left[0]);
+            frame.render_widget(chart, areas.chart);
         }
-        let research_areas =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(3)]).split(left[1]);
         let research_tabs = ResearchView::ALL
             .into_iter()
             .enumerate()
@@ -507,10 +825,10 @@ impl Workspace for SecurityWorkspace {
                 Span::styled(format!(" {} {} ", index + 1, view.label()), style)
             })
             .collect::<Vec<_>>();
-        frame.render_widget(Paragraph::new(Line::from(research_tabs)), research_areas[0]);
+        frame.render_widget(Paragraph::new(Line::from(research_tabs)), areas.tabs);
         render_research(
             frame,
-            research_areas[1],
+            areas.research,
             self.research_view,
             research,
             self.selected_insider,
@@ -521,7 +839,13 @@ impl Workspace for SecurityWorkspace {
             .take(8)
             .map(|(label, value)| [label.clone(), value.clone()])
             .collect::<Vec<_>>();
-        render_pairs(frame, grid[1], "DES", "REFERENCE DATA", &statistics);
+        render_pairs(
+            frame,
+            areas.statistics,
+            "DES",
+            "REFERENCE DATA",
+            &statistics,
+        );
         let source_status = vec![
             ["MARKET".to_owned(), snapshot.source.clone()],
             ["RESEARCH".to_owned(), research.source.clone()],
@@ -537,7 +861,7 @@ impl Workspace for SecurityWorkspace {
             ],
             ["REFRESH".to_owned(), "F9 / CLICK HEADER".to_owned()],
         ];
-        render_pairs(frame, grid[2], "SRC", "SOURCE STATUS", &source_status);
+        render_pairs(frame, areas.sources, "SRC", "SOURCE STATUS", &source_status);
     }
 }
 
@@ -829,8 +1153,8 @@ fn render_unavailable(
 mod tests {
     use super::*;
     use crate::features::security::{
-        InsiderTransaction, SecurityDocumentOpenError, SecurityIdentity, SecurityPage,
-        SecurityResearch, SecuritySnapshot,
+        Filing, InsiderTransaction, PeerComparison, SecurityDocumentOpenError, SecurityIdentity,
+        SecurityPage, SecurityResearch, SecuritySnapshot,
     };
     use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
     use std::sync::Mutex;
@@ -911,6 +1235,28 @@ mod tests {
             plan_10b5_1: false,
             accession: accession.to_owned(),
             document_url: Some(format!("https://www.sec.gov/{accession}-index.htm")),
+        }
+    }
+
+    fn filing(accession: &str) -> Filing {
+        Filing {
+            filed: "2026-07-30".to_owned(),
+            form: "10-Q".to_owned(),
+            period: "2026-06-30".to_owned(),
+            description: "QUARTERLY REPORT".to_owned(),
+            accession: accession.to_owned(),
+            document_url: Some(format!("https://www.sec.gov/{accession}-index.htm")),
+        }
+    }
+
+    fn peer(symbol: &str) -> PeerComparison {
+        PeerComparison {
+            symbol: symbol.to_owned(),
+            name: "TEST PEER".to_owned(),
+            price_to_earnings: "20.0x".to_owned(),
+            ev_to_ebitda: "15.0x".to_owned(),
+            revenue_growth: "+5.0%".to_owned(),
+            gross_margin: "40.0%".to_owned(),
         }
     }
 
@@ -1049,6 +1395,123 @@ mod tests {
         ));
 
         assert_eq!(workspace.selected_insider, 1);
+    }
+
+    #[test]
+    fn visible_actions_route_tabs_charts_documents_and_peers() {
+        let opener = Arc::new(StubDocumentOpener::default());
+        let mut workspace = SecurityWorkspace::with_symbol_and_document_opener(
+            Arc::new(StubQuery),
+            "AAPL US",
+            opener.clone(),
+        );
+        let mut page = stub_page("AAPL US");
+        page.research.insider_transactions = vec![insider_transaction("FORM4-1")];
+        page.research.filings = vec![filing("FILING-1")];
+        page.research.peers = vec![peer("MSFT")];
+        workspace.page = Some(page);
+        let area = Rect::new(0, 0, 160, 40);
+
+        let financial_actions = workspace.actions(area);
+        assert!(financial_actions
+            .iter()
+            .any(|action| action.id == "refresh"));
+        assert!(financial_actions
+            .iter()
+            .any(|action| action.id == "view:ownership"));
+        assert!(financial_actions
+            .iter()
+            .any(|action| action.id == "chart:AAPL US" && action.preferred));
+        assert!(workspace.activate_action("chart:AAPL US"));
+        assert_eq!(
+            std::mem::take(&mut workspace.pending_intents),
+            vec![AppIntent::DispatchCommand {
+                command: "CHART AAPL US".to_owned(),
+                origin: ID,
+            }]
+        );
+
+        assert!(workspace.activate_action("view:ownership"));
+        assert!(workspace
+            .actions(area)
+            .iter()
+            .any(|action| action.id == "ownership:0:FORM4-1" && action.preferred));
+        assert!(workspace.activate_action("ownership:0:FORM4-1"));
+
+        assert!(workspace.activate_action("view:filings"));
+        assert!(workspace
+            .actions(area)
+            .iter()
+            .any(|action| action.id == "filing:0:FILING-1" && action.preferred));
+        assert!(workspace.activate_action("filing:0:FILING-1"));
+        assert_eq!(
+            *opener
+                .opened
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+            vec![
+                "https://www.sec.gov/FORM4-1-index.htm",
+                "https://www.sec.gov/FILING-1-index.htm",
+            ]
+        );
+
+        assert!(workspace.activate_action("view:peers"));
+        assert!(workspace
+            .actions(area)
+            .iter()
+            .any(|action| action.id == "peer:0:MSFT" && action.preferred));
+        assert!(workspace.activate_action("peer:0:MSFT"));
+        assert_eq!(
+            std::mem::take(&mut workspace.pending_intents),
+            vec![AppIntent::DispatchCommand {
+                command: "SEC MSFT".to_owned(),
+                origin: ID,
+            }]
+        );
+    }
+
+    #[test]
+    fn actions_are_viewport_safe_and_reject_stale_identities() {
+        let mut workspace = SecurityWorkspace::new(Arc::new(StubQuery));
+        let mut page = stub_page("AAPL US");
+        page.research.filings = vec![filing("FILING-1")];
+        workspace.page = Some(page);
+        workspace.research_view = ResearchView::Filings;
+        let area = Rect::new(0, 0, 80, 24);
+        let actions = workspace.actions(area);
+
+        assert!(actions.iter().all(|action| {
+            action.area.width > 0
+                && action.area.height > 0
+                && action.area.x >= area.x
+                && action.area.y >= area.y
+                && action.area.right() <= area.right()
+                && action.area.bottom() <= area.bottom()
+        }));
+        assert!(actions
+            .iter()
+            .any(|action| action.id == "filing:0:FILING-1"));
+
+        workspace.page.as_mut().unwrap().research.filings[0].accession = "NEW-FILING".to_owned();
+        assert!(!workspace.activate_action("filing:0:FILING-1"));
+        workspace.research_view = ResearchView::Financials;
+        assert!(!workspace.activate_action("filing:0:NEW-FILING"));
+        assert!(!workspace.activate_action("chart:STALE US"));
+        assert!(!workspace.activate_action("invented"));
+    }
+
+    #[test]
+    fn loading_and_failed_states_expose_only_a_preferred_retry_action() {
+        let mut workspace = SecurityWorkspace::new(Arc::new(StubQuery));
+        workspace.page = None;
+        let actions = workspace.actions(Rect::new(0, 0, 80, 24));
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].id, "refresh");
+        assert!(actions[0].preferred);
+        let generation = workspace.desired_generation;
+        assert!(workspace.activate_action("refresh"));
+        assert_eq!(workspace.desired_generation, generation.wrapping_add(1));
     }
 
     #[test]

@@ -2481,6 +2481,101 @@ mod tests {
     }
 
     #[test]
+    fn security_follow_hints_route_tabs_and_the_live_chart() {
+        let mut app = bootstrap::demo_app();
+        let frame_area = Rect::new(0, 0, 160, 48);
+        app.set_terminal_area(frame_area);
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "SEC AAPL US".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let security = app.workspaces.resolve_target("security").unwrap();
+        let workspace_area = crate::ui::ShellLayout::new(frame_area).workspace;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while !app
+            .workspace_actions(workspace_area, 128)
+            .iter()
+            .any(|action| action.id == "chart:AAPL US")
+            && std::time::Instant::now() < deadline
+        {
+            app.advance_tick();
+            std::thread::yield_now();
+        }
+        assert_eq!(app.active_workspace(), security);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let ownership_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action == "view:ownership"
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in ownership_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        assert_eq!(app.active_workspace(), security);
+        assert!(app
+            .workspace_actions(workspace_area, 128)
+            .iter()
+            .any(|action| action.id == "view:ownership" && action.preferred));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let financials_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action == "view:financials"
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in financials_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let chart_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action == "chart:AAPL US"
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in chart_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.advance_tick();
+        assert_eq!(
+            app.active_workspace(),
+            app.workspaces.resolve_target("chart").unwrap()
+        );
+    }
+
+    #[test]
     fn follow_hint_codes_are_prefix_free_and_compact() {
         let short = hint_codes(HINT_ALPHABET.len()).collect::<Vec<_>>();
         assert!(short.iter().all(|code| code.len() == 1));

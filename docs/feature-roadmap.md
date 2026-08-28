@@ -163,6 +163,13 @@ move to its own crate later without changing its public vocabulary.
   visible instrument rows open Security, sort field and direction are distinct,
   columns and refresh are addressable, narrow controls are viewport-clipped, and
   every action composes through Desk with stale identity revalidation.
+- **Complete:** Security Research action routing from a single render/mouse/focus
+  layout: responsive research tabs, the live chart, Form 4 source rows,
+  regulatory filing links, peer-security links, and refresh/retry states all
+  participate in spatial focus and follow hints. Activations fail closed when
+  the current view, symbol, row index, accession, or peer identity has changed,
+  and an application-level test routes real follow labels through Security into
+  Chart.
 - **Complete:** source-derived OpenTerminalUI capability ledger pinned to an
   exact upstream tree, with stable `OTUI-*` IDs, implementation-maturity labels,
   repository-relative evidence, owners, priorities, gaps, acceptance-test IDs,
@@ -256,7 +263,7 @@ continues.
 | --- | --- | --- | --- |
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
 | Mission Control, launchpad, ticker tape | Partial | Overview, Desk, Markets, persisted active workspace | Add configurable launch tiles, live pulse strip, priority stack, and saved role presets. |
-| Keyboard navigation and icon rail | Partial | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, and Monitor rows/controls | Adopt the action contract in remaining workspace rows, buttons, chart controls, and tables. |
+| Keyboard navigation and icon rail | Partial | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, and Security tabs/chart/Form 4/filing/peer/retry actions | Adopt the action contract in remaining Overview, Chart, News, Alerts, and Spreadsheet rows, buttons, chart controls, and tables. |
 | Saved views and workspace presets | Partial | Workspace order, active workspace, layout and command history persist | Persist/restore view parameters, filters, selected instrument, table columns, chart state, pane geometry, and Trader/Quant/PM/Risk/Ops presets. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
 | Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
@@ -372,8 +379,12 @@ with responsive hidden-pane exclusion. Monitor now supplies its visible rows and
 discrete footer controls from the same geometry used by rendering and mouse input,
 including real nested routing inside Desk. Remaining workspace adopters, gallery
 states, and enforcement that completed capabilities link real implementation
-evidence remain. `tests/architecture_boundaries.rs` now enforces dependency
-direction on every CI run. The first remediation moved Assistant's portfolio
+evidence remain. Security now contributes its responsive tabs, live chart,
+Form 4 and regulatory filing rows, peer links, and retry/refresh states from one
+shared geometry model, with stale view/symbol/accession validation and a
+shell-level follow-routing test. Overview, Chart, News, Alerts, and Spreadsheet
+remain to adopt the contract. `tests/architecture_boundaries.rs` now enforces
+dependency direction on every CI run. The first remediation moved Assistant's portfolio
 context behind an Assistant-owned port and composition-root translator, and
 removed Watchlist's dependency on a Market Data identity alias. This closes the
 known production cross-context leaks; future composed reads must use the same

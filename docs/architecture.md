@@ -169,7 +169,11 @@ it registers visible pane headers and namespaces child-workspace actions without
 rewriting their body rectangles or activation semantics. The same action
 snapshot drives follow badges, spatial focus styling, arrow routing, activation
 revalidation, resize recovery, and async-state recovery, so the shell never
-keeps a second geometry model.
+keeps a second geometry model. Security Research is the richer table/action
+reference: one shared layout supplies its mouse targets, research tabs, chart,
+Form 4 and filing rows, peer links, refresh action, and responsive follow/spatial
+rectangles. Activation rechecks the active view plus the symbol or accession
+embedded in each opaque action ID before dispatching or opening a document.
 
 ## Cross-feature events
 

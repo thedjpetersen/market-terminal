@@ -70,13 +70,12 @@ and Quit receives a prefix-free one- or two-letter label. Type a label to route
 there immediately, or press `Esc` to cancel. The labels use the familiar
 Vimium-style link-hint interaction while remaining terminal-native.
 
-Portfolio extends follow hints and spatial focus inside the active panel. Its
-currently rendered view tabs, security-capable table rows, and reload
-control receive labels and spatial focus at their actual terminal coordinates;
-the currently selected actionable row is the focus-restoration target. Off-screen,
-disabled, duplicate, and stale actions are not routable. The bounded
-feature-owned action contract will be adopted by the remaining workspaces
-without teaching the shell their domain behavior.
+Portfolio, Monitor, Desk, and Security extend follow hints and spatial focus
+inside the active panel. Their currently rendered tabs, rows, panes, and controls
+receive labels and focus at their actual terminal coordinates; the natural
+selected or primary action becomes the restoration target. Off-screen, disabled,
+duplicate, and stale actions are not routable. Each feature owns activation and
+the shell remains unaware of portfolio, quote, or research domain behavior.
 
 `DESK` (aliases `SPLIT` and `DASHBOARD`) opens the combined workspace adapted
 from `alphai-tui`. Press `Tab`/`Shift+Tab` or `1`/`2`/`3` to focus Monitor,
@@ -272,8 +271,11 @@ scatter with acquisition/disposition marks, selected-event emphasis, and
 two-sided weekly value bars. Its rollup says `LOADED SAMPLE` because it covers
 only those bounded filings, not an invented 12-month universe. Click a chart
 mark/row or select with Up/Down or `j`/`k`, then press `O` or Enter to open the
-official SEC filing index. All provider calls run on a coalescing background
-worker.
+official SEC filing index. `Esc` lifts focus into the visible chart, research
+tabs, Form 4 rows, regulatory filings, peer links, or refresh control; `F`
+assigns the same targets compact follow labels. Follow activation revalidates
+the current view, row index, accession, or peer symbol before opening anything.
+All provider calls run on a coalescing background worker.
 
 SEC EDGAR does not supply analyst estimates or a canonical peer set, and this
 adapter does not yet normalize institutional 13F ownership. Those panels say so
