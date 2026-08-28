@@ -70,8 +70,8 @@ and Quit receives a prefix-free one- or two-letter label. Type a label to route
 there immediately, or press `Esc` to cancel. The labels use the familiar
 Vimium-style link-hint interaction while remaining terminal-native.
 
-Portfolio, Monitor, Desk, Security, Chart, and News extend follow hints and spatial
-focus inside the active panel. Their currently rendered tabs, rows, panes, and controls
+Portfolio, Monitor, Desk, Security, Chart, News, and Overview extend follow hints
+and spatial focus inside the active panel. Their currently rendered tabs, rows, panes, and controls
 receive labels and focus at their actual terminal coordinates; the natural
 selected or primary action becomes the restoration target. Off-screen, disabled,
 duplicate, and stale actions are not routable. Each feature owns activation and
@@ -568,7 +568,13 @@ news cache. A point-in-time positions export does not contain a return series,
 so Overview leaves YTD return, drawdown, volatility, Sharpe, attribution, and
 movers unavailable instead of manufacturing them. Click a position to open
 Security or a headline to open its News topic; press `F9` or `R` to request a
-news refresh.
+news refresh. Press `Esc` for spatial focus or `F` for direct routing across the
+visible holdings, headlines, Portfolio/Risk/News destinations, and refresh. In
+the gallery dashboard, all eight period tabs plus the Risk, composition, and
+market-briefing cards are direct destinations. Overview derives mouse targets,
+focus rectangles, and follow hints from the same responsive layout; headline
+identities and holding symbols are revalidated against the latest composed
+snapshot before cross-workspace navigation.
 
 Run `RISK` to open the storage-independent risk view derived from that same
 versioned portfolio snapshot. It reconciles every priced and unpriced row back

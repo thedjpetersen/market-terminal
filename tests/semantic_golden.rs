@@ -13,7 +13,7 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "overview",
         prepare: prepare_overview,
-        hashes: [0x0c64a4a66870c3f4, 0x7bbab2ae683f6150, 0x2c80f38f97eed819],
+        hashes: [0x2643050e5451cb41, 0xb4eb9bce4d88db55, 0x000972c989c6f858],
     },
     Golden {
         name: "spreadsheet",
@@ -28,7 +28,7 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "help",
         prepare: prepare_help,
-        hashes: [0x9633e81a01822201, 0xb9a367ae67273d60, 0xded1509f1ea7c3a7],
+        hashes: [0x10de2dd9f19e0768, 0xfe7ab2ef31976aa5, 0x2f9192c1f0f708ba],
     },
     Golden {
         name: "spreadsheet-error",
@@ -63,12 +63,12 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "panel-focus",
         prepare: prepare_panel_focus,
-        hashes: [0x083f507844abbfca, 0xc81d613d8914778c, 0x7f9d0ce5b3f01b47],
+        hashes: [0x4e829f219f1a7025, 0x4ba506f53b8f138a, 0x117a60a4e7574cc9],
     },
     Golden {
         name: "follow-hints",
         prepare: prepare_follow_hints,
-        hashes: [0xe2f842a7fda34a62, 0x7d8ba10c4a0f4fe1, 0xce5fec314a6f72cd],
+        hashes: [0xf4bb75e587d86b7f, 0xbdae658b18414f1a, 0xb34a90345098a389],
     },
 ];
 

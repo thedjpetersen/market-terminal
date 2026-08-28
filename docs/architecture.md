@@ -191,6 +191,14 @@ that workspace, excludes shell and navigation destinations from follow hints, an
 publishes only the feature's modal actions. The reader therefore exposes close and
 publisher-page destinations without allowing workspace hotkeys, navigation clicks,
 or stale story identities to escape the modal.
+Overview is the composed-dashboard reference. Its geometry module owns gallery
+periods and cards as well as live holding rows, headline rows, and the common
+Portfolio/Risk/News/refresh strip. Rendering, pointer hit testing, spatial focus,
+and follow hints consume that one layout. Cross-context navigation remains an
+application intent: Overview neither imports nor mutates Portfolio, Risk, News,
+or Security internals. Activating a live row reloads the already-composed read
+model and rechecks its row index plus symbol or content digest, so an asynchronous
+portfolio/news replacement cannot route a stale dashboard target.
 
 ## Cross-feature events
 

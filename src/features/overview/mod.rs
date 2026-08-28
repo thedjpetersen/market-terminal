@@ -1,3 +1,4 @@
+mod controls;
 mod domain;
 mod port;
 mod workspace;

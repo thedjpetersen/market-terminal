@@ -2204,15 +2204,25 @@ mod tests {
     }
 
     #[test]
-    fn escape_lifts_focus_and_arrows_move_between_panels() {
+    fn escape_lifts_focus_and_arrows_fall_back_between_panels_without_actions() {
         let mut app = bootstrap::demo_app();
-        let second = app.workspaces.navigation_items().nth(1).unwrap().id;
+        let markets = app.workspaces.resolve_target("markets").unwrap();
+        app.activate_workspace(markets);
+        let navigation = app
+            .workspaces
+            .navigation_items()
+            .map(|item| item.id)
+            .collect::<Vec<_>>();
+        let index = navigation.iter().position(|id| *id == markets).unwrap();
+        let next = navigation[(index + 1) % navigation.len()];
+        let workspace_area = crate::ui::ShellLayout::new(app.terminal_area).workspace;
+        assert!(app.workspace_actions(workspace_area, 128).is_empty());
 
         app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(app.panel_focus());
 
         app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
-        assert_eq!(app.active_workspace(), second);
+        assert_eq!(app.active_workspace(), next);
         assert!(app.panel_focus());
 
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -2663,6 +2673,65 @@ mod tests {
                 action.id == "control:normalization"
                     && action.label.contains("% CHANGE")
             }));
+        assert!(app.shell_hints().is_none());
+    }
+
+    #[test]
+    fn overview_follow_hints_select_periods_and_route_dashboard_cards() {
+        let mut app = bootstrap::demo_app();
+        let frame_area = Rect::new(0, 0, 160, 48);
+        let workspace_area = crate::ui::ShellLayout::new(frame_area).workspace;
+        app.set_terminal_area(frame_area);
+        assert_eq!(app.active_workspace(), OVERVIEW);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let period_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action == "period:2:6M"
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in period_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        assert!(app
+            .workspace_actions(workspace_area, 128)
+            .iter()
+            .any(|action| action.id == "period:2:6M" && action.preferred));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let risk_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action == "card:risk"
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in risk_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.advance_tick();
+        assert_eq!(
+            app.active_workspace(),
+            app.workspaces.resolve_target("risk").unwrap()
+        );
         assert!(app.shell_hints().is_none());
     }
 

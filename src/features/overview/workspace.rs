@@ -11,14 +11,20 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, ShellChrome, Workspace, WorkspaceDescriptor},
+    app::{AppIntent, ShellChrome, Workspace, WorkspaceAction, WorkspaceDescriptor},
     ui::{
-        is_primary_click, table_row_at,
+        contains, is_primary_click,
         theme::{self, AMBER, BG, CYAN, GREEN, INK, MUTED, NAV_BG, YELLOW},
     },
 };
 
-use super::{LiveOverviewSnapshot, OverviewQuery, OverviewSnapshot, ID};
+use super::{
+    controls::{
+        control_areas, gallery_areas, live_areas, panel_header_area, period_areas,
+        table_row_area, visible_table_rows, OverviewControl,
+    },
+    LiveOverviewSnapshot, OverviewHeadline, OverviewQuery, OverviewSnapshot, ID,
+};
 
 const METRIC_HIGHLIGHT: Color = Color::Rgb(77, 58, 10);
 
@@ -82,6 +88,135 @@ impl OverviewWorkspace {
         }
     }
 
+    fn dispatch(&mut self, command: impl Into<String>) {
+        self.pending_intents.push(AppIntent::DispatchCommand {
+            command: command.into(),
+            origin: ID,
+        });
+    }
+
+    fn control_action_label(control: OverviewControl) -> &'static str {
+        match control {
+            OverviewControl::Portfolio => "Open the Portfolio workspace",
+            OverviewControl::Risk => "Open portfolio Risk analytics",
+            OverviewControl::News => "Open the live News workspace",
+            OverviewControl::Refresh => "Refresh Overview news data",
+        }
+    }
+
+    fn activate_control(&mut self, control: OverviewControl) -> bool {
+        match control {
+            OverviewControl::Portfolio => self.dispatch("PORT"),
+            OverviewControl::Risk => self.dispatch("RISK"),
+            OverviewControl::News => self.dispatch("NEWS"),
+            OverviewControl::Refresh => self.query.request_refresh(),
+        }
+        true
+    }
+
+    fn footer_actions(&self, area: Rect) -> Vec<WorkspaceAction> {
+        control_areas(area)
+            .into_iter()
+            .map(|(control, area)| {
+                WorkspaceAction::new(
+                    control.action_id(),
+                    Self::control_action_label(control),
+                    area,
+                )
+            })
+            .collect()
+    }
+
+    fn gallery_actions(&self, area: Rect, periods: &[&str]) -> Vec<WorkspaceAction> {
+        let areas = gallery_areas(area);
+        let mut actions = period_areas(areas.header, periods)
+            .into_iter()
+            .map(|(index, period_area)| {
+                let mut action = WorkspaceAction::new(
+                    format!("period:{index}:{}", periods[index]),
+                    format!("Show {} Overview period", periods[index]),
+                    period_area,
+                );
+                if index == self.selected_period {
+                    action = action.preferred();
+                }
+                action
+            })
+            .collect::<Vec<_>>();
+        actions.extend([
+            WorkspaceAction::new(
+                "card:risk",
+                "Open Risk from the risk summary",
+                panel_header_area(areas.risk),
+            ),
+            WorkspaceAction::new(
+                "card:portfolio",
+                "Open Portfolio from the composition summary",
+                panel_header_area(areas.composition),
+            ),
+            WorkspaceAction::new(
+                "card:news",
+                "Open News from the market briefing",
+                panel_header_area(areas.news),
+            ),
+        ]);
+        actions.extend(self.footer_actions(areas.footer));
+        actions.retain(|action| action.area.width > 0 && action.area.height > 0);
+        actions
+    }
+
+    fn live_actions(&self, area: Rect, snapshot: &LiveOverviewSnapshot) -> Vec<WorkspaceAction> {
+        let areas = live_areas(area);
+        let visible_holdings = visible_table_rows(areas.holdings, snapshot.holdings.len());
+        let visible_headlines = visible_table_rows(areas.headlines, snapshot.headlines.len());
+        let mut actions = snapshot
+            .holdings
+            .iter()
+            .take(visible_holdings)
+            .enumerate()
+            .filter_map(|(index, holding)| {
+                let area = table_row_area(areas.holdings, index)?;
+                let action = WorkspaceAction::new(
+                    format!("holding:{index}:{:016x}", text_identity(&holding.symbol)),
+                    format!("Open {} security research", holding.symbol),
+                    area,
+                );
+                Some(if index == 0 { action.preferred() } else { action })
+            })
+            .collect::<Vec<_>>();
+        let holdings_are_empty = actions.is_empty();
+        actions.extend(
+            snapshot
+                .headlines
+                .iter()
+                .take(visible_headlines)
+                .enumerate()
+                .filter_map(|(index, headline)| {
+                    let area = table_row_area(areas.headlines, index)?;
+                    let identity = headline_identity(headline);
+                    let action = WorkspaceAction::new(
+                        format!("headline:{index}:{identity:016x}"),
+                        format!("Open News for {}", short_label(&headline.title)),
+                        area,
+                    );
+                    Some(if holdings_are_empty && index == 0 {
+                        action.preferred()
+                    } else {
+                        action
+                    })
+                }),
+        );
+        let rows_are_empty = actions.is_empty();
+        let mut footer = self.footer_actions(areas.footer);
+        if rows_are_empty {
+            if let Some(action) = footer.first_mut() {
+                action.preferred = true;
+            }
+        }
+        actions.extend(footer);
+        actions
+    }
+
     fn render_context_header(&self, frame: &mut Frame, area: Rect, periods: &[&str]) {
         let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(area);
         let mut period_spans = vec![Span::raw(" ")];
@@ -91,7 +226,7 @@ impl OverviewWorkspace {
             } else {
                 Style::new().fg(CYAN.into())
             };
-            period_spans.push(Span::styled(format!("  {period}  "), style));
+            period_spans.push(Span::styled(format!(" {} {period} ", index + 1), style));
         }
         frame.render_widget(Paragraph::new(Line::from(period_spans)), rows[0]);
 
@@ -252,44 +387,29 @@ impl OverviewWorkspace {
     }
 
     fn render_function_strip(&self, frame: &mut Frame, area: Rect) {
+        let mut spans = control_areas(area)
+            .into_iter()
+            .map(|(control, _)| {
+                let style = if control == OverviewControl::Refresh {
+                    AMBER
+                } else {
+                    INK
+                };
+                Span::styled(control.text(), style)
+            })
+            .collect::<Vec<_>>();
+        spans.extend([
+            Span::styled(" / COMMAND ", INK),
+            Span::styled(" Q QUIT ", INK),
+        ]);
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(" 1 ", AMBER),
-                Span::styled("D  ", INK),
-                Span::styled("2 ", AMBER),
-                Span::styled("M  ", INK),
-                Span::styled("3 ", AMBER),
-                Span::styled("6M  ", INK),
-                Span::styled("4 ", AMBER),
-                Span::styled("YTD  ", INK),
-                Span::styled("5 ", AMBER),
-                Span::styled("1Y  ", INK),
-                Span::styled("6 ", AMBER),
-                Span::styled("2Y  ", INK),
-                Span::styled("7 ", AMBER),
-                Span::styled("5Y  ", INK),
-                Span::styled("8 ", AMBER),
-                Span::styled("10Y   ", INK),
-                Span::styled("← ", AMBER),
-                Span::styled("◀ Period   ", INK),
-                Span::styled("→ ", AMBER),
-                Span::styled("Period ▶   ", INK),
-                Span::styled("c ", AMBER),
-                Span::styled("Compare   ", INK),
-                Span::styled("r ", AMBER),
-                Span::styled("Refresh   ", INK),
-                Span::styled("/ ", AMBER),
-                Span::styled("Command   ", INK),
-                Span::styled("q ", AMBER),
-                Span::styled("Quit", INK),
-            ]))
-            .style(Style::new().bg(NAV_BG.into())),
+            Paragraph::new(Line::from(spans)).style(Style::new().bg(NAV_BG.into())),
             area,
         );
     }
 
     fn render_live(&self, frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSnapshot) {
-        let rows = live_layout(area);
+        let areas = live_areas(area);
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(vec![
@@ -306,10 +426,10 @@ impl OverviewWorkspace {
                     Span::styled(&snapshot.news_status, MUTED),
                 ]),
             ]),
-            rows[0],
+            areas.header,
         );
-        render_live_holdings(frame, rows[1], snapshot);
-        render_live_kpis(frame, rows[2], snapshot);
+        render_live_holdings(frame, areas.holdings, snapshot);
+        render_live_kpis(frame, areas.kpis, snapshot);
         frame.render_widget(
             Paragraph::new(vec![
                 Line::styled(
@@ -322,23 +442,10 @@ impl OverviewWorkspace {
                 ),
             ])
             .block(reference_block("Data boundary")),
-            rows[3],
+            areas.boundary,
         );
-        render_live_headlines(frame, rows[4], snapshot);
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(" PORT IMPORT <CSV> ", AMBER),
-                Span::styled("LOAD POSITIONS   ", INK),
-                Span::styled("PORT RELOAD ", AMBER),
-                Span::styled("RELOAD   ", INK),
-                Span::styled("NEWS ", AMBER),
-                Span::styled("OPEN FEED   ", INK),
-                Span::styled("F9/R ", AMBER),
-                Span::styled("REFRESH NEWS", INK),
-            ]))
-            .style(Style::new().bg(NAV_BG.into())),
-            rows[5],
-        );
+        render_live_headlines(frame, areas.headlines, snapshot);
+        self.render_function_strip(frame, areas.footer);
     }
 }
 
@@ -359,67 +466,127 @@ impl Workspace for OverviewWorkspace {
     fn handle_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Char(character @ '1'..='8') => {
-                self.selected_period = character as usize - '1' as usize;
+                let index = character as usize - '1' as usize;
+                let OverviewSnapshot::Gallery { periods, .. } = self.query.load_overview() else {
+                    return false;
+                };
+                if index >= periods.len() {
+                    return false;
+                }
+                self.selected_period = index;
                 true
             }
             KeyCode::Left => {
+                if !matches!(self.query.load_overview(), OverviewSnapshot::Gallery { .. }) {
+                    return false;
+                }
                 self.selected_period = self.selected_period.saturating_sub(1);
                 true
             }
             KeyCode::Right => {
-                self.selected_period = (self.selected_period + 1).min(7);
+                let OverviewSnapshot::Gallery { periods, .. } = self.query.load_overview() else {
+                    return false;
+                };
+                self.selected_period = (self.selected_period + 1).min(periods.len().saturating_sub(1));
                 true
             }
             KeyCode::F(9) | KeyCode::Char('r' | 'R') => {
-                self.query.request_refresh();
-                true
+                self.activate_control(OverviewControl::Refresh)
             }
             _ => false,
         }
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
-        let periods = match self.query.load_overview() {
-            OverviewSnapshot::Gallery { periods, .. } => periods,
-            OverviewSnapshot::Live(snapshot) => {
-                let rows = live_layout(area);
-                if let Some(index) = table_row_at(event, rows[1], snapshot.holdings.len()) {
-                    self.pending_intents.push(AppIntent::DispatchCommand {
-                        command: format!("SEC {} US", snapshot.holdings[index].symbol),
-                        origin: ID,
-                    });
-                    return true;
-                }
-                if let Some(index) = table_row_at(event, rows[4], snapshot.headlines.len()) {
-                    self.pending_intents.push(AppIntent::DispatchCommand {
-                        command: format!("NEWS {}", snapshot.headlines[index].topic),
-                        origin: ID,
-                    });
-                    return true;
-                }
-                return false;
-            }
-        };
-        let periods_area = Layout::vertical([
-            Constraint::Length(2),
-            Constraint::Percentage(52),
-            Constraint::Length(7),
-            Constraint::Min(8),
-        ])
-        .split(area)[0];
-        if !is_primary_click(event, periods_area) {
+        if !is_primary_click(event, area) {
             return false;
         }
-        let mut x = periods_area.x.saturating_add(1);
-        for (index, period) in periods.iter().enumerate() {
-            let width = format!(" {} {} ", index + 1, period).chars().count() as u16;
-            if event.column >= x && event.column < x.saturating_add(width) {
-                self.selected_period = index;
-                return true;
+        for action in self.actions(area) {
+            if contains(action.area, event.column, event.row) {
+                return self.activate_action(&action.id);
             }
-            x = x.saturating_add(width);
         }
         false
+    }
+
+    fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
+        match self.query.load_overview() {
+            OverviewSnapshot::Gallery { periods, .. } => self.gallery_actions(area, periods),
+            OverviewSnapshot::Live(snapshot) => self.live_actions(area, &snapshot),
+        }
+    }
+
+    fn activate_action(&mut self, id: &str) -> bool {
+        if let Some(control) = OverviewControl::from_action_id(id) {
+            return self.activate_control(control);
+        }
+        match id {
+            "card:risk" => return self.activate_control(OverviewControl::Risk),
+            "card:portfolio" => return self.activate_control(OverviewControl::Portfolio),
+            "card:news" => return self.activate_control(OverviewControl::News),
+            _ => {}
+        }
+        if let Some(period) = id.strip_prefix("period:") {
+            let Some((index, expected_label)) = period.split_once(':') else {
+                return false;
+            };
+            let Ok(index) = index.parse::<usize>() else {
+                return false;
+            };
+            let OverviewSnapshot::Gallery { periods, .. } = self.query.load_overview() else {
+                return false;
+            };
+            if periods.get(index).copied() != Some(expected_label) {
+                return false;
+            }
+            self.selected_period = index;
+            return true;
+        }
+        if let Some(holding) = id.strip_prefix("holding:") {
+            let Some((index, expected_identity)) = holding.split_once(':') else {
+                return false;
+            };
+            let Ok(index) = index.parse::<usize>() else {
+                return false;
+            };
+            let Some(expected_identity) = parse_identity(expected_identity) else {
+                return false;
+            };
+            let OverviewSnapshot::Live(snapshot) = self.query.load_overview() else {
+                return false;
+            };
+            let Some(holding) = snapshot.holdings.get(index) else {
+                return false;
+            };
+            if text_identity(&holding.symbol) != expected_identity {
+                return false;
+            }
+            self.dispatch(format!("SEC {} US", holding.symbol));
+            return true;
+        }
+        let Some(headline) = id.strip_prefix("headline:") else {
+            return false;
+        };
+        let Some((index, expected_identity)) = headline.split_once(':') else {
+            return false;
+        };
+        let Ok(index) = index.parse::<usize>() else {
+            return false;
+        };
+        let Some(expected_identity) = parse_identity(expected_identity) else {
+            return false;
+        };
+        let OverviewSnapshot::Live(snapshot) = self.query.load_overview() else {
+            return false;
+        };
+        let Some(headline) = snapshot.headlines.get(index) else {
+            return false;
+        };
+        if headline_identity(headline) != expected_identity {
+            return false;
+        }
+        self.dispatch(format!("NEWS {}", headline.topic));
+        true
     }
 
     fn poll_intents(&mut self) -> Vec<AppIntent> {
@@ -438,34 +605,14 @@ impl Workspace for OverviewWorkspace {
                 return;
             }
         };
-        let rows = Layout::vertical([
-            Constraint::Length(2),
-            Constraint::Length(21),
-            Constraint::Length(7),
-            Constraint::Length(8),
-            Constraint::Min(9),
-            Constraint::Length(1),
-        ])
-        .split(area);
-        self.render_context_header(frame, rows[0], periods);
-        self.render_returns_chart(frame, rows[1], primary_returns, comparison_returns);
-        self.render_risk_band(frame, rows[2]);
-        self.render_composition(frame, rows[3]);
-        self.render_news(frame, rows[4]);
-        self.render_function_strip(frame, rows[5]);
+        let areas = gallery_areas(area);
+        self.render_context_header(frame, areas.header, periods);
+        self.render_returns_chart(frame, areas.returns, primary_returns, comparison_returns);
+        self.render_risk_band(frame, areas.risk);
+        self.render_composition(frame, areas.composition);
+        self.render_news(frame, areas.news);
+        self.render_function_strip(frame, areas.footer);
     }
-}
-
-fn live_layout(area: Rect) -> std::rc::Rc<[Rect]> {
-    Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(12),
-        Constraint::Length(5),
-        Constraint::Length(5),
-        Constraint::Min(8),
-        Constraint::Length(1),
-    ])
-    .split(area)
 }
 
 fn render_live_holdings(frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSnapshot) {
@@ -591,6 +738,45 @@ fn reference_block(title: &'static str) -> Block<'static> {
             format!(" {title} "),
             Style::new().fg(AMBER.into()).bold(),
         ))
+}
+
+fn text_identity(value: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn headline_identity(headline: &OverviewHeadline) -> u64 {
+    let mut identity = String::with_capacity(
+        headline.time.len() + headline.topic.len() + headline.title.len() + headline.region.len() + 3,
+    );
+    identity.push_str(&headline.time);
+    identity.push('\0');
+    identity.push_str(&headline.topic);
+    identity.push('\0');
+    identity.push_str(&headline.title);
+    identity.push('\0');
+    identity.push_str(&headline.region);
+    text_identity(&identity)
+}
+
+fn parse_identity(identity: &str) -> Option<u64> {
+    (identity.len() == 16)
+        .then(|| u64::from_str_radix(identity, 16).ok())
+        .flatten()
+}
+
+fn short_label(value: &str) -> String {
+    const MAX_CHARS: usize = 44;
+    let mut characters = value.chars();
+    let mut label = characters.by_ref().take(MAX_CHARS).collect::<String>();
+    if characters.next().is_some() {
+        label.push('…');
+    }
+    label
 }
 
 fn stepped_points(points: &[(f64, f64)]) -> Vec<(f64, f64)> {
@@ -803,33 +989,68 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
     use ratatui::{backend::TestBackend, Terminal};
+    use std::{
+        collections::HashSet,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Mutex,
+        },
+    };
 
     struct LiveQuery;
 
+    fn live_snapshot() -> LiveOverviewSnapshot {
+        LiveOverviewSnapshot {
+            net_asset_value: "$48.00".to_owned(),
+            ytd_return: "N/A".to_owned(),
+            available_cash: "$0.00".to_owned(),
+            sharpe: "N/A".to_owned(),
+            portfolio_source: "CSV · actual-positions.csv".to_owned(),
+            portfolio_as_of: "2026-08-26 12:00 UTC".to_owned(),
+            holdings: vec![super::super::OverviewHolding {
+                symbol: "USER".to_owned(),
+                quantity: "4".to_owned(),
+                market_value: "$48.00".to_owned(),
+                pnl: "+20.00%".to_owned(),
+                weight: "100.00%".to_owned(),
+            }],
+            headlines: vec![super::super::OverviewHeadline {
+                time: "12:01".to_owned(),
+                topic: "TOP".to_owned(),
+                title: "Cached publisher headline".to_owned(),
+                region: "US".to_owned(),
+            }],
+            news_status: "LIVE · 1 STORY".to_owned(),
+        }
+    }
+
     impl OverviewQuery for LiveQuery {
         fn load_overview(&self) -> OverviewSnapshot {
-            OverviewSnapshot::Live(LiveOverviewSnapshot {
-                net_asset_value: "$48.00".to_owned(),
-                ytd_return: "N/A".to_owned(),
-                available_cash: "$0.00".to_owned(),
-                sharpe: "N/A".to_owned(),
-                portfolio_source: "CSV · actual-positions.csv".to_owned(),
-                portfolio_as_of: "2026-08-26 12:00 UTC".to_owned(),
-                holdings: vec![super::super::OverviewHolding {
-                    symbol: "USER".to_owned(),
-                    quantity: "4".to_owned(),
-                    market_value: "$48.00".to_owned(),
-                    pnl: "+20.00%".to_owned(),
-                    weight: "100.00%".to_owned(),
-                }],
-                headlines: vec![super::super::OverviewHeadline {
-                    time: "12:01".to_owned(),
-                    topic: "TOP".to_owned(),
-                    title: "Cached publisher headline".to_owned(),
-                    region: "US".to_owned(),
-                }],
-                news_status: "LIVE · 1 STORY".to_owned(),
-            })
+            OverviewSnapshot::Live(live_snapshot())
+        }
+    }
+
+    struct MutableLiveQuery {
+        snapshot: Mutex<LiveOverviewSnapshot>,
+        refreshes: AtomicUsize,
+    }
+
+    impl MutableLiveQuery {
+        fn new() -> Self {
+            Self {
+                snapshot: Mutex::new(live_snapshot()),
+                refreshes: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl OverviewQuery for MutableLiveQuery {
+        fn load_overview(&self) -> OverviewSnapshot {
+            OverviewSnapshot::Live(self.snapshot.lock().unwrap().clone())
+        }
+
+        fn request_refresh(&self) {
+            self.refreshes.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -876,11 +1097,17 @@ mod tests {
     #[test]
     fn live_overview_rows_open_security_and_news() {
         let area = Rect::new(0, 0, 160, 48);
-        let rows = live_layout(area);
+        let areas = live_areas(area);
         let mut workspace = OverviewWorkspace::new(Arc::new(LiveQuery));
 
-        assert!(workspace.handle_mouse(click(rows[1].x + 2, rows[1].y + 3), area));
-        assert!(workspace.handle_mouse(click(rows[4].x + 2, rows[4].y + 3), area));
+        assert!(workspace.handle_mouse(
+            click(areas.holdings.x + 2, areas.holdings.y + 3),
+            area
+        ));
+        assert!(workspace.handle_mouse(
+            click(areas.headlines.x + 2, areas.headlines.y + 3),
+            area
+        ));
 
         assert_eq!(
             workspace.poll_intents(),
@@ -895,5 +1122,63 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn live_actions_share_geometry_and_revalidate_async_rows() {
+        let area = Rect::new(0, 0, 120, 36);
+        let query = Arc::new(MutableLiveQuery::new());
+        let mut workspace = OverviewWorkspace::new(query.clone());
+        let actions = workspace.actions(area);
+        let ids = actions
+            .iter()
+            .map(|action| action.id.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(ids.len(), actions.len());
+        assert!(actions.iter().all(|action| {
+            action.area.x >= area.x
+                && action.area.y >= area.y
+                && action.area.right() <= area.right()
+                && action.area.bottom() <= area.bottom()
+        }));
+
+        let holding = actions
+            .iter()
+            .find(|action| action.id.starts_with("holding:0:"))
+            .unwrap();
+        assert!(holding.preferred);
+        assert!(workspace.activate_action(&holding.id));
+        assert_eq!(
+            workspace.poll_intents(),
+            vec![AppIntent::DispatchCommand {
+                command: "SEC USER US".to_owned(),
+                origin: ID,
+            }]
+        );
+
+        let headline = actions
+            .iter()
+            .find(|action| action.id.starts_with("headline:0:"))
+            .unwrap()
+            .clone();
+        assert!(workspace.handle_mouse(click(headline.area.x, headline.area.y), area));
+        assert_eq!(
+            workspace.poll_intents(),
+            vec![AppIntent::DispatchCommand {
+                command: "NEWS TOP".to_owned(),
+                origin: ID,
+            }]
+        );
+
+        query.snapshot.lock().unwrap().headlines[0].title = "Replacement story".to_owned();
+        assert!(!workspace.activate_action(&headline.id));
+
+        let refresh = workspace
+            .actions(area)
+            .into_iter()
+            .find(|action| action.id == "control:refresh")
+            .unwrap();
+        assert!(workspace.handle_mouse(click(refresh.area.x, refresh.area.y), area));
+        assert_eq!(query.refreshes.load(Ordering::Relaxed), 1);
     }
 }

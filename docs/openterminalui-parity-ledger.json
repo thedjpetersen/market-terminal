@@ -38,7 +38,7 @@
       "upstream_maturity": "substantive",
       "reference_files": ["frontend/src/components/common/ShortcutOverlay.tsx", "frontend/src/components/layout/commanding.ts", "frontend/tests/e2e/terminal-shell-go-bar.spec.ts"],
       "acceptance_tests": ["SHELL-SPATIAL-FOCUS", "SHELL-FOLLOW-HINTS", "SHELL-FOCUS-RESTORE"],
-      "gap": "Deterministic spatial routing, focus restoration, and follow hints now cover the shell, Portfolio, Desk, Monitor, Security, Chart, and News, including direct periods, stateful controls, story-identity revalidation, and a keyboard/pointer-trapped reader with modal-only hints. Adopt the viewport-safe action contract in Overview, Alerts, and Spreadsheet, then extend modal coverage to every future overlay."
+      "gap": "Deterministic spatial routing, focus restoration, and follow hints now cover the shell, Portfolio, Desk, Monitor, Security, Chart, News, and Overview, including direct periods, composed dashboard cards, live row revalidation, stateful controls, and a keyboard/pointer-trapped reader with modal-only hints. Adopt the viewport-safe action contract in Alerts and Spreadsheet, then extend modal coverage to every future overlay."
     },
     {
       "id": "OTUI-003",
