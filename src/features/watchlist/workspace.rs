@@ -124,7 +124,7 @@ struct MonitorRow {
 
 struct QuoteRefresh {
     generation: u64,
-    instruments: Vec<crate::features::market_data::CanonicalInstrumentId>,
+    instruments: Vec<crate::foundation::InstrumentId>,
 }
 
 struct QuoteRefreshResult {

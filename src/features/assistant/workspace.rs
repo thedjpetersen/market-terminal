@@ -15,7 +15,6 @@ use ratatui::{
 
 use crate::{
     app::{AppIntent, CommandInvocation, ShellContext, Workspace, WorkspaceDescriptor},
-    features::portfolio::PortfolioRepository,
     ui::{
         components::terminal_block,
         is_primary_click,
@@ -28,7 +27,7 @@ use super::{
         AssistantMessage, AssistantRequest, AssistantResponse, AssistantRole, AssistantStatus,
         AssistantStreamEvent, AssistantTokenUsage, UiAction,
     },
-    AssistantError, AssistantGateway, ID,
+    AssistantContextQuery, AssistantError, AssistantGateway, ID,
 };
 
 const MAX_INPUT_BYTES: usize = 4_096;
@@ -42,7 +41,7 @@ struct PendingResponse {
 
 pub struct AssistantWorkspace {
     gateway: Arc<dyn AssistantGateway>,
-    portfolio: Arc<dyn PortfolioRepository>,
+    context: Arc<dyn AssistantContextQuery>,
     model_label: String,
     available_workspaces: Vec<String>,
     active_workspace: String,
@@ -60,7 +59,7 @@ pub struct AssistantWorkspace {
 impl AssistantWorkspace {
     pub fn new(
         gateway: Arc<dyn AssistantGateway>,
-        portfolio: Arc<dyn PortfolioRepository>,
+        context: Arc<dyn AssistantContextQuery>,
         available_workspaces: Vec<String>,
     ) -> Self {
         let model_label = gateway.model_label().to_owned();
@@ -71,7 +70,7 @@ impl AssistantWorkspace {
         };
         Self {
             gateway,
-            portfolio,
+            context,
             model_label,
             available_workspaces,
             active_workspace: "overview".to_owned(),
@@ -108,16 +107,17 @@ impl AssistantWorkspace {
         let active_workspace = self.active_workspace.clone();
         let available_workspaces = self.available_workspaces.clone();
         let gateway = Arc::clone(&self.gateway);
-        let portfolio = Arc::clone(&self.portfolio);
+        let context = Arc::clone(&self.context);
         let (result_sender, result) = mpsc::channel();
         let (updates, update_receiver) = mpsc::channel();
         thread::spawn(move || {
+            let context = context.load_context();
             let request = AssistantRequest {
                 messages,
                 active_workspace,
                 available_workspaces,
-                portfolio: portfolio.load_portfolio(),
-                activity: portfolio.load_activity(),
+                portfolio: context.portfolio,
+                activity: context.activity,
             };
             let _ = result_sender.send(gateway.complete_stream(request, updates));
         });
@@ -474,6 +474,11 @@ impl Workspace for AssistantWorkspace {
 mod tests {
     use super::*;
 
+    use crate::features::assistant::domain::{
+        AssistantActivityEntry, AssistantActivityLedger, AssistantContextSnapshot,
+        AssistantPortfolioSnapshot, AssistantPosition,
+    };
+
     use ratatui::{backend::TestBackend, Terminal};
 
     struct TestGateway;
@@ -503,58 +508,64 @@ mod tests {
         }
     }
 
-    struct TestPortfolio;
+    struct TestContext;
 
-    impl PortfolioRepository for TestPortfolio {
-        fn load_portfolio(&self) -> crate::features::portfolio::PortfolioSnapshot {
-            let usd = crate::foundation::Currency::new("USD").unwrap();
-            let mut snapshot = crate::features::portfolio::PortfolioSnapshot::empty("TEST");
-            snapshot
-                .positions
-                .push(crate::features::portfolio::Position {
-                    instrument_id: crate::foundation::InstrumentId::new("us:xnas:aapl"),
-                    account_id: crate::features::portfolio::PortfolioAccountId::new("ACCOUNT 1"),
+    fn test_context() -> AssistantContextSnapshot {
+        AssistantContextSnapshot {
+            portfolio: AssistantPortfolioSnapshot {
+                source: "TEST".to_owned(),
+                as_of: "2026-08-01".to_owned(),
+                input_version: "TEST-1".to_owned(),
+                methodology: "TEST".to_owned(),
+                disclosures: Vec::new(),
+                net_asset_value: "$8,000.00".to_owned(),
+                available_cash: "$1,000.00".to_owned(),
+                ytd_return: "5.00%".to_owned(),
+                sharpe: "1.20".to_owned(),
+                positions: vec![AssistantPosition {
+                    instrument_id: "us:xnas:aapl".to_owned(),
+                    account: "ACCOUNT 1".to_owned(),
                     symbol: "AAPL".to_owned(),
-                    currency: usd,
-                    quantity: crate::features::portfolio::PositionQuantity::from_scaled_units(
-                        10_000_000,
-                    ),
-                    average_cost: Some(crate::foundation::Money::from_minor_units(15_000, usd)),
-                    market_value: Some(crate::foundation::Money::from_minor_units(200_000, usd)),
-                    unrealized_return_bps: Some(3_333),
-                    weight_bps: Some(2_500),
-                    cash: false,
-                });
-            snapshot
-        }
-
-        fn load_activity(&self) -> crate::features::portfolio::PortfolioActivityLedger {
-            let usd = crate::foundation::Currency::new("USD").unwrap();
-            let mut activity =
-                crate::features::portfolio::PortfolioActivityLedger::empty("TEST ACTIVITY");
-            activity
-                .entries
-                .push(crate::features::portfolio::PortfolioActivityEntry {
+                    quantity: "10".to_owned(),
+                    average_cost: "$150.00".to_owned(),
+                    market_value: "$2,000.00".to_owned(),
+                    currency: "USD".to_owned(),
+                    pnl: "33.33%".to_owned(),
+                    weight: "25.00%".to_owned(),
+                }],
+            },
+            activity: AssistantActivityLedger {
+                source: "TEST ACTIVITY".to_owned(),
+                period: "2026-08-01".to_owned(),
+                input_version: "TEST-ACTIVITY-1".to_owned(),
+                methodology: "TEST".to_owned(),
+                disclosures: Vec::new(),
+                net_cash_effect: "$5.00".to_owned(),
+                entries: vec![AssistantActivityEntry {
                     activity_id: "ACT-1".to_owned(),
-                    account_id: crate::features::portfolio::PortfolioAccountId::new("ACCOUNT 1"),
                     date: "2026-08-01".to_owned(),
-                    kind: crate::features::portfolio::PortfolioActivityKind::Dividend,
-                    description: "DIVIDEND".to_owned(),
+                    account: "ACCOUNT 1".to_owned(),
+                    kind: "DIVIDEND".to_owned(),
                     symbol: Some("AAPL".to_owned()),
-                    currency: usd,
-                    quantity: None,
-                    cash_effect: Some(crate::foundation::Money::from_minor_units(500, usd)),
-                    fees: None,
-                });
-            activity
+                    description: "DIVIDEND".to_owned(),
+                    quantity: "—".to_owned(),
+                    cash_effect: "$5.00".to_owned(),
+                    fees: "—".to_owned(),
+                    currency: "USD".to_owned(),
+                }],
+                currency_totals: Vec::new(),
+            },
+        }
+    }
+
+    impl AssistantContextQuery for TestContext {
+        fn load_context(&self) -> AssistantContextSnapshot {
+            test_context()
         }
     }
 
     struct CapturingGateway {
-        seen: mpsc::SyncSender<(
-            crate::features::portfolio::PortfolioSnapshot,
-            crate::features::portfolio::PortfolioActivityLedger,
-        )>,
+        seen: mpsc::SyncSender<(AssistantPortfolioSnapshot, AssistantActivityLedger)>,
     }
 
     impl AssistantGateway for CapturingGateway {
@@ -604,7 +615,7 @@ mod tests {
     fn streaming_status_renders_a_spinner_live_tokens_and_tool_activity() {
         let mut workspace = AssistantWorkspace::new(
             Arc::new(TestGateway),
-            Arc::new(TestPortfolio),
+            Arc::new(TestContext),
             vec!["overview".to_owned()],
         );
         workspace.status = AssistantStatus::Loading;
@@ -645,7 +656,7 @@ mod tests {
         let (seen, received) = mpsc::sync_channel(1);
         let mut workspace = AssistantWorkspace::new(
             Arc::new(CapturingGateway { seen }),
-            Arc::new(TestPortfolio),
+            Arc::new(TestContext),
             vec!["overview".to_owned()],
         );
         workspace.input = "analyze my positions".to_owned();

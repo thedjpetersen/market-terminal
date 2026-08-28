@@ -1,4 +1,4 @@
-use crate::features::market_data::CanonicalInstrumentId;
+use crate::foundation::InstrumentId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonitorColumn {
@@ -91,14 +91,14 @@ pub struct SortSpec {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchlistItem {
-    pub instrument_id: CanonicalInstrumentId,
+    pub instrument_id: InstrumentId,
     pub symbol: String,
     pub description: String,
 }
 
 impl WatchlistItem {
     pub fn new(
-        instrument_id: CanonicalInstrumentId,
+        instrument_id: InstrumentId,
         symbol: impl Into<String>,
         description: impl Into<String>,
     ) -> Self {

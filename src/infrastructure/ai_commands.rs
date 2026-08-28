@@ -4,12 +4,9 @@ use serde_json::json;
 
 use crate::{
     app::{CommandInference, CommandInferenceError, CommandInferenceRequest, InferredCommand},
-    features::{
-        assistant::{
-            domain::{AssistantMessage, AssistantRequest, UiAction},
-            AssistantGateway,
-        },
-        portfolio::PortfolioSnapshot,
+    features::assistant::{
+        domain::{AssistantMessage, AssistantRequest, UiAction},
+        AssistantGateway,
     },
 };
 
@@ -45,10 +42,10 @@ impl CommandInference for AiCommandInference {
                 ],
                 active_workspace: request.active_workspace,
                 available_workspaces: request.available_workspaces,
-                portfolio: PortfolioSnapshot::empty(
+                portfolio: crate::features::assistant::domain::AssistantPortfolioSnapshot::unavailable(
                     "COMMAND INFERENCE · ASSET CONTEXT NOT PROVIDED",
                 ),
-                activity: crate::features::portfolio::PortfolioActivityLedger::empty(
+                activity: crate::features::assistant::domain::AssistantActivityLedger::unavailable(
                     "COMMAND INFERENCE · ACTIVITY CONTEXT NOT PROVIDED",
                 ),
             })

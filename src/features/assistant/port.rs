@@ -1,6 +1,8 @@
 use std::sync::mpsc::Sender;
 
-use super::domain::{AssistantRequest, AssistantResponse, AssistantStreamEvent};
+use super::domain::{
+    AssistantContextSnapshot, AssistantRequest, AssistantResponse, AssistantStreamEvent,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssistantError {
@@ -22,6 +24,13 @@ impl std::fmt::Display for AssistantError {
 }
 
 impl std::error::Error for AssistantError {}
+
+/// Read-only, bounded context supplied to Assistant by an infrastructure
+/// translator. Assistant never imports the producing feature's domain types or
+/// repository port.
+pub trait AssistantContextQuery: Send + Sync {
+    fn load_context(&self) -> AssistantContextSnapshot;
+}
 
 pub trait AssistantGateway: Send + Sync {
     fn complete(&self, request: AssistantRequest) -> Result<AssistantResponse, AssistantError>;

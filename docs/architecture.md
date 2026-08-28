@@ -67,6 +67,15 @@ currency, then derives concentration and an explicit non-cash shock with exact
 minor-unit arithmetic. This is the boundary downstream pricing and factor
 engines can replace without gaining access to Portfolio storage.
 
+`PortfolioAssistantContextQuery` applies the same consumer-owned contract to
+the AI surface. Assistant owns a deliberately presentation-ready context model
+and the narrow `AssistantContextQuery` port. The infrastructure translator reads
+Portfolio snapshots, formats the permitted fields, and discards repository
+capabilities before a request crosses into Assistant. Provider adapters can
+therefore serialize portfolio context without importing Portfolio types, and
+the model cannot use the Assistant request as an accidental path back to
+portfolio storage.
+
 Portfolio contribution is also a pure calculation boundary. Callers supply one
 verified period of security-level beginning values, ending values, and
 end-of-period external flows plus optional benchmark beginning and ending
@@ -146,6 +155,10 @@ on that concrete adapter.
    rectangles with lane-first distance and stable geometry/ID tie-breakers.
 3. Add an infrastructure adapter for the feature-owned port.
 4. Register the workspace in `bootstrap.rs`.
+5. Run `cargo test --test architecture_boundaries`; CI rejects production
+   feature-to-adapter imports, cross-feature imports, shell/rendering
+   dependencies in domain and port layers, and dependency inversions in
+   `foundation` or shared `ui`.
 
 No root router match, shared screen state, or central data trait needs to be
 edited. The registry validates duplicate IDs and hotkeys at startup. Follow
@@ -239,3 +252,13 @@ The next structural steps are intentionally additive:
 The current boundary is deliberately a modular monolith. It gives strong
 ownership and test seams without paying the operational cost of services or a
 large multi-crate graph before those costs are warranted.
+
+These boundaries are executable, not solely diagrammed.
+`tests/architecture_boundaries.rs` scans production Rust source (excluding
+test-only modules) and fails on the dependency directions above. Unit tests may
+compose deterministic concrete adapters, but production feature code must reach
+them only through a feature-owned port wired in `bootstrap.rs`. Cross-context
+reads require a consumer-owned DTO and an infrastructure translator, as shown
+by Portfolio-to-Risk and Portfolio-to-Assistant. This gives a growing modular
+monolith a cheap extraction test: a context should remain movable without
+bringing another context's repository or domain graph with it.

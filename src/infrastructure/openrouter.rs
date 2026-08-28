@@ -196,15 +196,15 @@ fn portfolio_context(request: &AssistantRequest) -> String {
         .take(100)
         .map(|position| {
             json!({
-                "instrument_id": position.instrument_id.as_str(),
-                "account": position.account_id.as_str(),
+                "instrument_id": position.instrument_id,
+                "account": position.account,
                 "symbol": position.symbol,
-                "quantity": position.quantity_label(),
-                "average_cost": position.average_cost_label(),
-                "market_value": position.market_value_label(),
-                "currency": position.currency().to_string(),
-                "pnl": position.pnl_label(),
-                "weight": position.weight_label(),
+                "quantity": position.quantity,
+                "average_cost": position.average_cost,
+                "market_value": position.market_value,
+                "currency": position.currency,
+                "pnl": position.pnl,
+                "weight": position.weight,
             })
         })
         .collect::<Vec<_>>();
@@ -214,10 +214,10 @@ fn portfolio_context(request: &AssistantRequest) -> String {
         "input_version": request.portfolio.input_version,
         "methodology": request.portfolio.methodology,
         "disclosures": request.portfolio.disclosures,
-        "net_asset_value": request.portfolio.net_asset_value_label(),
-        "available_cash": request.portfolio.available_cash_label(),
-        "ytd_return": request.portfolio.ytd_return_label(),
-        "sharpe": request.portfolio.sharpe_label(),
+        "net_asset_value": request.portfolio.net_asset_value,
+        "available_cash": request.portfolio.available_cash,
+        "ytd_return": request.portfolio.ytd_return,
+        "sharpe": request.portfolio.sharpe,
         "position_count": request.portfolio.positions.len(),
         "positions": positions,
         "truncated": request.portfolio.positions.len() > 100,
@@ -228,7 +228,7 @@ fn portfolio_context(request: &AssistantRequest) -> String {
             "methodology": request.activity.methodology,
             "disclosures": request.activity.disclosures,
             "entry_count": request.activity.entries.len(),
-            "net_cash_effect": request.activity.net_cash_effect_label(),
+            "net_cash_effect": request.activity.net_cash_effect,
             "currency_count": request.activity.currency_totals.len(),
             "entries_omitted": true,
         },
@@ -469,8 +469,12 @@ mod tests {
             )],
             active_workspace: "overview".to_owned(),
             available_workspaces: vec!["overview".to_owned(), "markets".to_owned()],
-            portfolio: crate::features::portfolio::PortfolioSnapshot::empty("TEST"),
-            activity: crate::features::portfolio::PortfolioActivityLedger::empty("TEST"),
+            portfolio: crate::features::assistant::domain::AssistantPortfolioSnapshot::unavailable(
+                "TEST",
+            ),
+            activity: crate::features::assistant::domain::AssistantActivityLedger::unavailable(
+                "TEST",
+            ),
         });
 
         assert_eq!(body["model"], "test/model");

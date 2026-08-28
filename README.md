@@ -624,9 +624,9 @@ performance contract are in [`docs/spreadsheet.md`](docs/spreadsheet.md).
 
 Set `RUST_LOG` to opt into newline-delimited JSON tracing without changing the
 normal terminal display, for example `RUST_LOG=market_terminal=debug cargo run`.
-CI rejects Clippy warnings, test failures, release-build failures, semantic frame
-changes at standard terminal sizes, and spreadsheet edit p95 above 50 ms with
-10,000 populated cells.
+CI rejects Clippy warnings, test failures, architecture-boundary violations,
+release-build failures, semantic frame changes at standard terminal sizes, and
+spreadsheet edit p95 above 50 ms with 10,000 populated cells.
 
 ## Experience gallery
 

@@ -617,15 +617,15 @@ fn portfolio_positions(arguments: &Value, request: &AssistantRequest) -> Dynamic
         .take(limit)
         .map(|position| {
             json!({
-                "instrument_id": position.instrument_id.as_str(),
-                "account": position.account_id.as_str(),
+                "instrument_id": position.instrument_id,
+                "account": position.account,
                 "symbol": position.symbol,
-                "quantity": position.quantity_label(),
-                "average_cost": position.average_cost_label(),
-                "market_value": position.market_value_label(),
-                "currency": position.currency().to_string(),
-                "pnl": position.pnl_label(),
-                "weight": position.weight_label(),
+                "quantity": position.quantity,
+                "average_cost": position.average_cost,
+                "market_value": position.market_value,
+                "currency": position.currency,
+                "pnl": position.pnl,
+                "weight": position.weight,
             })
         })
         .collect::<Vec<_>>();
@@ -635,10 +635,10 @@ fn portfolio_positions(arguments: &Value, request: &AssistantRequest) -> Dynamic
         "input_version": request.portfolio.input_version,
         "methodology": request.portfolio.methodology,
         "disclosures": request.portfolio.disclosures,
-        "net_asset_value": request.portfolio.net_asset_value_label(),
-        "available_cash": request.portfolio.available_cash_label(),
-        "ytd_return": request.portfolio.ytd_return_label(),
-        "sharpe": request.portfolio.sharpe_label(),
+        "net_asset_value": request.portfolio.net_asset_value,
+        "available_cash": request.portfolio.available_cash,
+        "ytd_return": request.portfolio.ytd_return,
+        "sharpe": request.portfolio.sharpe,
         "total_position_count": request.portfolio.positions.len(),
         "matching_position_count": matching_count,
         "returned_position_count": returned,
@@ -683,14 +683,14 @@ fn portfolio_activity(arguments: &Value, request: &AssistantRequest) -> DynamicT
             json!({
                 "activity_id": entry.activity_id,
                 "date": entry.date,
-                "account": entry.account_id.as_str(),
-                "type": entry.kind.label(),
+                "account": entry.account,
+                "type": entry.kind,
                 "symbol": entry.symbol,
                 "description": entry.description,
-                "quantity": entry.quantity_label(),
-                "cash_effect": entry.cash_effect_label(),
-                "fees": entry.fees_label(),
-                "currency": entry.currency.to_string(),
+                "quantity": entry.quantity,
+                "cash_effect": entry.cash_effect,
+                "fees": entry.fees,
+                "currency": entry.currency,
             })
         })
         .collect::<Vec<_>>();
@@ -700,14 +700,14 @@ fn portfolio_activity(arguments: &Value, request: &AssistantRequest) -> DynamicT
         .iter()
         .map(|total| {
             json!({
-                "currency": total.currency.to_string(),
+                "currency": total.currency,
                 "entries": total.entries,
-                "inflows": crate::features::portfolio::format_money(total.inflows),
-                "outflows": crate::features::portfolio::format_money(total.outflows),
-                "net_cash_effect": crate::features::portfolio::format_money(total.net_cash_effect),
-                "dividends": crate::features::portfolio::format_money(total.dividends),
-                "interest": crate::features::portfolio::format_money(total.interest),
-                "fees": crate::features::portfolio::format_money(total.fees),
+                "inflows": total.inflows,
+                "outflows": total.outflows,
+                "net_cash_effect": total.net_cash_effect,
+                "dividends": total.dividends,
+                "interest": total.interest,
+                "fees": total.fees,
                 "non_cash_entries": total.non_cash_entries,
             })
         })
@@ -1122,60 +1122,64 @@ mod tests {
     };
 
     fn request_with_portfolio() -> AssistantRequest {
-        let usd = crate::foundation::Currency::new("USD").unwrap();
-        let mut portfolio = crate::features::portfolio::PortfolioSnapshot::empty("TEST");
-        portfolio
-            .positions
-            .push(crate::features::portfolio::Position {
-                instrument_id: crate::foundation::InstrumentId::new("us:xnas:aapl"),
-                account_id: crate::features::portfolio::PortfolioAccountId::new("ACCOUNT 1"),
+        use crate::features::assistant::domain::{
+            AssistantActivityCurrencyTotal, AssistantActivityEntry, AssistantActivityLedger,
+            AssistantPortfolioSnapshot, AssistantPosition,
+        };
+
+        let portfolio = AssistantPortfolioSnapshot {
+            source: "TEST".to_owned(),
+            as_of: "2026-08-01".to_owned(),
+            input_version: "TEST-1".to_owned(),
+            methodology: "TEST".to_owned(),
+            disclosures: Vec::new(),
+            net_asset_value: "$8,000.00".to_owned(),
+            available_cash: "$1,000.00".to_owned(),
+            ytd_return: "5.00%".to_owned(),
+            sharpe: "1.20".to_owned(),
+            positions: vec![AssistantPosition {
+                instrument_id: "us:xnas:aapl".to_owned(),
+                account: "ACCOUNT 1".to_owned(),
                 symbol: "AAPL".to_owned(),
-                currency: usd,
-                quantity: crate::features::portfolio::PositionQuantity::from_scaled_units(
-                    10_000_000,
-                ),
-                average_cost: Some(crate::foundation::Money::from_minor_units(15_000, usd)),
-                market_value: Some(crate::foundation::Money::from_minor_units(200_000, usd)),
-                unrealized_return_bps: Some(3_333),
-                weight_bps: Some(2_500),
-                cash: false,
-            });
-        portfolio.currency_totals = vec![crate::features::portfolio::PortfolioCurrencyTotal {
-            currency: usd,
-            net_asset_value: crate::foundation::Money::from_minor_units(800_000, usd),
-            available_cash: crate::foundation::Money::from_minor_units(100_000, usd),
-            priced_positions: 1,
-            unpriced_positions: 0,
-        }];
-        portfolio.ytd_return_bps = Some(500);
-        portfolio.sharpe_hundredths = Some(120);
-        let mut activity = crate::features::portfolio::PortfolioActivityLedger::empty("TEST");
-        activity
-            .entries
-            .push(crate::features::portfolio::PortfolioActivityEntry {
+                quantity: "10".to_owned(),
+                average_cost: "$150.00".to_owned(),
+                market_value: "$2,000.00".to_owned(),
+                currency: "USD".to_owned(),
+                pnl: "33.33%".to_owned(),
+                weight: "25.00%".to_owned(),
+            }],
+        };
+        let activity = AssistantActivityLedger {
+            source: "TEST".to_owned(),
+            period: "2026-08-01".to_owned(),
+            input_version: "TEST-ACTIVITY-1".to_owned(),
+            methodology: "TEST".to_owned(),
+            disclosures: Vec::new(),
+            net_cash_effect: "$5.00".to_owned(),
+            entries: vec![AssistantActivityEntry {
                 activity_id: "ACT-1".to_owned(),
-                account_id: crate::features::portfolio::PortfolioAccountId::new("ACCOUNT 1"),
                 date: "2026-08-01".to_owned(),
-                kind: crate::features::portfolio::PortfolioActivityKind::Dividend,
-                description: "CASH DIVIDEND".to_owned(),
+                account: "ACCOUNT 1".to_owned(),
+                kind: "DIVIDEND".to_owned(),
                 symbol: Some("AAPL".to_owned()),
-                currency: usd,
-                quantity: None,
-                cash_effect: Some(crate::foundation::Money::from_minor_units(500, usd)),
-                fees: None,
-            });
-        activity.currency_totals =
-            vec![crate::features::portfolio::PortfolioActivityCurrencyTotal {
-                currency: usd,
+                description: "CASH DIVIDEND".to_owned(),
+                quantity: "—".to_owned(),
+                cash_effect: "$5.00".to_owned(),
+                fees: "—".to_owned(),
+                currency: "USD".to_owned(),
+            }],
+            currency_totals: vec![AssistantActivityCurrencyTotal {
+                currency: "USD".to_owned(),
                 entries: 1,
-                inflows: crate::foundation::Money::from_minor_units(500, usd),
-                outflows: crate::foundation::Money::from_minor_units(0, usd),
-                net_cash_effect: crate::foundation::Money::from_minor_units(500, usd),
-                dividends: crate::foundation::Money::from_minor_units(500, usd),
-                interest: crate::foundation::Money::from_minor_units(0, usd),
-                fees: crate::foundation::Money::from_minor_units(0, usd),
+                inflows: "$5.00".to_owned(),
+                outflows: "$0.00".to_owned(),
+                net_cash_effect: "$5.00".to_owned(),
+                dividends: "$5.00".to_owned(),
+                interest: "$0.00".to_owned(),
+                fees: "$0.00".to_owned(),
                 non_cash_entries: 0,
-            }];
+            }],
+        };
         AssistantRequest {
             messages: vec![crate::features::assistant::domain::AssistantMessage::user(
                 "hello",

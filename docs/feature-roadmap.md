@@ -167,6 +167,15 @@ move to its own crate later without changing its public vocabulary.
   exact upstream tree, with stable `OTUI-*` IDs, implementation-maturity labels,
   repository-relative evidence, owners, priorities, gaps, acceptance-test IDs,
   and a CI-executed schema/invariant test.
+- **Complete:** executable modular-monolith dependency enforcement. CI scans
+  production feature source and rejects direct infrastructure imports,
+  cross-bounded-context imports, domain/port dependencies on shell or rendering,
+  and dependency inversions in Foundation or shared UI. Assistant now owns its
+  context DTO and query port; the composition root supplies a
+  Portfolio-to-Assistant infrastructure translator instead of exposing
+  Portfolio domain types or repository access. Watchlist also consumes the
+  foundation-owned canonical `InstrumentId` directly rather than Market Data's
+  compatibility alias.
 - **Next:** execute the OpenTerminalUI parity track below, beginning with
   shell/workspace completion, then finishing the remaining
   Stage 2 risk, screening, and alert-rule families. Provider availability
@@ -336,6 +345,10 @@ feature list from becoming a collection of menu placeholders.
 - Add CI checks that a capability cannot be marked complete without its command,
   Help entry, semantic goldens, deterministic contract test, data-source register
   entry, and performance case.
+- Keep package-by-feature ownership executable as the parity surface expands:
+  production contexts cannot import concrete adapters or peer contexts;
+  consumer-owned ports and DTO translators are required for composed reads;
+  domain and port layers remain independent of shell and rendering code.
 
 **Exit evidence:** shell and feature action registries have duplicate/conflict
 tests; follow hints route every visible action in representative Overview, Desk,
@@ -359,7 +372,12 @@ with responsive hidden-pane exclusion. Monitor now supplies its visible rows and
 discrete footer controls from the same geometry used by rendering and mouse input,
 including real nested routing inside Desk. Remaining workspace adopters, gallery
 states, and enforcement that completed capabilities link real implementation
-evidence remain.
+evidence remain. `tests/architecture_boundaries.rs` now enforces dependency
+direction on every CI run. The first remediation moved Assistant's portfolio
+context behind an Assistant-owned port and composition-root translator, and
+removed Watchlist's dependency on a Market Data identity alias. This closes the
+known production cross-context leaks; future composed reads must use the same
+consumer-owned contract pattern.
 
 ### P1 — Mission Control, launchpad, and saved workspaces
 

@@ -4,7 +4,7 @@ use crate::{
     app::{App, DeskWorkspace, Keymap, RuntimeSettingsSummary, WorkspaceRegistry},
     features::{
         alerts::{AlertStateStore, AlertsQuery, AlertsWorkspace},
-        assistant::{AssistantGateway, AssistantWorkspace},
+        assistant::{AssistantContextQuery, AssistantGateway, AssistantWorkspace},
         charting::{ChartHistoryQuery, ChartInstrument, ChartingWorkspace},
         chat::{ChatGateway, ChatWorkspace},
         instrument::{InstrumentSearch, InstrumentSearchWorkspace},
@@ -25,8 +25,8 @@ use crate::{
         DemoMarketDataReplay, DemoSpreadsheetMarketData, DemoWatchlistCatalog, FinnhubMarketData,
         IrcChatGateway, LiveAlertsQuery, LiveMarketsQuery, LiveNewsFeed, LiveOverviewQuery,
         LiveSecurityQuery, LiveSpreadsheetMarketData, LocalPersistence, LocalSpreadsheetFiles,
-        OpenRouterConfig, OpenRouterGateway, PortfolioRiskQuery, SecInstrumentSearch,
-        SystemNewsArticleOpener, YahooMarketData,
+        OpenRouterConfig, OpenRouterGateway, PortfolioAssistantContextQuery, PortfolioRiskQuery,
+        SecInstrumentSearch, SystemNewsArticleOpener, YahooMarketData,
     },
 };
 
@@ -34,6 +34,8 @@ pub fn demo_app() -> App {
     crate::ui::theme::set_theme("default").expect("built-in default theme");
     let data = Arc::new(DemoData);
     let portfolio_query: Arc<dyn PortfolioRepository> = data.clone();
+    let assistant_context: Arc<dyn AssistantContextQuery> =
+        Arc::new(PortfolioAssistantContextQuery::new(portfolio_query.clone()));
     let risk_query: Arc<dyn RiskQuery> = Arc::new(PortfolioRiskQuery::new(portfolio_query.clone()));
     let news_query: Arc<dyn NewsFeed> = data;
     build_app(AppProviders {
@@ -41,6 +43,7 @@ pub fn demo_app() -> App {
         markets_query: Arc::new(DemoData),
         chat: Arc::new(DemoChatGateway::new()),
         portfolio_query,
+        assistant_context,
         risk_query,
         news_query,
         article_opener: None,
@@ -66,6 +69,7 @@ struct AppProviders {
     markets_query: Arc<dyn MarketsQuery>,
     chat: Arc<dyn ChatGateway>,
     portfolio_query: Arc<dyn PortfolioRepository>,
+    assistant_context: Arc<dyn AssistantContextQuery>,
     risk_query: Arc<dyn RiskQuery>,
     news_query: Arc<dyn NewsFeed>,
     article_opener: Option<Arc<dyn NewsArticleOpener>>,
@@ -91,6 +95,7 @@ fn build_app(providers: AppProviders) -> App {
         markets_query,
         chat,
         portfolio_query,
+        assistant_context,
         risk_query,
         news_query,
         article_opener,
@@ -150,7 +155,7 @@ fn build_app(providers: AppProviders) -> App {
         Box::new(desk_workspace),
         Box::new(AssistantWorkspace::new(
             assistant_gateway,
-            portfolio_query.clone(),
+            assistant_context,
             vec![
                 "overview".to_owned(),
                 "desk".to_owned(),
@@ -216,6 +221,8 @@ pub fn persistent_app() -> App {
     let (keymap, keymap_warnings) = Keymap::from_env();
     let portfolio_query: Arc<dyn PortfolioRepository> =
         Arc::new(CsvPortfolioRepository::persistent(repository.clone()));
+    let assistant_context: Arc<dyn AssistantContextQuery> =
+        Arc::new(PortfolioAssistantContextQuery::new(portfolio_query.clone()));
     let risk_query: Arc<dyn RiskQuery> = Arc::new(PortfolioRiskQuery::new(portfolio_query.clone()));
     let news_query: Arc<dyn NewsFeed> = Arc::new(LiveNewsFeed::from_env());
     let live_market_data = configured_market_data();
@@ -249,6 +256,7 @@ pub fn persistent_app() -> App {
         markets_query,
         chat: Arc::new(IrcChatGateway::from_env()),
         portfolio_query,
+        assistant_context,
         risk_query,
         news_query,
         article_opener: Some(Arc::new(SystemNewsArticleOpener)),
