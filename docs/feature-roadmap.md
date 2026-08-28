@@ -145,8 +145,12 @@ move to its own crate later without changing its public vocabulary.
   IDs, duplicate/disabled/off-screen rejection, viewport-aware one- or two-letter
   follow hints, activation revalidation, and Portfolio tabs, security-capable
   rows, and reload controls as the initial adopter.
-- **Next:** execute the OpenTerminalUI parity track below, beginning with the
-  parity ledger and shell/workspace completion, then finishing the remaining
+- **Complete:** source-derived OpenTerminalUI capability ledger pinned to an
+  exact upstream tree, with stable `OTUI-*` IDs, implementation-maturity labels,
+  repository-relative evidence, owners, priorities, gaps, acceptance-test IDs,
+  and a CI-executed schema/invariant test.
+- **Next:** execute the OpenTerminalUI parity track below, beginning with
+  shell/workspace completion, then finishing the remaining
   Stage 2 risk, screening, and alert-rule families. Provider availability
   extends the deployment surface; deterministic fixtures remain the acceptance
   baseline and opt-in live contracts verify real provider behavior.
@@ -172,8 +176,8 @@ move to its own crate later without changing its public vocabulary.
 
 ### Baseline, scope, and definition of parity
 
-This track compares Market Terminal at commit
-[`c0d8bee`](https://github.com/thedjpetersen/market-terminal/commit/c0d8bee5430e2b9862bcdc73a950035d9ab46f99)
+This track compares Market Terminal after commit
+[`448e2b2`](https://github.com/thedjpetersen/market-terminal/commit/448e2b2925472242789cfc6569cb16a28645ab42)
 with OpenTerminalUI at commit
 [`fc16fd6`](https://github.com/Hitheshkaranth/OpenTerminalUI/commit/fc16fd646405aec7a5525387be89c0cb376137c5),
 the OpenTerminalUI `main` head inspected on 2026-08-28. The reference surface
@@ -188,6 +192,14 @@ The review evidence is the pinned
 [`router.py`](https://github.com/Hitheshkaranth/OpenTerminalUI/blob/fc16fd646405aec7a5525387be89c0cb376137c5/backend/api/router.py),
 and
 [`ci.yml`](https://github.com/Hitheshkaranth/OpenTerminalUI/blob/fc16fd646405aec7a5525387be89c0cb376137c5/.github/workflows/ci.yml).
+The machine-readable
+[`openterminalui-parity-ledger.json`](openterminalui-parity-ledger.json) expands
+that source audit into 40 stable capabilities. At the pinned tree, the reference
+contains 1,532 tracked files, 574 frontend source files, 672 backend files, 115
+React route declarations, 44 mounted API routers, 168 backend test files, and 29
+browser E2E specs. Those counts are discovery evidence, not completion claims:
+the ledger records implementation maturity separately because the source itself
+labels one mounted router group as stubs and several routes are thin wrappers.
 
 Parity means equivalent user outcomes, input coverage, disclosures, and failure
 behavior in a native terminal. It does **not** mean React/FastAPI compatibility,
@@ -290,7 +302,7 @@ to complete:
 **Priority: immediate. Dependencies: Stage 0.** This package prevents a broad
 feature list from becoming a collection of menu placeholders.
 
-- Create a versioned parity ledger with stable `OTUI-*` capability IDs, owner
+- Maintain the versioned parity ledger with stable `OTUI-*` capability IDs, owner
   context, current/target status, reference source link, dependencies, adapter
   requirements, legal review state, and acceptance-test IDs. Update the pinned
   upstream commit only through a reviewed diff.
@@ -313,12 +325,16 @@ Security, Portfolio, Chart, News, Alerts, and Spreadsheet frames; spatial focus
 has geometry/property tests; the ledger is pinned to an exact upstream commit and
 CI rejects incomplete evidence links.
 
-**Status: in progress.** The bounded feature-action contract now filters invalid,
-disabled, duplicate, off-screen, and excess actions, assigns at most two-letter
-codes, renders badges at feature-owned rectangles, and revalidates activation.
+**Status: in progress.** The checked-in source ledger now covers 40 capabilities
+and is pinned, uniquely identified, source-linked, maturity-qualified, owned,
+prioritized, and validated by `tests/parity_ledger.rs`. The bounded feature-action
+contract now filters invalid, disabled, duplicate, off-screen, and excess actions,
+assigns at most two-letter codes, renders badges at feature-owned rectangles, and
+revalidates activation.
 Portfolio supplies visible tabs, security-capable rows, and reload as the first
-adopter. The parity ledger artifact, spatial rectangle routing, remaining
-workspace adopters, gallery states, and CI evidence enforcement remain.
+adopter. Spatial rectangle routing, remaining workspace adopters, gallery states,
+and enforcement that completed capabilities link real implementation evidence
+remain.
 
 ### P1 — Mission Control, launchpad, and saved workspaces
 
