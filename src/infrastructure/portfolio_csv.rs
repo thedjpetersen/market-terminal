@@ -1338,9 +1338,23 @@ fn normalize_symbol(symbol: &str, description: &str, cash: bool) -> String {
 
 fn is_cash(symbol: &str, description: &str) -> bool {
     let combined = format!("{symbol} {description}").to_ascii_uppercase();
-    combined.contains("CASH")
+    is_explicit_currency_balance(symbol)
+        || combined.contains("CASH")
         || combined.contains("MONEY MARKET")
         || combined.contains("CORE POSITION")
+}
+
+fn is_explicit_currency_balance(symbol: &str) -> bool {
+    symbol
+        .trim()
+        .to_ascii_uppercase()
+        .strip_prefix("CUR:")
+        .is_some_and(|currency| {
+            currency.len() == 3
+                && currency
+                    .chars()
+                    .all(|character| character.is_ascii_alphabetic())
+        })
 }
 
 fn is_total_row(symbol: &str, description: &str) -> bool {
@@ -1721,6 +1735,18 @@ mod tests {
         assert_eq!(snapshot.net_asset_value_label(), "$1,125.50");
         assert_eq!(snapshot.available_cash_label(), "$125.50");
         assert!(snapshot.input_version.starts_with("CSV-FNV1A64-"));
+    }
+
+    #[test]
+    fn classifies_explicit_currency_balances_as_cash() {
+        let csv = b"Account,Symbol,Description,Quantity,Current Price,Market Value,Currency\n\
+Brokerage,CUR:USD,U S Dollar,699.32,1,699.32,USD\n";
+
+        let snapshot = parse_portfolio_csv(csv, "positions.csv".to_owned()).unwrap();
+
+        assert_eq!(snapshot.positions.len(), 1);
+        assert!(snapshot.positions[0].cash);
+        assert_eq!(snapshot.available_cash_label(), "$699.32");
     }
 
     #[test]
