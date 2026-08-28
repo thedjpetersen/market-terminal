@@ -21,7 +21,7 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
   and analytics datasets called out instead of mocked
 - Security — quote/chart, financials, raw SEC Form 4 insider transactions,
   filings, explicitly unavailable estimates/peers, and linked news
-- Portfolio — imported positions, reconciled value/weights, and source status
+- Portfolio — imported positions, cash activity, and dated flow-adjusted returns
 - News — asynchronously refreshed RSS/Atom stories, filters, unread/bookmarks,
   an on-demand in-terminal article reader, clickable publisher links, and
   linked securities
@@ -357,11 +357,35 @@ and inflows, outflows, net cash, dividends, interest, fees, and non-cash events
 reconcile exactly by currency. A Monarch cash export is labeled as cash-account
 activity—not broker trade history.
 
-`PORT PERFORMANCE` reports current input coverage. It intentionally leaves TWR,
-contribution, and attribution unavailable until dated portfolio valuations,
-resolved corporate actions, and an explicit benchmark/reporting currency are
-present. Cash events plus one current positions snapshot are not silently
-promoted into a return series.
+Import a separate dated valuation series for flow-adjusted performance:
+
+```text
+PORT IMPORT PERFORMANCE "~/Downloads/performance.csv"
+PORT RELOAD PERFORMANCE
+```
+
+The performance path is persisted independently from positions and activity.
+It can also be configured explicitly at startup:
+
+```dotenv
+MARKET_TERMINAL_PORTFOLIO_PERFORMANCE_CSV="~/Downloads/performance.csv"
+```
+
+The required columns are `Date` and `Portfolio Value` (or `NAV`). Optional
+columns are `External Flow`, `Benchmark Value`, and `Currency`; missing currency
+defaults to USD and is disclosed. Each currency must contain at least two dated
+positive valuations. Dates must be unique within a currency, and a benchmark
+must be present on every row when supplied.
+
+`PORT PERFORMANCE` links exact fixed-scale sub-period returns into TWR. External
+flows belong to the ending date and are removed from that ending valuation
+before the sub-period return is linked. Optional benchmark valuations produce
+benchmark and active returns. The panel keeps currencies separate, carries a
+deterministic input version and methodology, and rejects malformed or partial
+rows instead of manufacturing a result. Contribution and attribution remain
+unavailable until verified holdings or lot history can be joined to each
+valuation period; cash activity plus one positions snapshot is not silently
+promoted into that history.
 
 Overview immediately reflects the same in-memory imported portfolio and live
 news cache. A point-in-time positions export does not contain a return series,

@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::{PortfolioActivityLedger, PortfolioSnapshot};
+use super::{PortfolioActivityLedger, PortfolioPerformanceSnapshot, PortfolioSnapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PortfolioError {
@@ -54,6 +54,27 @@ pub trait PortfolioRepository: Send + Sync {
             "NO IMPORTED ACTIVITY TO RELOAD".to_owned(),
         ))
     }
+
+    fn load_performance(&self) -> PortfolioPerformanceSnapshot {
+        PortfolioPerformanceSnapshot::empty(
+            "NO PERFORMANCE IMPORTED · USE PORT IMPORT PERFORMANCE <FILE.CSV>",
+        )
+    }
+
+    fn import_performance_csv(
+        &self,
+        _path: &Path,
+    ) -> Result<PortfolioPerformanceSnapshot, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS PORTFOLIO PROVIDER DOES NOT SUPPORT PERFORMANCE CSV IMPORT".to_owned(),
+        ))
+    }
+
+    fn reload_performance(&self) -> Result<PortfolioPerformanceSnapshot, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "NO IMPORTED PERFORMANCE · USE PORT IMPORT PERFORMANCE <FILE.CSV>".to_owned(),
+        ))
+    }
 }
 
 /// Persists only the user-selected import location, never portfolio contents.
@@ -68,6 +89,16 @@ pub trait PortfolioImportStateStore: Send + Sync {
     fn save_activity_import_path(&self, _path: &Path) -> Result<(), PortfolioError> {
         Err(PortfolioError::Unsupported(
             "THIS STATE STORE DOES NOT SUPPORT ACTIVITY IMPORT PATHS".to_owned(),
+        ))
+    }
+
+    fn load_performance_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+        Ok(None)
+    }
+
+    fn save_performance_import_path(&self, _path: &Path) -> Result<(), PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS STATE STORE DOES NOT SUPPORT PERFORMANCE IMPORT PATHS".to_owned(),
         ))
     }
 }

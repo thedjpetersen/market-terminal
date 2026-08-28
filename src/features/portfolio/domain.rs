@@ -193,6 +193,107 @@ pub struct PortfolioActivityLedger {
     pub disclosures: Vec<String>,
 }
 
+/// One end-of-day portfolio valuation. `external_flow` is the net capital
+/// contribution or withdrawal since the preceding point and is applied at the
+/// end of the sub-period for the documented TWR convention.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioValuationPoint {
+    pub date: String,
+    pub currency: Currency,
+    pub ending_value: Money,
+    pub external_flow: Money,
+    pub benchmark_value: Option<Money>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioPerformanceSeries {
+    pub currency: Currency,
+    pub points: Vec<PortfolioValuationPoint>,
+    pub time_weighted_return_bps: i32,
+    pub benchmark_return_bps: Option<i32>,
+    pub active_return_bps: Option<i32>,
+}
+
+impl PortfolioPerformanceSeries {
+    pub fn period_label(&self) -> String {
+        match (self.points.first(), self.points.last()) {
+            (Some(first), Some(last)) if first.date == last.date => first.date.clone(),
+            (Some(first), Some(last)) => format!("{} — {}", first.date, last.date),
+            _ => "—".to_owned(),
+        }
+    }
+
+    pub fn time_weighted_return_label(&self) -> String {
+        format_signed_bps(self.time_weighted_return_bps)
+    }
+
+    pub fn benchmark_return_label(&self) -> String {
+        self.benchmark_return_bps
+            .map(format_signed_bps)
+            .unwrap_or_else(|| "N/A".to_owned())
+    }
+
+    pub fn active_return_label(&self) -> String {
+        self.active_return_bps
+            .map(format_signed_bps)
+            .unwrap_or_else(|| "N/A".to_owned())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioPerformanceSnapshot {
+    pub series: Vec<PortfolioPerformanceSeries>,
+    pub source: String,
+    pub period: String,
+    pub input_version: String,
+    pub methodology: String,
+    pub disclosures: Vec<String>,
+}
+
+impl PortfolioPerformanceSnapshot {
+    pub fn empty(source: impl Into<String>) -> Self {
+        Self {
+            series: Vec::new(),
+            source: source.into(),
+            period: "—".to_owned(),
+            input_version: "—".to_owned(),
+            methodology: "NO DATED VALUATION INPUT".to_owned(),
+            disclosures: vec![
+                "IMPORT DATED VALUATIONS TO CALCULATE TIME-WEIGHTED RETURN".to_owned(),
+                "NO RETURN IS INFERRED FROM A POSITION SNAPSHOT OR CASH LEDGER".to_owned(),
+            ],
+        }
+    }
+
+    pub fn point_count(&self) -> usize {
+        self.series.iter().map(|series| series.points.len()).sum()
+    }
+
+    pub fn time_weighted_return_label(&self) -> String {
+        match self.series.as_slice() {
+            [] => "N/A".to_owned(),
+            [series] => series.time_weighted_return_label(),
+            series => format!("{} CCY · SEE PERF", series.len()),
+        }
+    }
+
+    pub fn benchmark_return_label(&self) -> String {
+        match self.series.as_slice() {
+            [] => "N/A".to_owned(),
+            [series] => series.benchmark_return_label(),
+            series => format!("{} CCY · SEE PERF", series.len()),
+        }
+    }
+
+    pub fn active_return_label(&self) -> String {
+        match self.series.as_slice() {
+            [] => "N/A".to_owned(),
+            [series] => series.active_return_label(),
+            series => format!("{} CCY · SEE PERF", series.len()),
+        }
+    }
+}
+
 impl PortfolioActivityLedger {
     pub fn empty(source: impl Into<String>) -> Self {
         Self {
@@ -431,5 +532,29 @@ mod tests {
         snapshot.sharpe_hundredths = Some(-50);
 
         assert_eq!(snapshot.sharpe_label(), "-0.50");
+    }
+
+    #[test]
+    fn performance_labels_refuse_to_combine_currencies() {
+        let usd = Currency::new("USD").unwrap();
+        let eur = Currency::new("EUR").unwrap();
+        let series = |currency| PortfolioPerformanceSeries {
+            currency,
+            points: Vec::new(),
+            time_weighted_return_bps: 125,
+            benchmark_return_bps: Some(100),
+            active_return_bps: Some(25),
+        };
+        let snapshot = PortfolioPerformanceSnapshot {
+            series: vec![series(usd), series(eur)],
+            source: "TEST".to_owned(),
+            period: "2026".to_owned(),
+            input_version: "V1".to_owned(),
+            methodology: "TEST".to_owned(),
+            disclosures: Vec::new(),
+        };
+
+        assert_eq!(snapshot.time_weighted_return_label(), "2 CCY · SEE PERF");
+        assert_eq!(snapshot.benchmark_return_label(), "2 CCY · SEE PERF");
     }
 }

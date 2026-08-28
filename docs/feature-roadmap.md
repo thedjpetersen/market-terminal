@@ -99,6 +99,10 @@ move to its own crate later without changing its public vocabulary.
   with exact per-currency reconciliation, concentration, an explicit non-cash
   shock, missing-price disclosures, clickable drill-through, and actual
   configured-portfolio render verification.
+- **Complete:** first Stage 2 Performance slice with bounded dated-valuation
+  CSV import, exact flow-adjusted TWR, optional benchmark and active return,
+  strict per-currency separation, versioned methodology/disclosures, and
+  independent crash-safe import-path restoration.
 - **Next:** the remaining Stage 2 portfolio/performance, risk, screening, and
   expanded alert-rule families. Provider availability extends the deployment
   surface; deterministic fixtures remain the Stage 1 acceptance baseline and
@@ -355,13 +359,15 @@ ALERT core.drawdown > 8% -> preview -> enable
 - Alerts are idempotent, debounced, auditable, restart-safe, and visibly marked
   as simulated/local until an external notification channel is configured.
 
-**Status: in progress.** Position-snapshot ingestion and the first exact
-cash/activity ledger supply separate versioned Portfolio inputs, and the first
-Risk slice consumes positions without storage access. Verified broker trade and
-tax-lot history, dated valuations, benchmarks, TWR, contribution, attribution,
-historical/factor risk, and stress libraries remain; screening and the
-additional news/topic, portfolio-threshold, calendar, and spreadsheet-expression
-alert rule families remain separate Stage 2 slices.
+**Status: in progress.** Position-snapshot ingestion, the first exact
+cash/activity ledger, and dated per-currency valuations supply separate
+versioned Portfolio inputs. The first Performance slice calculates
+flow-adjusted TWR plus optional benchmark and active return, and the first Risk
+slice consumes positions without storage access. Verified broker trade and
+tax-lot history, contribution, attribution, historical/factor risk, and stress
+libraries remain; screening and the additional news/topic,
+portfolio-threshold, calendar, and spreadsheet-expression alert rule families
+remain separate Stage 2 slices.
 
 ## Stage 3 — Advanced analytics and paper workflows
 

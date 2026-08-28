@@ -18,7 +18,10 @@ use crate::{
     },
 };
 
-use super::{format_money, PortfolioActivityLedger, PortfolioRepository, PortfolioSnapshot, ID};
+use super::{
+    format_money, PortfolioActivityLedger, PortfolioPerformanceSnapshot, PortfolioRepository,
+    PortfolioSnapshot, ID,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PortfolioView {
@@ -74,9 +77,7 @@ impl PortfolioWorkspace {
         self.status = match view {
             PortfolioView::Positions => self.query.load_portfolio().source,
             PortfolioView::Activity => self.query.load_activity().source,
-            PortfolioView::Performance => {
-                "PERFORMANCE REQUIRES DATED VALUATIONS · INPUT GAP SHOWN BELOW".to_owned()
-            }
+            PortfolioView::Performance => self.query.load_performance().source,
         };
     }
 
@@ -84,7 +85,7 @@ impl PortfolioWorkspace {
         match self.view {
             PortfolioView::Positions => self.query.load_portfolio().positions.len(),
             PortfolioView::Activity => self.query.load_activity().entries.len(),
-            PortfolioView::Performance => 0,
+            PortfolioView::Performance => self.query.load_performance().series.len(),
         }
     }
 
@@ -169,6 +170,26 @@ impl PortfolioWorkspace {
         self.clamp_selection();
     }
 
+    fn import_performance(&mut self, args: &[String]) {
+        let raw_path = args.join(" ");
+        if raw_path.is_empty() {
+            self.status =
+                "PERFORMANCE IMPORT REQUIRES A CSV PATH · PORT IMPORT PERFORMANCE <FILE.CSV>"
+                    .to_owned();
+            return;
+        }
+        self.status = match self.query.import_performance_csv(&expand_home(&raw_path)) {
+            Ok(performance) => format!(
+                "IMPORTED {} VALUATION POINTS · {}",
+                performance.point_count(),
+                performance.source
+            ),
+            Err(error) => format!("PERFORMANCE IMPORT ERROR · {error}"),
+        };
+        self.view = PortfolioView::Performance;
+        self.clamp_selection();
+    }
+
     fn reload_positions(&mut self) {
         self.status = match self.query.reload() {
             Ok(snapshot) => format!(
@@ -193,25 +214,23 @@ impl PortfolioWorkspace {
         self.clamp_selection();
     }
 
+    fn reload_performance(&mut self) {
+        self.status = match self.query.reload_performance() {
+            Ok(performance) => format!(
+                "RELOADED {} VALUATION POINTS · {}",
+                performance.point_count(),
+                performance.source
+            ),
+            Err(error) => format!("PERFORMANCE RELOAD ERROR · {error}"),
+        };
+        self.clamp_selection();
+    }
+
     fn reload_current(&mut self) {
         match self.view {
             PortfolioView::Positions => self.reload_positions(),
             PortfolioView::Activity => self.reload_activity(),
-            PortfolioView::Performance => {
-                let positions = self.query.reload();
-                let activity = self.query.reload_activity();
-                self.status = match (positions, activity) {
-                    (Ok(positions), Ok(activity)) => format!(
-                        "RELOADED {} POSITIONS + {} ACTIVITY ROWS · INPUT GAP UNCHANGED",
-                        positions.positions.len(),
-                        activity.entries.len()
-                    ),
-                    (Err(position_error), Err(activity_error)) => {
-                        format!("RELOAD ERRORS · {position_error} · {activity_error}")
-                    }
-                    (Err(error), _) | (_, Err(error)) => format!("PARTIAL RELOAD · {error}"),
-                };
-            }
+            PortfolioView::Performance => self.reload_performance(),
         }
     }
 }
@@ -261,6 +280,11 @@ impl Workspace for PortfolioWorkspace {
                     .is_some_and(|value| matches!(value, "ACTIVITY" | "TRANSACTIONS" | "LEDGER"))
                 {
                     self.import_activity(invocation.args.get(2..).unwrap_or_default());
+                } else if target
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "PERFORMANCE" | "PERF" | "VALUATIONS"))
+                {
+                    self.import_performance(invocation.args.get(2..).unwrap_or_default());
                 } else {
                     self.import_positions(invocation.args.get(1..).unwrap_or_default());
                 }
@@ -275,6 +299,11 @@ impl Workspace for PortfolioWorkspace {
                     .is_some_and(|value| matches!(value, "ACTIVITY" | "TRANSACTIONS" | "LEDGER"))
                 {
                     self.reload_activity();
+                } else if target
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "PERFORMANCE" | "PERF" | "VALUATIONS"))
+                {
+                    self.reload_performance();
                 } else {
                     self.reload_positions();
                 }
@@ -347,8 +376,7 @@ impl Workspace for PortfolioWorkspace {
         }
         if is_primary_click(event, areas.main) {
             if self.view == PortfolioView::Performance {
-                self.status =
-                    "IMPORT DATED VALUATIONS BEFORE CALCULATING TWR OR ATTRIBUTION".to_owned();
+                self.status = "TWR IS FLOW-ADJUSTED PER CURRENCY · ATTRIBUTION REQUIRES POSITION-LEVEL RETURN HISTORY".to_owned();
             }
             return true;
         }
@@ -361,7 +389,7 @@ impl Workspace for PortfolioWorkspace {
                     "CASH SIGNS ARE PROVIDER-REPORTED · NO FX OR RETURN INFERENCE".to_owned()
                 }
                 PortfolioView::Performance => {
-                    "ONE POSITION SNAPSHOT IS NOT A RETURN SERIES".to_owned()
+                    "END-OF-PERIOD FLOWS ARE REMOVED BEFORE LINKING SUB-PERIOD RETURNS".to_owned()
                 }
             };
             return true;
@@ -397,8 +425,16 @@ impl Workspace for PortfolioWorkspace {
     fn render(&self, frame: &mut Frame, area: Rect) {
         let positions = self.query.load_portfolio();
         let activity = self.query.load_activity();
+        let performance = self.query.load_performance();
         let areas = portfolio_layout(area);
-        render_header(frame, areas.header, self.view, &positions, &activity);
+        render_header(
+            frame,
+            areas.header,
+            self.view,
+            &positions,
+            &activity,
+            &performance,
+        );
         render_tabs(frame, areas.tabs, self.view);
         match self.view {
             PortfolioView::Positions => {
@@ -410,8 +446,8 @@ impl Workspace for PortfolioWorkspace {
                 render_activity_source(frame, areas.side, &activity, &self.status);
             }
             PortfolioView::Performance => {
-                render_performance(frame, areas.main, &positions, &activity);
-                render_performance_inputs(frame, areas.side, &positions, &activity, &self.status);
+                render_performance(frame, areas.main, &performance, self.selected);
+                render_performance_inputs(frame, areas.side, &performance, &self.status);
             }
         }
         render_footer(frame, areas.footer, self.view);
@@ -452,6 +488,7 @@ fn render_header(
     view: PortfolioView,
     positions: &PortfolioSnapshot,
     activity: &PortfolioActivityLedger,
+    performance: &PortfolioPerformanceSnapshot,
 ) {
     let kpis = Layout::horizontal([Constraint::Ratio(1, 4); 4]).split(area);
     let values = match view {
@@ -468,13 +505,13 @@ fn render_header(
             ("CURRENCIES", activity.currency_totals.len().to_string()),
         ],
         PortfolioView::Performance => [
+            ("VALUATION POINTS", performance.point_count().to_string()),
             (
-                "VALUATION POINTS",
-                usize::from(!positions.positions.is_empty()).to_string(),
+                "TIME-WEIGHTED RETURN",
+                performance.time_weighted_return_label(),
             ),
-            ("ACTIVITY ROWS", activity.entries.len().to_string()),
-            ("TIME-WEIGHTED RETURN", "N/A".to_owned()),
-            ("ATTRIBUTION", "N/A".to_owned()),
+            ("BENCHMARK", performance.benchmark_return_label()),
+            ("ACTIVE RETURN", performance.active_return_label()),
         ],
     };
     for (index, (label, value)) in values.into_iter().enumerate() {
@@ -734,95 +771,99 @@ fn render_side(
 fn render_performance(
     frame: &mut Frame,
     area: Rect,
-    positions: &PortfolioSnapshot,
-    activity: &PortfolioActivityLedger,
+    performance: &PortfolioPerformanceSnapshot,
+    selected: usize,
 ) {
-    let valuation_count = usize::from(!positions.positions.is_empty());
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::styled("TIME-WEIGHTED RETURN UNAVAILABLE", RED),
-            Line::raw(""),
-            Line::styled("CURRENT INPUT COVERAGE", AMBER),
-            Line::styled(
-                format!(
-                    "{valuation_count} POSITION VALUATION POINT · {} ACTIVITY ROWS · {}",
-                    activity.entries.len(),
-                    activity.period_label()
-                ),
-                INK,
-            ),
-            Line::raw(""),
-            Line::styled("WHY CALCULATION IS BLOCKED", AMBER),
-            Line::styled(
-                "A point-in-time holding snapshot has no opening value or sub-period returns.",
-                MUTED,
-            ),
-            Line::styled(
-                "Cash activity identifies flows but does not value the portfolio at those flows.",
-                MUTED,
-            ),
-            Line::styled(
-                "Contribution and attribution require benchmark and dated position-level returns.",
-                MUTED,
-            ),
-            Line::raw(""),
-            Line::styled("REQUIRED NEXT INPUT", AMBER),
-            Line::styled(
-                "• Dated portfolio valuations at every external-flow boundary",
-                CYAN,
-            ),
-            Line::styled("• Resolved instruments and corporate actions", CYAN),
-            Line::styled("• Benchmark series in an explicit reporting currency", CYAN),
-            Line::raw(""),
-            Line::styled("AVAILABLE WITHOUT INFERENCE", AMBER),
-            Line::styled(
-                format!(
-                    "Current allocation: {} positions across {} currencies",
-                    positions.positions.len(),
-                    positions.currency_totals.len()
-                ),
-                INK,
-            ),
-            Line::styled(
-                format!(
-                    "Exact activity net cash: {}",
-                    activity.net_cash_effect_label()
-                ),
-                INK,
-            ),
-        ])
-        .wrap(Wrap { trim: true })
-        .block(terminal_block("PERF", "INPUT-AWARE PERFORMANCE")),
+    let rows = performance
+        .series
+        .iter()
+        .enumerate()
+        .map(|(index, series)| {
+            let opening = series
+                .points
+                .first()
+                .map(|point| format_money(point.ending_value))
+                .unwrap_or_else(|| "—".to_owned());
+            let ending = series
+                .points
+                .last()
+                .map(|point| format_money(point.ending_value))
+                .unwrap_or_else(|| "—".to_owned());
+            let net_flow = series
+                .points
+                .iter()
+                .try_fold(0_i128, |total, point| {
+                    total.checked_add(point.external_flow.minor_units())
+                })
+                .map(|minor| {
+                    format_money(crate::foundation::Money::from_minor_units(
+                        minor,
+                        series.currency,
+                    ))
+                })
+                .unwrap_or_else(|| "OVERFLOW".to_owned());
+            styled_data_row(
+                [
+                    series.currency.to_string(),
+                    series.period_label(),
+                    series.points.len().to_string(),
+                    opening,
+                    ending,
+                    net_flow,
+                    series.time_weighted_return_label(),
+                    series.benchmark_return_label(),
+                    series.active_return_label(),
+                ],
+                index,
+                selected,
+            )
+        })
+        .collect::<Vec<_>>();
+    render_table(
+        frame,
         area,
+        "PERF",
+        "FLOW-ADJUSTED TIME-WEIGHTED RETURN",
+        [
+            "CCY", "PERIOD", "POINTS", "OPEN", "END", "NET FLOW", "TWR", "BENCH", "ACTIVE",
+        ],
+        rows,
+        [
+            Constraint::Percentage(6),
+            Constraint::Percentage(20),
+            Constraint::Percentage(7),
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
+            Constraint::Percentage(10),
+            Constraint::Percentage(10),
+            Constraint::Percentage(11),
+        ],
     );
 }
 
 fn render_performance_inputs(
     frame: &mut Frame,
     area: Rect,
-    positions: &PortfolioSnapshot,
-    activity: &PortfolioActivityLedger,
+    performance: &PortfolioPerformanceSnapshot,
     status: &str,
 ) {
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::styled("POSITION INPUT", AMBER),
-            Line::styled(positions.input_version.clone(), CYAN),
-            Line::styled(positions.as_of.clone(), MUTED),
-            Line::raw(""),
-            Line::styled("ACTIVITY INPUT", AMBER),
-            Line::styled(activity.input_version.clone(), CYAN),
-            Line::styled(activity.period.clone(), MUTED),
-            Line::raw(""),
-            Line::styled("METHODOLOGY", AMBER),
-            Line::styled("NO RETURN, CONTRIBUTION, OR ATTRIBUTION INFERENCE", RED),
-            Line::raw(""),
-            Line::styled(status, YELLOW),
-        ])
-        .wrap(Wrap { trim: true })
-        .block(terminal_block("INPUT", "VALUATION REQUIREMENTS")),
-        area,
-    );
+    let mut lines = vec![
+        Line::styled("SOURCE / PERIOD", AMBER),
+        Line::styled(performance.source.clone(), INK),
+        Line::styled(performance.period.clone(), MUTED),
+        Line::styled(performance.input_version.clone(), CYAN),
+        Line::raw(""),
+        Line::styled("METHODOLOGY", AMBER),
+        Line::styled(performance.methodology.clone(), MUTED),
+        Line::raw(""),
+        Line::styled(status, YELLOW),
+        Line::styled("PORT IMPORT PERFORMANCE <CSV>", CYAN),
+    ];
+    for disclosure in performance.disclosures.iter().take(7) {
+        lines.push(Line::styled(format!("• {disclosure}"), MUTED));
+    }
+    render_side(frame, area, "INPUT", "DATED VALUATIONS", lines);
 }
 
 fn render_footer(frame: &mut Frame, area: Rect, view: PortfolioView) {
@@ -903,7 +944,7 @@ mod tests {
     }
 
     #[test]
-    fn performance_panel_renders_missing_inputs_instead_of_mock_metrics() {
+    fn performance_panel_renders_versioned_flow_adjusted_returns() {
         let mut app = bootstrap::demo_app();
         for character in "/PERFORMANCE\n".chars() {
             let code = match character {
@@ -922,8 +963,9 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
 
-        assert!(rendered.contains("TIME-WEIGHTED RETURN UNAVAILABLE"));
-        assert!(rendered.contains("NO RETURN, CONTRIBUTION"));
-        assert!(rendered.contains("ATTRIBUTION INFERENCE"));
+        assert!(rendered.contains("FLOW-ADJUSTED TIME-WEIGHTED RETURN"));
+        assert!(rendered.contains("+17.78%"));
+        assert!(rendered.contains("+12.40%"));
+        assert!(rendered.contains("DEMO-PERFORMANCE-V1"));
     }
 }

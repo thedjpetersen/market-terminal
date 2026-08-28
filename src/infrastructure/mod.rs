@@ -22,6 +22,7 @@ mod market_data_demo;
 mod openrouter;
 mod portfolio_activity_csv;
 mod portfolio_csv;
+mod portfolio_performance_csv;
 mod portfolio_risk;
 mod sec_instruments;
 mod spreadsheet_demo;

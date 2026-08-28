@@ -3,8 +3,9 @@ use crate::features::{
     news::{Headline, NewsFeed, NewsSnapshot},
     overview::{OverviewQuery, OverviewSnapshot},
     portfolio::{
-        PortfolioAccountId, PortfolioCurrencyTotal, PortfolioRepository, PortfolioSnapshot,
-        Position, PositionQuantity,
+        PortfolioAccountId, PortfolioCurrencyTotal, PortfolioPerformanceSeries,
+        PortfolioPerformanceSnapshot, PortfolioRepository, PortfolioSnapshot,
+        PortfolioValuationPoint, Position, PositionQuantity,
     },
     security::{
         Estimate, Filing, FinancialPeriod, OwnerPosition, PeerComparison, SecurityError,
@@ -404,6 +405,41 @@ impl PortfolioRepository for DemoData {
             input_version: "DEMO-V1".to_owned(),
             methodology: "DETERMINISTIC GALLERY FIXTURE".to_owned(),
             disclosures: vec!["NOT INTERACTIVE USER DATA".to_owned()],
+        }
+    }
+
+    fn load_performance(&self) -> PortfolioPerformanceSnapshot {
+        let usd = Currency::new("USD").expect("USD is valid");
+        let point =
+            |date: &str, value: i128, flow: i128, benchmark: i128| PortfolioValuationPoint {
+                date: date.to_owned(),
+                currency: usd,
+                ending_value: Money::from_minor_units(value, usd),
+                external_flow: Money::from_minor_units(flow, usd),
+                benchmark_value: Some(Money::from_minor_units(benchmark, usd)),
+            };
+        PortfolioPerformanceSnapshot {
+            series: vec![PortfolioPerformanceSeries {
+                currency: usd,
+                points: vec![
+                    point("2026-01-02", 100_000_000, 0, 10_000),
+                    point("2026-04-01", 108_000_000, 2_000_000, 10_400),
+                    point("2026-07-01", 114_000_000, 0, 10_800),
+                    point("2026-08-25", 121_000_000, 1_000_000, 11_240),
+                ],
+                time_weighted_return_bps: 1_778,
+                benchmark_return_bps: Some(1_240),
+                active_return_bps: Some(538),
+            }],
+            source: "DETERMINISTIC DEMO".to_owned(),
+            period: "2026-01-02 — 2026-08-25".to_owned(),
+            input_version: "DEMO-PERFORMANCE-V1".to_owned(),
+            methodology: "END-OF-PERIOD FLOW-ADJUSTED TWR · USD".to_owned(),
+            disclosures: vec![
+                "DETERMINISTIC GALLERY VALUATIONS · NOT INTERACTIVE USER DATA".to_owned(),
+                "BENCHMARK IS A DETERMINISTIC COMPARISON SERIES".to_owned(),
+                "NO POSITION CONTRIBUTION OR FACTOR ATTRIBUTION".to_owned(),
+            ],
         }
     }
 }

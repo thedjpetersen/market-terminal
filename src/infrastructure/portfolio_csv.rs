@@ -10,14 +10,19 @@ use csv::StringRecord;
 
 use crate::features::portfolio::{
     PortfolioAccountId, PortfolioActivityLedger, PortfolioCurrencyTotal, PortfolioError,
-    PortfolioImportStateStore, PortfolioRepository, PortfolioSnapshot, Position, PositionQuantity,
+    PortfolioImportStateStore, PortfolioPerformanceSnapshot, PortfolioRepository,
+    PortfolioSnapshot, Position, PositionQuantity,
 };
 use crate::foundation::{Currency, InstrumentId, Money};
 
-use super::portfolio_activity_csv::parse_portfolio_activity_csv;
+use super::{
+    portfolio_activity_csv::parse_portfolio_activity_csv,
+    portfolio_performance_csv::parse_portfolio_performance_csv,
+};
 
 const MAX_PORTFOLIO_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_ACTIVITY_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_PERFORMANCE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PORTFOLIO_ROWS: usize = 25_000;
 const MAX_PORTFOLIO_COLUMNS: usize = 256;
 
@@ -26,6 +31,8 @@ pub struct CsvPortfolioRepository {
     path: RwLock<Option<PathBuf>>,
     activity: RwLock<PortfolioActivityLedger>,
     activity_path: RwLock<Option<PathBuf>>,
+    performance: RwLock<PortfolioPerformanceSnapshot>,
+    performance_path: RwLock<Option<PathBuf>>,
     state_store: Option<Arc<dyn PortfolioImportStateStore>>,
 }
 
@@ -49,6 +56,10 @@ impl CsvPortfolioRepository {
                 "NO ACTIVITY IMPORTED · USE PORT IMPORT ACTIVITY <FILE.CSV>",
             )),
             activity_path: RwLock::new(None),
+            performance: RwLock::new(PortfolioPerformanceSnapshot::empty(
+                "NO PERFORMANCE IMPORTED · USE PORT IMPORT PERFORMANCE <FILE.CSV>",
+            )),
+            performance_path: RwLock::new(None),
             state_store,
         };
         let env_path = env::var_os("MARKET_TERMINAL_PORTFOLIO_CSV")
@@ -122,6 +133,43 @@ impl CsvPortfolioRepository {
                     .source = format!("ACTIVITY AUTO-IMPORT ERROR · {error}");
             }
         }
+        let env_performance_path = env::var_os("MARKET_TERMINAL_PORTFOLIO_PERFORMANCE_CSV")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let stored_performance_path = if env_performance_path.is_none() {
+            repository
+                .state_store
+                .as_ref()
+                .map(|store| store.load_performance_import_path())
+                .transpose()
+        } else {
+            Ok(None)
+        };
+        let startup_performance_path = match stored_performance_path {
+            Ok(stored) => env_performance_path.or(stored.flatten()),
+            Err(error) => {
+                repository
+                    .performance
+                    .write()
+                    .expect("portfolio performance lock")
+                    .source = format!("PERFORMANCE IMPORT STATE ERROR · {error}");
+                env_performance_path
+            }
+        };
+        if let Some(path) = startup_performance_path {
+            let path = expand_home(path);
+            if let Err(error) = repository.import_performance_path(&path) {
+                *repository
+                    .performance_path
+                    .write()
+                    .expect("portfolio performance path lock") = Some(path);
+                repository
+                    .performance
+                    .write()
+                    .expect("portfolio performance lock")
+                    .source = format!("PERFORMANCE AUTO-IMPORT ERROR · {error}");
+            }
+        }
         repository
     }
 
@@ -177,6 +225,43 @@ impl CsvPortfolioRepository {
             .expect("portfolio activity path lock") = Some(path.to_path_buf());
         Ok(activity)
     }
+
+    fn import_performance_path(
+        &self,
+        path: &Path,
+    ) -> Result<PortfolioPerformanceSnapshot, PortfolioError> {
+        let metadata = fs::metadata(path).map_err(|error| {
+            PortfolioError::Io(format!(
+                "CANNOT READ PERFORMANCE {} · {error}",
+                display_name(path)
+            ))
+        })?;
+        if metadata.len() > MAX_PERFORMANCE_BYTES {
+            return Err(PortfolioError::InvalidCsv(format!(
+                "{} IS TOO LARGE · PERFORMANCE LIMIT IS 10 MB",
+                display_name(path)
+            )));
+        }
+        let bytes = fs::read(path).map_err(|error| {
+            PortfolioError::Io(format!(
+                "CANNOT READ PERFORMANCE {} · {error}",
+                display_name(path)
+            ))
+        })?;
+        let performance = parse_portfolio_performance_csv(&bytes, display_name(path))?;
+        if let Some(store) = &self.state_store {
+            store.save_performance_import_path(path)?;
+        }
+        *self
+            .performance
+            .write()
+            .expect("portfolio performance lock") = performance.clone();
+        *self
+            .performance_path
+            .write()
+            .expect("portfolio performance path lock") = Some(path.to_path_buf());
+        Ok(performance)
+    }
 }
 
 impl PortfolioRepository for CsvPortfolioRepository {
@@ -200,6 +285,20 @@ impl PortfolioRepository for CsvPortfolioRepository {
 
     fn import_activity_csv(&self, path: &Path) -> Result<PortfolioActivityLedger, PortfolioError> {
         self.import_activity_path(path)
+    }
+
+    fn load_performance(&self) -> PortfolioPerformanceSnapshot {
+        self.performance
+            .read()
+            .expect("portfolio performance lock")
+            .clone()
+    }
+
+    fn import_performance_csv(
+        &self,
+        path: &Path,
+    ) -> Result<PortfolioPerformanceSnapshot, PortfolioError> {
+        self.import_performance_path(path)
     }
 
     fn reload(&self) -> Result<PortfolioSnapshot, PortfolioError> {
@@ -228,6 +327,20 @@ impl PortfolioRepository for CsvPortfolioRepository {
                 )
             })?;
         self.import_activity_path(&path)
+    }
+
+    fn reload_performance(&self) -> Result<PortfolioPerformanceSnapshot, PortfolioError> {
+        let path = self
+            .performance_path
+            .read()
+            .expect("portfolio performance path lock")
+            .clone()
+            .ok_or_else(|| {
+                PortfolioError::Unsupported(
+                    "NO IMPORTED PERFORMANCE · USE PORT IMPORT PERFORMANCE <FILE.CSV>".to_owned(),
+                )
+            })?;
+        self.import_performance_path(&path)
     }
 }
 
@@ -909,6 +1022,7 @@ mod tests {
     struct MemoryImportState {
         path: Mutex<Option<PathBuf>>,
         activity_path: Mutex<Option<PathBuf>>,
+        performance_path: Mutex<Option<PathBuf>>,
     }
 
     impl PortfolioImportStateStore for MemoryImportState {
@@ -936,6 +1050,22 @@ mod tests {
         fn save_activity_import_path(&self, path: &Path) -> Result<(), PortfolioError> {
             *self
                 .activity_path
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(path.to_path_buf());
+            Ok(())
+        }
+
+        fn load_performance_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+            Ok(self
+                .performance_path
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone())
+        }
+
+        fn save_performance_import_path(&self, path: &Path) -> Result<(), PortfolioError> {
+            *self
+                .performance_path
                 .lock()
                 .unwrap_or_else(|error| error.into_inner()) = Some(path.to_path_buf());
             Ok(())
@@ -1065,6 +1195,8 @@ MSFT,MICROSOFT CORP,4,$500.00,"$2,000.00","$1,600.00",25%,USD
             path: RwLock::new(None),
             activity: RwLock::new(PortfolioActivityLedger::empty("TEST")),
             activity_path: RwLock::new(None),
+            performance: RwLock::new(PortfolioPerformanceSnapshot::empty("TEST")),
+            performance_path: RwLock::new(None),
             state_store: None,
         };
         fs::write(&path, "Symbol,Quantity,Market Value\nAAPL,2,400\n").unwrap();
@@ -1129,6 +1261,36 @@ MSFT,MICROSOFT CORP,4,$500.00,"$2,000.00","$1,600.00",25%,USD
         assert_eq!(restored.load_activity().net_cash_effect_label(), "$100.00");
         fs::remove_file(positions_path).unwrap();
         fs::remove_file(activity_path).unwrap();
+    }
+
+    #[test]
+    fn persistent_repository_restores_performance_independently() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = env::temp_dir().join(format!("market-terminal-performance-{unique}.csv"));
+        fs::write(
+            &path,
+            "Date,NAV,External Flow,Benchmark Value,Currency\n2026-01-01,1000,0,100,USD\n2026-02-01,1100,0,105,USD\n",
+        )
+        .unwrap();
+        let state = Arc::new(MemoryImportState::default());
+        let first = CsvPortfolioRepository::persistent(state.clone());
+
+        first.import_performance_csv(&path).unwrap();
+        let restored = CsvPortfolioRepository::persistent(state);
+
+        assert_eq!(restored.load_performance().point_count(), 2);
+        assert_eq!(
+            restored.load_performance().time_weighted_return_label(),
+            "+10.00%"
+        );
+        assert_eq!(
+            restored.load_performance().benchmark_return_label(),
+            "+5.00%"
+        );
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
