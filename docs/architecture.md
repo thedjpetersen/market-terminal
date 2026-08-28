@@ -174,6 +174,13 @@ reference: one shared layout supplies its mouse targets, research tabs, chart,
 Form 4 and filing rows, peer links, refresh action, and responsive follow/spatial
 rectangles. Activation rechecks the active view plus the symbol or accession
 embedded in each opaque action ID before dispatching or opening a document.
+Charting is the dense-control reference: one flow layout packs only complete
+controls into the available three-row footer and supplies rendering, pointer hit
+testing, spatial focus, and follow hints from those exact rectangles. Period IDs
+encode the requested period and are parsed back into Charting-owned domain
+values; stateful controls recheck comparison and inspection availability before
+activation. The active period is the deterministic restoration target, while a
+separate header action preserves the existing click-to-refresh surface.
 
 ## Cross-feature events
 

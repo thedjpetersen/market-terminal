@@ -70,12 +70,20 @@ and Quit receives a prefix-free one- or two-letter label. Type a label to route
 there immediately, or press `Esc` to cancel. The labels use the familiar
 Vimium-style link-hint interaction while remaining terminal-native.
 
-Portfolio, Monitor, Desk, and Security extend follow hints and spatial focus
+Portfolio, Monitor, Desk, Security, and Chart extend follow hints and spatial focus
 inside the active panel. Their currently rendered tabs, rows, panes, and controls
 receive labels and focus at their actual terminal coordinates; the natural
 selected or primary action becomes the restoration target. Off-screen, disabled,
 duplicate, and stale actions are not routable. Each feature owns activation and
 the shell remains unaware of portfolio, quote, or research domain behavior.
+
+Chart exposes direct `1D`, `1M`, `6M`, `YTD`, `1Y`, and `5Y` destinations plus
+normalization, moving-average kind and visibility, RSI, volume, SPY comparison,
+inspection, latest observation, display and line modes, Spreadsheet promotion,
+and refresh. The three-row control strip is packed responsively without partial
+controls; its render rectangles are also its mouse targets, arrow-focus targets,
+and `F`-hint anchors. The selected period restores focus, unavailable inspection
+directions are excluded, and every activation rechecks current chart state.
 
 `DESK` (aliases `SPLIT` and `DASHBOARD`) opens the combined workspace adapted
 from `alphai-tui`. Press `Tab`/`Shift+Tab` or `1`/`2`/`3` to focus Monitor,

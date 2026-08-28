@@ -170,6 +170,15 @@ move to its own crate later without changing its public vocabulary.
   the current view, symbol, row index, accession, or peer identity has changed,
   and an application-level test routes real follow labels through Security into
   Chart.
+- **Complete:** Chart action routing from a single responsive control registry:
+  direct `1D`/`1M`/`6M`/`YTD`/`1Y`/`5Y` destinations, normalization, moving
+  averages, SMA/EMA, RSI, volume, comparisons, bidirectional inspection, latest,
+  chart and line modes, Spreadsheet promotion, and both footer/header refresh
+  surfaces share render, mouse, spatial-focus, and follow-hint geometry. The
+  registry packs only whole controls, prefers the active period, excludes
+  unavailable inspection directions, and revalidates parsed periods and mutable
+  comparison/cursor state before activation. A shell-level test selects a period
+  and normalization through real generated follow labels.
 - **Complete:** source-derived OpenTerminalUI capability ledger pinned to an
   exact upstream tree, with stable `OTUI-*` IDs, implementation-maturity labels,
   repository-relative evidence, owners, priorities, gaps, acceptance-test IDs,
@@ -263,7 +272,7 @@ continues.
 | --- | --- | --- | --- |
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
 | Mission Control, launchpad, ticker tape | Partial | Overview, Desk, Markets, persisted active workspace | Add configurable launch tiles, live pulse strip, priority stack, and saved role presets. |
-| Keyboard navigation and icon rail | Partial | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, and Security tabs/chart/Form 4/filing/peer/retry actions | Adopt the action contract in remaining Overview, Chart, News, Alerts, and Spreadsheet rows, buttons, chart controls, and tables. |
+| Keyboard navigation and icon rail | Partial | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, and Chart periods/studies/comparisons/inspection/modes/promotion/refresh | Adopt the action contract in remaining Overview, News, Alerts, and Spreadsheet rows, buttons, controls, and tables. |
 | Saved views and workspace presets | Partial | Workspace order, active workspace, layout and command history persist | Persist/restore view parameters, filters, selected instrument, table columns, chart state, pane geometry, and Trader/Quant/PM/Risk/Ops presets. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
 | Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
@@ -382,8 +391,14 @@ states, and enforcement that completed capabilities link real implementation
 evidence remain. Security now contributes its responsive tabs, live chart,
 Form 4 and regulatory filing rows, peer links, and retry/refresh states from one
 shared geometry model, with stale view/symbol/accession validation and a
-shell-level follow-routing test. Overview, Chart, News, Alerts, and Spreadsheet
-remain to adopt the contract. `tests/architecture_boundaries.rs` now enforces
+shell-level follow-routing test. Chart now supplies direct period destinations
+and every visible study, comparison, inspection, mode, Spreadsheet, and refresh
+control through one responsive render/mouse/action geometry. Period and mutable
+state are revalidated on activation, disabled cursor directions disappear from
+the shell registry, the active period restores focus, and an application test
+routes generated labels through both a period and a stateful control. Overview,
+News, Alerts, and Spreadsheet remain to adopt the contract.
+`tests/architecture_boundaries.rs` now enforces
 dependency direction on every CI run. The first remediation moved Assistant's portfolio
 context behind an Assistant-owned port and composition-root translator, and
 removed Watchlist's dependency on a Market Data identity alias. This closes the

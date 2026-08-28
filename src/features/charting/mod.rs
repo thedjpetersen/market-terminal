@@ -1,3 +1,4 @@
+mod controls;
 mod domain;
 mod indicators;
 mod port;

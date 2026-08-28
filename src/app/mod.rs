@@ -2576,6 +2576,72 @@ mod tests {
     }
 
     #[test]
+    fn chart_follow_hints_select_periods_and_controls() {
+        let mut app = bootstrap::demo_app();
+        let frame_area = Rect::new(0, 0, 160, 48);
+        let workspace_area = crate::ui::ShellLayout::new(frame_area).workspace;
+        app.set_terminal_area(frame_area);
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "CHART AAPL".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.active_workspace(), CHARTING);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let period_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action == "period:6M"
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in period_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        assert!(app
+            .workspace_actions(workspace_area, 128)
+            .iter()
+            .any(|action| action.id == "period:6M" && action.preferred));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let normalization_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action == "control:normalization"
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in normalization_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        assert!(app
+            .workspace_actions(workspace_area, 128)
+            .iter()
+            .any(|action| {
+                action.id == "control:normalization"
+                    && action.label.contains("% CHANGE")
+            }));
+        assert!(app.shell_hints().is_none());
+    }
+
+    #[test]
     fn follow_hint_codes_are_prefix_free_and_compact() {
         let short = hint_codes(HINT_ALPHABET.len()).collect::<Vec<_>>();
         assert!(short.iter().all(|code| code.len() == 1));

@@ -22,7 +22,9 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
+    app::{
+        AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor,
+    },
     ui::{
         components::terminal_block,
         contains, is_primary_click,
@@ -31,6 +33,7 @@ use crate::{
 };
 
 use super::{
+    controls::{chart_areas, pack_control_areas, ChartControl},
     domain::percent_change,
     indicators::{ema, rsi, sma, MOVING_AVERAGE_FAST, MOVING_AVERAGE_SLOW, RSI_PERIOD},
     ChartHistoryQuery, ChartInstrument, ChartPeriod, ChartSpecification, HistoryError,
@@ -240,6 +243,221 @@ impl ChartingWorkspace {
 
     pub fn specification(&self) -> &ChartSpecification {
         &self.specification
+    }
+
+    fn controls(&self) -> Vec<ChartControl> {
+        let mut controls = ChartPeriod::ALL
+            .into_iter()
+            .map(ChartControl::Period)
+            .collect::<Vec<_>>();
+        controls.extend([
+            ChartControl::Normalization,
+            ChartControl::MovingAverages,
+            ChartControl::AverageKind,
+            ChartControl::Rsi,
+            ChartControl::Volume,
+            ChartControl::Comparison,
+        ]);
+        if !self.specification.comparisons.is_empty() {
+            controls.push(ChartControl::ClearComparisons);
+        }
+        controls.extend([
+            ChartControl::InspectBack,
+            ChartControl::InspectForward,
+            ChartControl::Latest,
+            ChartControl::DisplayMode,
+            ChartControl::LineMode,
+            ChartControl::InsertSheet,
+            ChartControl::Refresh,
+        ]);
+        controls
+    }
+
+    fn control_label(&self, control: ChartControl) -> String {
+        match control {
+            ChartControl::Period(period) => format!(" {} ", period.label()),
+            ChartControl::Normalization => {
+                format!(" N {} ", self.specification.normalization.label())
+            }
+            ChartControl::MovingAverages => " M MA ".to_owned(),
+            ChartControl::AverageKind => " E SMA/EMA ".to_owned(),
+            ChartControl::Rsi => " I RSI ".to_owned(),
+            ChartControl::Volume => " V VOL ".to_owned(),
+            ChartControl::Comparison => " C SPY ".to_owned(),
+            ChartControl::ClearComparisons => " X CLR ".to_owned(),
+            ChartControl::InspectBack => " , BACK ".to_owned(),
+            ChartControl::InspectForward => " . FWD ".to_owned(),
+            ChartControl::Latest => " HOME NOW ".to_owned(),
+            ChartControl::DisplayMode => format!(" K {} ", self.display_mode.label()),
+            ChartControl::LineMode => format!(" L {} ", self.line_mode.label()),
+            ChartControl::InsertSheet => " A SHEET ".to_owned(),
+            ChartControl::Refresh => " F9 REFRESH ".to_owned(),
+        }
+    }
+
+    fn control_areas(&self, area: Rect) -> Vec<(ChartControl, Rect)> {
+        pack_control_areas(
+            area,
+            self.controls().into_iter().map(|control| {
+                let width = self.control_label(control).chars().count() as u16;
+                (control, width)
+            }),
+        )
+    }
+
+    fn has_moving_averages(&self) -> bool {
+        self.specification.studies.iter().any(|study| {
+            matches!(
+                study,
+                Study::SimpleMovingAverage { .. } | Study::ExponentialMovingAverage { .. }
+            )
+        })
+    }
+
+    fn inspection_max_offset(&self) -> usize {
+        self.history
+            .as_ref()
+            .and_then(|series| series.first())
+            .map_or(0, |series| series.bars.len().saturating_sub(1))
+    }
+
+    fn control_enabled(&self, control: ChartControl) -> bool {
+        match control {
+            ChartControl::ClearComparisons => !self.specification.comparisons.is_empty(),
+            ChartControl::InspectBack => self.cursor_offset < self.inspection_max_offset(),
+            ChartControl::InspectForward | ChartControl::Latest => self.cursor_offset > 0,
+            _ => true,
+        }
+    }
+
+    fn control_active(&self, control: ChartControl) -> bool {
+        match control {
+            ChartControl::Period(period) => period == self.specification.period,
+            ChartControl::Normalization => {
+                self.specification.normalization == Normalization::PercentChange
+            }
+            ChartControl::MovingAverages => self.has_moving_averages(),
+            ChartControl::AverageKind => self.specification.studies.iter().any(
+                |study| matches!(study, Study::ExponentialMovingAverage { .. }),
+            ),
+            ChartControl::Rsi => self
+                .specification
+                .has_study(Study::RelativeStrengthIndex { period: RSI_PERIOD }),
+            ChartControl::Volume => self.specification.has_study(Study::Volume),
+            ChartControl::Comparison | ChartControl::ClearComparisons => {
+                !self.specification.comparisons.is_empty()
+            }
+            ChartControl::Latest => self.cursor_offset == 0,
+            ChartControl::DisplayMode => self.display_mode == ChartDisplayMode::Line,
+            ChartControl::LineMode => self.line_mode == ChartLineMode::Compatible,
+            ChartControl::InspectBack
+            | ChartControl::InspectForward
+            | ChartControl::InsertSheet
+            | ChartControl::Refresh => false,
+        }
+    }
+
+    fn control_action_label(&self, control: ChartControl) -> String {
+        match control {
+            ChartControl::Period(period) => format!("Show {} chart history", period.label()),
+            ChartControl::Normalization => format!(
+                "Toggle normalization from {}",
+                self.specification.normalization.label()
+            ),
+            ChartControl::MovingAverages => {
+                if self.has_moving_averages() {
+                    "Hide moving averages".to_owned()
+                } else {
+                    "Show default moving averages".to_owned()
+                }
+            }
+            ChartControl::AverageKind => "Switch SMA and EMA studies".to_owned(),
+            ChartControl::Rsi => "Toggle Wilder RSI 14".to_owned(),
+            ChartControl::Volume => "Toggle volume histogram".to_owned(),
+            ChartControl::Comparison => "Toggle SPY comparison".to_owned(),
+            ChartControl::ClearComparisons => "Clear all comparisons".to_owned(),
+            ChartControl::InspectBack => "Inspect previous observation".to_owned(),
+            ChartControl::InspectForward => "Inspect next observation".to_owned(),
+            ChartControl::Latest => "Inspect latest observation".to_owned(),
+            ChartControl::DisplayMode => format!(
+                "Toggle chart style from {}",
+                self.display_mode.label()
+            ),
+            ChartControl::LineMode => {
+                format!("Toggle line rendering from {}", self.line_mode.label())
+            }
+            ChartControl::InsertSheet => {
+                format!("Insert {} into Spreadsheet", self.specification.primary.symbol)
+            }
+            ChartControl::Refresh => {
+                format!("Refresh {} chart history", self.specification.primary.symbol)
+            }
+        }
+    }
+
+    fn activate_control(&mut self, control: ChartControl) -> bool {
+        if !self.control_enabled(control) {
+            return false;
+        }
+        match control {
+            ChartControl::Period(period) => {
+                if period != self.specification.period {
+                    self.specification.period = period;
+                    self.cursor_offset = 0;
+                    self.queue_history();
+                }
+            }
+            ChartControl::Normalization => {
+                self.specification.normalization = self.specification.normalization.toggled();
+                self.status = format!("MODE · {}", self.specification.normalization.label());
+            }
+            ChartControl::MovingAverages => self.toggle_default_moving_averages(),
+            ChartControl::AverageKind => self.toggle_moving_average_kind(),
+            ChartControl::Rsi => {
+                let _ = self
+                    .specification
+                    .toggle_study(Study::RelativeStrengthIndex { period: RSI_PERIOD });
+                self.status = "RSI 14 TOGGLED".to_owned();
+            }
+            ChartControl::Volume => {
+                let _ = self.specification.toggle_study(Study::Volume);
+                self.status = "VOLUME TOGGLED".to_owned();
+            }
+            ChartControl::Comparison => {
+                self.toggle_default_comparison();
+                self.queue_history();
+            }
+            ChartControl::ClearComparisons => {
+                self.specification.comparisons.clear();
+                self.status = "COMPARISONS CLEARED".to_owned();
+                self.queue_history();
+            }
+            ChartControl::InspectBack => {
+                self.cursor_offset = self.cursor_offset.saturating_add(1);
+                self.status = format!("INSPECT · {} OBSERVATION(S) BACK", self.cursor_offset);
+            }
+            ChartControl::InspectForward => {
+                self.cursor_offset = self.cursor_offset.saturating_sub(1);
+                self.status = format!("INSPECT · {} OBSERVATION(S) BACK", self.cursor_offset);
+            }
+            ChartControl::Latest => {
+                self.cursor_offset = 0;
+                self.status = "INSPECT · LATEST OBSERVATION".to_owned();
+            }
+            ChartControl::DisplayMode => self.toggle_display_mode(),
+            ChartControl::LineMode => {
+                self.line_mode = self.line_mode.toggled();
+                self.status = format!("LINE MODE · {}", self.line_mode.label());
+            }
+            ChartControl::InsertSheet => {
+                self.pending_intents.push(AppIntent::DispatchCommand {
+                    command: format!("SHEET INSERT {}", self.specification.primary.symbol),
+                    origin: ID,
+                });
+            }
+            ChartControl::Refresh => self.queue_history(),
+        }
+        true
     }
 
     fn toggle_default_moving_averages(&mut self) {
@@ -777,40 +995,22 @@ impl Workspace for ChartingWorkspace {
                 self.queue_history();
                 true
             }
-            KeyCode::Char('n') => {
-                self.specification.normalization = self.specification.normalization.toggled();
-                self.status = format!("MODE · {}", self.specification.normalization.label());
-                true
-            }
+            KeyCode::Char('n') => self.activate_control(ChartControl::Normalization),
             KeyCode::Char('v') | KeyCode::Char('b') => {
-                let _ = self.specification.toggle_study(Study::Volume);
-                self.status = "VOLUME TOGGLED".to_owned();
-                true
+                self.activate_control(ChartControl::Volume)
             }
             KeyCode::Char('s') | KeyCode::Char('m') => {
-                self.toggle_default_moving_averages();
-                true
+                self.activate_control(ChartControl::MovingAverages)
             }
-            KeyCode::Char('e') => {
-                self.toggle_moving_average_kind();
-                true
-            }
-            KeyCode::Char('i') => {
-                let _ = self
-                    .specification
-                    .toggle_study(Study::RelativeStrengthIndex { period: RSI_PERIOD });
-                self.status = "RSI 14 TOGGLED".to_owned();
-                true
-            }
-            KeyCode::Char('c') => {
-                self.toggle_default_comparison();
-                self.queue_history();
-                true
-            }
+            KeyCode::Char('e') => self.activate_control(ChartControl::AverageKind),
+            KeyCode::Char('i') => self.activate_control(ChartControl::Rsi),
+            KeyCode::Char('c') => self.activate_control(ChartControl::Comparison),
             KeyCode::Char('x') => {
-                self.specification.comparisons.clear();
-                self.queue_history();
-                true
+                if self.specification.comparisons.is_empty() {
+                    true
+                } else {
+                    self.activate_control(ChartControl::ClearComparisons)
+                }
             }
             KeyCode::Char(',') => {
                 self.cursor_offset = self.cursor_offset.saturating_add(1).min(10_000);
@@ -827,41 +1027,20 @@ impl Workspace for ChartingWorkspace {
                 self.status = "INSPECT · LATEST OBSERVATION".to_owned();
                 true
             }
-            KeyCode::Char('l') => {
-                self.line_mode = self.line_mode.toggled();
-                self.status = format!("LINE MODE · {}", self.line_mode.label());
-                true
-            }
-            KeyCode::Char('a') => {
-                self.pending_intents.push(AppIntent::DispatchCommand {
-                    command: format!("SHEET INSERT {}", self.specification.primary.symbol),
-                    origin: ID,
-                });
-                true
-            }
-            KeyCode::Char('k') => {
-                self.toggle_display_mode();
-                true
-            }
-            KeyCode::F(9) => {
-                self.queue_history();
-                true
-            }
+            KeyCode::Char('l') => self.activate_control(ChartControl::LineMode),
+            KeyCode::Char('a') => self.activate_control(ChartControl::InsertSheet),
+            KeyCode::Char('k') => self.activate_control(ChartControl::DisplayMode),
+            KeyCode::F(9) => self.activate_control(ChartControl::Refresh),
             _ => false,
         }
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
-        let sections = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(8),
-            Constraint::Length(3),
-        ])
-        .split(area);
-        if is_primary_click(event, sections[0]) {
-            return self.handle_key(KeyEvent::new(KeyCode::F(9), KeyModifiers::NONE));
+        let areas = chart_areas(area);
+        if is_primary_click(event, areas.header) {
+            return self.activate_control(ChartControl::Refresh);
         }
-        if contains(sections[1], event.column, event.row) {
+        if contains(areas.plot, event.column, event.row) {
             match event.kind {
                 MouseEventKind::ScrollUp => {
                     return self.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::NONE));
@@ -872,31 +1051,15 @@ impl Workspace for ChartingWorkspace {
                 _ => {}
             }
         }
-        if is_primary_click(event, sections[2]) {
-            let controls = [
-                (" [/] PERIOD  ", KeyCode::Right),
-                (" N NORMALIZE  ", KeyCode::Char('n')),
-                (" M MA  ", KeyCode::Char('m')),
-                (" E SMA/EMA  ", KeyCode::Char('e')),
-                (" I RSI  ", KeyCode::Char('i')),
-                (" B/V VOLUME  ", KeyCode::Char('v')),
-                (" C COMPARE SPY  ", KeyCode::Char('c')),
-                (" ,/. INSPECT  ", KeyCode::Char(',')),
-                (" HOME LATEST  ", KeyCode::Home),
-                (" K CANDLES/LINE  ", KeyCode::Char('k')),
-                (" L LINE MODE", KeyCode::Char('l')),
-            ];
-            let mut x = sections[2].x;
-            for (label, key) in controls {
-                let width = label.chars().count() as u16;
-                if event.column >= x && event.column < x.saturating_add(width) {
-                    return self.handle_key(KeyEvent::new(key, KeyModifiers::NONE));
+        if is_primary_click(event, areas.footer) {
+            for (control, control_area) in self.control_areas(areas.footer) {
+                if contains(control_area, event.column, event.row) {
+                    return self.activate_control(control);
                 }
-                x = x.saturating_add(width);
             }
             return true;
         }
-        if !is_primary_click(event, sections[1]) {
+        if !is_primary_click(event, areas.plot) {
             return false;
         }
         let Ok(chart) = self.prepared_chart() else {
@@ -906,7 +1069,7 @@ impl Workspace for ChartingWorkspace {
             return true;
         }
         let areas = plot_areas(
-            sections[1],
+            areas.plot,
             !chart.rsi_lines.is_empty(),
             self.specification.has_study(Study::Volume),
         );
@@ -933,32 +1096,66 @@ impl Workspace for ChartingWorkspace {
         true
     }
 
+    fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
+        let areas = chart_areas(area);
+        let mut actions = self
+            .control_areas(areas.footer)
+            .into_iter()
+            .map(|(control, control_area)| {
+                let mut action = WorkspaceAction::new(
+                    control.action_id(),
+                    self.control_action_label(control),
+                    control_area,
+                );
+                if !self.control_enabled(control) {
+                    action = action.disabled();
+                }
+                if control == ChartControl::Period(self.specification.period) {
+                    action = action.preferred();
+                }
+                action
+            })
+            .collect::<Vec<_>>();
+        actions.push(WorkspaceAction::new(
+            "control:refresh-header",
+            format!(
+                "Refresh {} chart history from header",
+                self.specification.primary.symbol
+            ),
+            areas.header,
+        ));
+        actions
+    }
+
+    fn activate_action(&mut self, id: &str) -> bool {
+        if id == "control:refresh-header" {
+            return self.activate_control(ChartControl::Refresh);
+        }
+        ChartControl::from_action_id(id)
+            .is_some_and(|control| self.activate_control(control))
+    }
+
     fn poll_intents(&mut self) -> Vec<AppIntent> {
         self.poll_history();
         std::mem::take(&mut self.pending_intents)
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
-        let sections = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(8),
-            Constraint::Length(3),
-        ])
-        .split(area);
+        let areas = chart_areas(area);
 
         match self.prepared_chart() {
             Ok(chart) => {
-                self.render_header(frame, sections[0], &chart);
-                let areas = plot_areas(
-                    sections[1],
+                self.render_header(frame, areas.header, &chart);
+                let plots = plot_areas(
+                    areas.plot,
                     !chart.rsi_lines.is_empty(),
                     self.specification.has_study(Study::Volume),
                 );
-                self.render_price_chart(frame, areas.price, &chart);
-                if let Some(rsi_area) = areas.rsi {
+                self.render_price_chart(frame, plots.price, &chart);
+                if let Some(rsi_area) = plots.rsi {
                     self.render_rsi_chart(frame, rsi_area, &chart);
                 }
-                if let Some(volume_area) = areas.volume {
+                if let Some(volume_area) = plots.volume {
                     self.render_volume_chart(frame, volume_area, &chart);
                 }
             }
@@ -972,42 +1169,25 @@ impl Workspace for ChartingWorkspace {
                         Span::styled(self.status.as_str(), MUTED),
                     ]))
                     .block(Block::new().borders(Borders::ALL).border_style(AMBER)),
-                    sections[0],
+                    areas.header,
                 );
-                self.render_error(frame, sections[1], &error);
+                self.render_error(frame, areas.plot, &error);
             }
         }
 
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(" [/] ", AMBER),
-                Span::styled("PERIOD  ", MUTED),
-                Span::styled(" N ", AMBER),
-                Span::styled("NORMALIZE  ", MUTED),
-                Span::styled(" M ", AMBER),
-                Span::styled("MA  ", MUTED),
-                Span::styled(" E ", AMBER),
-                Span::styled("SMA/EMA  ", MUTED),
-                Span::styled(" I ", AMBER),
-                Span::styled("RSI  ", MUTED),
-                Span::styled(" B/V ", AMBER),
-                Span::styled("VOLUME  ", MUTED),
-                Span::styled(" C ", AMBER),
-                Span::styled("COMPARE SPY  ", MUTED),
-                Span::styled(" ,/. ", AMBER),
-                Span::styled("INSPECT  ", MUTED),
-                Span::styled(" HOME ", AMBER),
-                Span::styled("LATEST  ", MUTED),
-                Span::styled(" K ", AMBER),
-                Span::styled("CANDLES/LINE  ", MUTED),
-                Span::styled(" L ", AMBER),
-                Span::styled("LINE MODE  ", MUTED),
-                Span::styled(" F9/CLICK HEADER ", AMBER),
-                Span::styled("REFRESH", MUTED),
-            ]))
-            .style(Style::new().fg(INK.into())),
-            sections[2],
-        );
+        for (control, control_area) in self.control_areas(areas.footer) {
+            let style = if !self.control_enabled(control) {
+                Style::new().fg(MUTED.into())
+            } else if self.control_active(control) {
+                Style::new().bg(CYAN.into()).fg(BG.into()).bold()
+            } else {
+                Style::new().fg(AMBER.into())
+            };
+            frame.render_widget(
+                Paragraph::new(self.control_label(control)).style(style),
+                control_area,
+            );
+        }
     }
 }
 
@@ -1797,7 +1977,7 @@ fn parse_rsi_period(value: &str) -> Option<usize> {
 mod tests {
     use super::*;
     use crate::features::charting::{HistoryQuality, PriceBar};
-    use crossterm::event::KeyModifiers;
+    use crossterm::event::{KeyModifiers, MouseButton};
     use ratatui::{backend::TestBackend, Terminal};
 
     struct StubHistory;
@@ -1894,6 +2074,85 @@ mod tests {
         assert_eq!(workspace.cursor_offset, 1);
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)));
         assert_eq!(workspace.cursor_offset, 0);
+    }
+
+    #[test]
+    fn action_registry_shares_responsive_control_geometry_and_revalidates_state() {
+        let mut workspace = ChartingWorkspace::new(Arc::new(StubHistory));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while workspace.history.is_none() && std::time::Instant::now() < deadline {
+            workspace.poll_history();
+            std::thread::yield_now();
+        }
+        let area = Rect::new(7, 4, 80, 24);
+        let chart = chart_areas(area);
+        let actions = workspace.actions(area);
+        let ids = actions
+            .iter()
+            .map(|action| action.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+
+        assert_eq!(ids.len(), actions.len());
+        assert!(actions.iter().all(|action| {
+            action.area.x >= area.x
+                && action.area.y >= area.y
+                && action.area.right() <= area.right()
+                && action.area.bottom() <= area.bottom()
+        }));
+        assert!(actions
+            .iter()
+            .any(|action| action.id == "period:1Y" && action.preferred));
+        assert!(actions
+            .iter()
+            .any(|action| action.id == "control:inspect-back" && action.enabled));
+        assert!(actions
+            .iter()
+            .any(|action| action.id == "control:inspect-forward" && !action.enabled));
+        assert_eq!(
+            workspace
+                .control_areas(chart.footer)
+                .into_iter()
+                .map(|(control, area)| (control.action_id(), area))
+                .collect::<Vec<_>>(),
+            actions
+                .iter()
+                .filter(|action| action.id != "control:refresh-header")
+                .map(|action| (action.id.clone(), action.area))
+                .collect::<Vec<_>>()
+        );
+
+        let normalization = actions
+            .iter()
+            .find(|action| action.id == "control:normalization")
+            .unwrap()
+            .area;
+        assert!(workspace.handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: normalization.x,
+                row: normalization.y,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        ));
+        assert_eq!(
+            workspace.specification.normalization,
+            Normalization::PercentChange
+        );
+
+        assert!(workspace.activate_action("control:inspect-back"));
+        assert_eq!(workspace.cursor_offset, 1);
+        assert!(workspace.activate_action("control:inspect-forward"));
+        assert_eq!(workspace.cursor_offset, 0);
+        assert!(workspace.activate_action("period:6M"));
+        assert_eq!(workspace.specification.period, ChartPeriod::SixMonths);
+        assert!(!workspace.activate_action("period:bogus"));
+        assert!(!workspace.activate_action("control:clear-comparisons"));
+
+        let narrow = workspace.actions(Rect::new(0, 0, 42, 18));
+        assert!(narrow.iter().all(|action| {
+            action.area.right() <= 42 && action.area.bottom() <= 18
+        }));
     }
 
     #[test]
