@@ -19,7 +19,9 @@ use crate::ui::{
 };
 
 use super::{
-    AppIntent, CommandInvocation, ShellContext, Workspace, WorkspaceDescriptor, WorkspaceId,
+    workspace::{sanitize_actions, MAX_WORKSPACE_ACTIONS},
+    AppIntent, CommandInvocation, ShellContext, Workspace, WorkspaceAction, WorkspaceDescriptor,
+    WorkspaceId,
 };
 
 pub const DESK_ID: WorkspaceId = WorkspaceId::new("desk");
@@ -33,6 +35,8 @@ enum DeskPane {
 }
 
 impl DeskPane {
+    const ALL: [Self; 3] = [Self::Monitor, Self::Chart, Self::News];
+
     const fn index(self) -> usize {
         match self {
             Self::Monitor => 0,
@@ -51,6 +55,26 @@ impl DeskPane {
 
     const fn next(self, delta: isize) -> Self {
         Self::from_index((self.index() as isize + delta).rem_euclid(3) as usize)
+    }
+
+    const fn action_id(self) -> &'static str {
+        match self {
+            Self::Monitor => "pane:monitor",
+            Self::Chart => "pane:chart",
+            Self::News => "pane:news",
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Monitor => "Monitor",
+            Self::Chart => "Chart",
+            Self::News => "News",
+        }
+    }
+
+    fn child_action_prefix(self) -> String {
+        format!("{}/", self.action_id())
     }
 }
 
@@ -98,7 +122,19 @@ impl DeskWorkspace {
     }
 
     fn focused_workspace(&mut self) -> &mut dyn Workspace {
-        match self.focused {
+        self.workspace_mut(self.focused)
+    }
+
+    fn workspace(&self, pane: DeskPane) -> &dyn Workspace {
+        match pane {
+            DeskPane::Monitor => self.monitor.as_ref(),
+            DeskPane::Chart => self.chart.as_ref(),
+            DeskPane::News => self.news.as_ref(),
+        }
+    }
+
+    fn workspace_mut(&mut self, pane: DeskPane) -> &mut dyn Workspace {
+        match pane {
             DeskPane::Monitor => self.monitor.as_mut(),
             DeskPane::Chart => self.chart.as_mut(),
             DeskPane::News => self.news.as_mut(),
@@ -183,6 +219,80 @@ impl Workspace for DeskWorkspace {
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
         self.route_mouse(event, desk_areas(area))
+    }
+
+    fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
+        let areas = desk_areas(area);
+        let visible = [
+            (DeskPane::Monitor, Some(areas.monitor)),
+            (DeskPane::Chart, Some(areas.chart)),
+            (DeskPane::News, areas.news),
+        ]
+        .into_iter()
+        .filter_map(|(pane, area)| area.map(|area| (pane, area)))
+        .collect::<Vec<_>>();
+        let preferred = visible
+            .iter()
+            .find_map(|(pane, _)| (*pane == self.focused).then_some(*pane))
+            .unwrap_or(DeskPane::Monitor);
+        let mut actions = Vec::new();
+
+        for (pane, pane_area) in &visible {
+            let header = Rect::new(
+                pane_area.frame.x,
+                pane_area.frame.y,
+                pane_area.frame.width,
+                1,
+            );
+            let mut pane_action = WorkspaceAction::new(
+                pane.action_id(),
+                format!("Focus {} pane", pane.label()),
+                header,
+            );
+            if *pane == preferred {
+                pane_action = pane_action.preferred();
+            }
+            actions.push(pane_action);
+        }
+
+        for (pane, pane_area) in visible {
+            let prefix = pane.child_action_prefix();
+            let remaining = MAX_WORKSPACE_ACTIONS.saturating_sub(actions.len());
+            let child_actions = self
+                .workspace(pane)
+                .actions(pane_area.body)
+                .into_iter()
+                .map(|mut action| {
+                    action.id = format!("{prefix}{}", action.id);
+                    action.label = format!("{} · {}", pane.label(), action.label);
+                    action.preferred = false;
+                    action
+                });
+            actions.extend(sanitize_actions(child_actions, pane_area.body, remaining));
+            if actions.len() == MAX_WORKSPACE_ACTIONS {
+                break;
+            }
+        }
+        actions
+    }
+
+    fn activate_action(&mut self, id: &str) -> bool {
+        for pane in DeskPane::ALL {
+            if id == pane.action_id() {
+                self.select(pane);
+                return true;
+            }
+            let prefix = pane.child_action_prefix();
+            let Some(child_id) = id.strip_prefix(&prefix) else {
+                continue;
+            };
+            let activated = self.workspace_mut(pane).activate_action(child_id);
+            if activated {
+                self.select(pane);
+            }
+            return activated;
+        }
+        false
     }
 
     fn on_focus(&mut self) {
@@ -318,6 +428,77 @@ mod tests {
         mouse: Arc<Mutex<usize>>,
     }
 
+    struct ActionWorkspace {
+        label: &'static str,
+        activations: Arc<Mutex<Vec<String>>>,
+    }
+
+    struct FloodWorkspace;
+
+    impl Workspace for ActionWorkspace {
+        fn descriptor(&self) -> WorkspaceDescriptor {
+            WorkspaceDescriptor {
+                id: WorkspaceId::new("action-stub"),
+                label: self.label,
+                hotkey: '\0',
+                commands: &[],
+            }
+        }
+
+        fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
+            vec![WorkspaceAction::new(
+                "open",
+                "Open child row",
+                Rect::new(
+                    area.x.saturating_add(1),
+                    area.y.saturating_add(1),
+                    area.width.saturating_sub(2),
+                    1,
+                ),
+            )
+            .preferred()]
+        }
+
+        fn activate_action(&mut self, id: &str) -> bool {
+            if id != "open" {
+                return false;
+            }
+            self.activations.lock().unwrap().push(id.to_owned());
+            true
+        }
+
+        fn render(&self, frame: &mut Frame, area: Rect) {
+            frame.render_widget(Paragraph::new(self.label), area);
+        }
+    }
+
+    impl Workspace for FloodWorkspace {
+        fn descriptor(&self) -> WorkspaceDescriptor {
+            WorkspaceDescriptor {
+                id: WorkspaceId::new("flood-stub"),
+                label: "FLOOD",
+                hotkey: '\0',
+                commands: &[],
+            }
+        }
+
+        fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
+            (0..MAX_WORKSPACE_ACTIONS)
+                .map(|index| {
+                    WorkspaceAction::new(
+                        format!("control:{index}"),
+                        format!("Control {index}"),
+                        Rect::new(area.x, area.y, 1, 1),
+                    )
+                })
+                .collect()
+        }
+
+        fn render(&self, frame: &mut Frame, area: Rect) {
+            frame.render_widget(Paragraph::new("FLOOD"), area);
+        }
+    }
+
     type StubParts = (
         Box<dyn Workspace>,
         Arc<Mutex<Vec<KeyCode>>>,
@@ -436,5 +617,87 @@ mod tests {
         assert!(rendered.contains("MONITOR CHILD"));
         assert!(rendered.contains("CHART CHILD"));
         assert!(rendered.contains("NEWS CHILD"));
+    }
+
+    #[test]
+    fn actions_expose_only_visible_panes_and_restore_the_focused_pane() {
+        let (monitor, _, _) = stub("MONITOR CHILD");
+        let (chart, _, _) = stub("CHART CHILD");
+        let (news, _, _) = stub("NEWS CHILD");
+        let mut desk = DeskWorkspace::new(monitor, chart, news);
+        let full = Rect::new(0, 0, 160, 42);
+
+        let actions = desk.actions(full);
+        assert_eq!(
+            actions.iter().map(|action| &*action.id).collect::<Vec<_>>(),
+            ["pane:monitor", "pane:chart", "pane:news"]
+        );
+        assert!(actions[0].preferred);
+        assert!(desk.activate_action("pane:chart"));
+        let actions = desk.actions(full);
+        assert!(
+            actions
+                .iter()
+                .find(|action| action.id == "pane:chart")
+                .unwrap()
+                .preferred
+        );
+
+        let short = desk.actions(Rect::new(0, 0, 160, 20));
+        assert!(!short.iter().any(|action| action.id == "pane:news"));
+        assert!(
+            short
+                .iter()
+                .find(|action| action.id == "pane:chart")
+                .unwrap()
+                .preferred
+        );
+    }
+
+    #[test]
+    fn child_actions_are_namespaced_and_activate_the_owning_pane() {
+        let (monitor, _, _) = stub("MONITOR CHILD");
+        let activations = Arc::new(Mutex::new(Vec::new()));
+        let chart = Box::new(ActionWorkspace {
+            label: "CHART CHILD",
+            activations: activations.clone(),
+        });
+        let (news, _, _) = stub("NEWS CHILD");
+        let mut desk = DeskWorkspace::new(monitor, chart, news);
+        let area = Rect::new(0, 0, 160, 42);
+        let child = desk
+            .actions(area)
+            .into_iter()
+            .find(|action| action.id == "pane:chart/open")
+            .unwrap();
+
+        assert!(contains(
+            desk_areas(area).chart.body,
+            child.area.x,
+            child.area.y
+        ));
+        assert!(!child.preferred);
+        assert!(desk.activate_action("pane:chart/open"));
+        assert_eq!(desk.focused, DeskPane::Chart);
+        assert_eq!(*activations.lock().unwrap(), ["open"]);
+    }
+
+    #[test]
+    fn pane_destinations_cannot_be_starved_by_child_action_volume() {
+        let monitor = Box::new(FloodWorkspace);
+        let (chart, _, _) = stub("CHART CHILD");
+        let (news, _, _) = stub("NEWS CHILD");
+        let desk = DeskWorkspace::new(monitor, chart, news);
+        let actions = desk.actions(Rect::new(0, 0, 160, 42));
+
+        assert_eq!(actions.len(), MAX_WORKSPACE_ACTIONS);
+        assert_eq!(
+            actions
+                .iter()
+                .take(3)
+                .map(|action| &*action.id)
+                .collect::<Vec<_>>(),
+            ["pane:monitor", "pane:chart", "pane:news"]
+        );
     }
 }

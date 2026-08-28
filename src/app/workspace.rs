@@ -466,26 +466,7 @@ impl WorkspaceRegistry {
         else {
             return Vec::new();
         };
-        let mut seen = HashSet::new();
-        workspace
-            .actions(area)
-            .into_iter()
-            .filter(|action| {
-                action.enabled
-                    && !action.id.is_empty()
-                    && action.id.len() <= 128
-                    && !action.label.is_empty()
-                    && action.label.len() <= 256
-                    && action.area.width > 0
-                    && action.area.height > 0
-                    && action.area.x >= area.x
-                    && action.area.y >= area.y
-                    && action.area.right() <= area.right()
-                    && action.area.bottom() <= area.bottom()
-                    && seen.insert(action.id.clone())
-            })
-            .take(limit.min(MAX_WORKSPACE_ACTIONS))
-            .collect()
+        sanitize_actions(workspace.actions(area), area, limit)
     }
 
     pub fn activate_action(&mut self, id: WorkspaceId, action_id: &str, area: Rect) -> bool {
@@ -641,6 +622,32 @@ impl WorkspaceRegistry {
         }
         (aliases, hotkeys)
     }
+}
+
+pub(super) fn sanitize_actions(
+    actions: impl IntoIterator<Item = WorkspaceAction>,
+    area: Rect,
+    limit: usize,
+) -> Vec<WorkspaceAction> {
+    let mut seen = HashSet::new();
+    actions
+        .into_iter()
+        .filter(|action| {
+            action.enabled
+                && !action.id.is_empty()
+                && action.id.len() <= 128
+                && !action.label.is_empty()
+                && action.label.len() <= 256
+                && action.area.width > 0
+                && action.area.height > 0
+                && action.area.x >= area.x
+                && action.area.y >= area.y
+                && action.area.right() <= area.right()
+                && action.area.bottom() <= area.bottom()
+                && seen.insert(action.id.clone())
+        })
+        .take(limit.min(MAX_WORKSPACE_ACTIONS))
+        .collect()
 }
 
 #[cfg(test)]

@@ -151,10 +151,12 @@ No root router match, shared screen state, or central data trait needs to be
 edited. The registry validates duplicate IDs and hotkeys at startup. Follow
 hints remain shell-owned, but their feature targets and activation semantics do
 not leak into the shell; Portfolio's tabs, security rows, and reload control are
-the initial reference implementation. The same action snapshot drives follow
-badges, spatial focus styling, arrow routing, activation revalidation, resize
-recovery, and async-state recovery, so the shell never keeps a second geometry
-model.
+the initial leaf reference implementation. Desk is the composition reference:
+it registers visible pane headers and namespaces child-workspace actions without
+rewriting their body rectangles or activation semantics. The same action
+snapshot drives follow badges, spatial focus styling, arrow routing, activation
+revalidation, resize recovery, and async-state recovery, so the shell never
+keeps a second geometry model.
 
 ## Cross-feature events
 

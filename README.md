@@ -69,8 +69,8 @@ and Quit receives a prefix-free one- or two-letter label. Type a label to route
 there immediately, or press `Esc` to cancel. The labels use the familiar
 Vimium-style link-hint interaction while remaining terminal-native.
 
-Portfolio is the first workspace to extend follow hints inside the active
-panel. Its currently rendered view tabs, security-capable table rows, and reload
+Portfolio extends follow hints and spatial focus inside the active panel. Its
+currently rendered view tabs, security-capable table rows, and reload
 control receive labels and spatial focus at their actual terminal coordinates;
 the currently selected actionable row is the focus-restoration target. Off-screen,
 disabled, duplicate, and stale actions are not routable. The bounded
@@ -80,8 +80,11 @@ without teaching the shell their domain behavior.
 `DESK` (aliases `SPLIT` and `DASHBOARD`) opens the combined workspace adapted
 from `alphai-tui`. Press `Tab`/`Shift+Tab` or `1`/`2`/`3` to focus Monitor,
 Chart, or News. Clicking inside a pane focuses it and sends subsequent keys to
-that pane. On short terminals the News pane yields instead of crushing the
-market panels; use `NEWS` for the full feed.
+that pane. The three visible pane headers also participate in `Esc` spatial
+focus and `F` follow hints; child actions are namespaced through Desk while
+retaining their real body coordinates. On short terminals the News pane yields
+instead of crushing the market panels and is removed from routing; use `NEWS`
+for the full feed.
 
 Run `HELP` from the command bar—or press `F1`—to open the command and controls
 guide without leaving the current workspace. Close it with `Esc`, `Q`, `F1`,

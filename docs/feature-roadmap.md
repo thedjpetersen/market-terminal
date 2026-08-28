@@ -146,7 +146,11 @@ move to its own crate later without changing its public vocabulary.
 - **Complete:** first P0 feature-action routing slice with bounded stable action
   IDs, duplicate/disabled/off-screen rejection, viewport-aware one- or two-letter
   follow hints, activation revalidation, and Portfolio tabs, security-capable
-  rows, and reload controls as the initial adopter.
+  rows, and reload controls as the initial leaf adopter.
+- **Complete:** first composed P0 action-routing slice for Desk: visible Monitor,
+  Chart, and News pane headers support spatial focus and follow hints, hidden
+  responsive panes are excluded, and nested child actions retain their rendered
+  rectangles behind collision-free pane namespaces.
 - **Complete:** source-derived OpenTerminalUI capability ledger pinned to an
   exact upstream tree, with stable `OTUI-*` IDs, implementation-maturity labels,
   repository-relative evidence, owners, priorities, gaps, acceptance-test IDs,
@@ -231,7 +235,7 @@ continues.
 | --- | --- | --- | --- |
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
 | Mission Control, launchpad, ticker tape | Partial | Overview, Desk, Markets, persisted active workspace | Add configurable launch tiles, live pulse strip, priority stack, and saved role presets. |
-| Keyboard navigation and icon rail | Partial | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, and feature-owned focus/hints for visible Portfolio tabs/rows/reload | Adopt the action contract in remaining workspace rows, buttons, chart controls, panes, and tables. |
+| Keyboard navigation and icon rail | Partial | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, and composed Desk pane routing | Adopt the action contract in remaining workspace rows, buttons, chart controls, and tables. |
 | Saved views and workspace presets | Partial | Workspace order, active workspace, layout and command history persist | Persist/restore view parameters, filters, selected instrument, table columns, chart state, pane geometry, and Trader/Quant/PM/Risk/Ops presets. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
 | Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
@@ -337,8 +341,9 @@ The shell now restores a feature-preferred action, navigates validated rectangle
 with lane-first distance and stable tie-breakers, refuses edge wrapping, falls
 back to workspace traversal when no local actions exist, revalidates on Enter,
 and refreshes focus after resize or asynchronous state changes. Portfolio supplies
-visible tabs, security-capable rows, and reload as the first adopter. Remaining
-workspace adopters, representative split/nested-pane evidence, gallery states,
+visible tabs, security-capable rows, and reload as the leaf reference. Desk now
+supplies visible split-pane headers and safely namespaced nested child actions,
+with responsive hidden-pane exclusion. Remaining workspace adopters, gallery states,
 and enforcement that completed capabilities link real implementation evidence
 remain.
 

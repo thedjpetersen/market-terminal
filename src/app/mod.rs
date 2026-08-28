@@ -2272,6 +2272,61 @@ mod tests {
     }
 
     #[test]
+    fn desk_panes_support_spatial_focus_and_follow_hints() {
+        let mut app = bootstrap::demo_app();
+        let frame_area = Rect::new(0, 0, 160, 48);
+        app.set_terminal_area(frame_area);
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "DESK".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let workspace_area = crate::ui::ShellLayout::new(frame_area).workspace;
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(
+            app.focused_workspace_action(workspace_area).unwrap().id,
+            "pane:monitor"
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(
+            app.focused_workspace_action(workspace_area).unwrap().id,
+            "pane:chart"
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(
+            app.focused_workspace_action(workspace_area).unwrap().id,
+            "pane:chart"
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let news_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action == "pane:news"
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in news_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(
+            app.focused_workspace_action(workspace_area).unwrap().id,
+            "pane:news"
+        );
+    }
+
+    #[test]
     fn follow_hints_route_to_visible_workspaces_and_shell_actions() {
         let mut app = bootstrap::demo_app();
         let second = app.workspaces.navigation_items().nth(1).unwrap().id;
