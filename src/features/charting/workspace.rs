@@ -42,6 +42,7 @@ use super::{
 
 const SERIES_COLORS: [ThemeColor; 4] = [CYAN, YELLOW, GREEN, RED];
 const CANDLE_RIGHT_MARGIN_PERCENT: u16 = 18;
+const MIN_VISIBLE_OBSERVATIONS: usize = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChartDisplayMode {
@@ -107,11 +108,7 @@ struct PreparedChart {
     primary_closes: Vec<f64>,
     primary_bars: Vec<super::PriceBar>,
     volume_bars: Vec<u64>,
-    x_max: f64,
     y_bounds: [f64; 2],
-    volume_max: u64,
-    session_high: f64,
-    session_low: f64,
     average_volume: u64,
     last: f64,
     change_percent: f64,
@@ -119,11 +116,50 @@ struct PreparedChart {
     source: String,
 }
 
+struct ChartWindow {
+    range: Range<usize>,
+    selected_index: usize,
+    x_max: f64,
+    y_bounds: [f64; 2],
+}
+
 #[derive(Clone, Copy)]
 struct PlotAreas {
     price: Rect,
     rsi: Option<Rect>,
     volume: Option<Rect>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct ChartViewport {
+    visible_observations: Option<usize>,
+    pan_offset: usize,
+}
+
+impl ChartViewport {
+    fn range(self, total: usize) -> Range<usize> {
+        if total == 0 {
+            return 0..0;
+        }
+        let visible = self.visible_observations.unwrap_or(total).clamp(1, total);
+        let pan_offset = self.pan_offset.min(total.saturating_sub(visible));
+        let end = total - pan_offset;
+        end - visible..end
+    }
+
+    fn show_around(&mut self, total: usize, visible: usize, selected: usize) {
+        if total == 0 || visible >= total {
+            *self = Self::default();
+            return;
+        }
+        let visible = visible.clamp(1, total);
+        let selected = selected.min(total - 1);
+        let start = selected
+            .saturating_sub(visible / 2)
+            .min(total.saturating_sub(visible));
+        self.visible_observations = Some(visible);
+        self.pan_offset = total.saturating_sub(start + visible);
+    }
 }
 
 fn plot_areas(area: Rect, has_rsi: bool, has_volume: bool) -> PlotAreas {
@@ -179,6 +215,7 @@ pub struct ChartingWorkspace {
     specification: ChartSpecification,
     status: String,
     cursor_offset: usize,
+    viewport: ChartViewport,
     display_mode: ChartDisplayMode,
     line_mode: ChartLineMode,
     refresh_sender: SyncSender<ChartRefresh>,
@@ -224,9 +261,10 @@ impl ChartingWorkspace {
             .expect("chart history worker should start");
         let mut workspace = Self {
             specification: ChartSpecification::new(primary),
-            status: "READY · K CANDLES/LINE · [/] PERIOD · M MA · E SMA/EMA · I RSI · V VOLUME"
+            status: "READY · ↑/↓ OR +/- ZOOM · ←/→ PAN · ,/. INSPECT · HOME LATEST · [/] PERIOD"
                 .to_owned(),
             cursor_offset: 0,
+            viewport: ChartViewport::default(),
             display_mode: ChartDisplayMode::Candlesticks,
             line_mode: ChartLineMode::Smooth,
             refresh_sender,
@@ -262,6 +300,10 @@ impl ChartingWorkspace {
             controls.push(ChartControl::ClearComparisons);
         }
         controls.extend([
+            ChartControl::ZoomIn,
+            ChartControl::ZoomOut,
+            ChartControl::PanBack,
+            ChartControl::PanForward,
             ChartControl::InspectBack,
             ChartControl::InspectForward,
             ChartControl::Latest,
@@ -285,6 +327,10 @@ impl ChartingWorkspace {
             ChartControl::Volume => " V VOL ".to_owned(),
             ChartControl::Comparison => " C SPY ".to_owned(),
             ChartControl::ClearComparisons => " X CLR ".to_owned(),
+            ChartControl::ZoomIn => " + ZOOM ".to_owned(),
+            ChartControl::ZoomOut => " - OUT ".to_owned(),
+            ChartControl::PanBack => " ← PAN ".to_owned(),
+            ChartControl::PanForward => " PAN → ".to_owned(),
             ChartControl::InspectBack => " , BACK ".to_owned(),
             ChartControl::InspectForward => " . FWD ".to_owned(),
             ChartControl::Latest => " HOME NOW ".to_owned(),
@@ -315,15 +361,177 @@ impl ChartingWorkspace {
     }
 
     fn inspection_max_offset(&self) -> usize {
+        self.chart_length().saturating_sub(1)
+    }
+
+    fn chart_length(&self) -> usize {
         self.history
             .as_ref()
             .and_then(|series| series.first())
-            .map_or(0, |series| series.bars.len().saturating_sub(1))
+            .map_or(0, |series| series.bars.len())
+    }
+
+    fn selected_index(&self, total: usize) -> usize {
+        total
+            .saturating_sub(1)
+            .saturating_sub(self.cursor_offset.min(total.saturating_sub(1)))
+    }
+
+    fn visible_range(&self, total: usize) -> Range<usize> {
+        self.viewport.range(total)
+    }
+
+    fn reset_view(&mut self) {
+        self.cursor_offset = 0;
+        self.viewport = ChartViewport::default();
+    }
+
+    fn constrain_view_to_history(&mut self) {
+        let total = self.chart_length();
+        if total == 0 {
+            return;
+        }
+        self.cursor_offset = self.cursor_offset.min(total - 1);
+        let visible = self
+            .viewport
+            .visible_observations
+            .unwrap_or(total)
+            .clamp(1, total);
+        if visible >= total {
+            self.viewport = ChartViewport::default();
+        } else {
+            self.viewport.visible_observations = Some(visible);
+            self.viewport.pan_offset = self.viewport.pan_offset.min(total - visible);
+            self.reveal_inspection(total);
+        }
+    }
+
+    fn zoom_view(&mut self, inward: bool) {
+        let total = self.chart_length();
+        if total == 0 {
+            self.status = "ZOOM UNAVAILABLE · HISTORY LOADING".to_owned();
+            return;
+        }
+        let current = self.visible_range(total).len();
+        let minimum = MIN_VISIBLE_OBSERVATIONS.min(total).max(1);
+        let visible = if inward {
+            if current <= minimum {
+                self.status = format!("ZOOM LIMIT · {current} OBSERVATIONS");
+                return;
+            }
+            (current * 3 / 4).max(minimum).min(current - 1)
+        } else {
+            if current >= total {
+                self.status = format!("FULL HISTORY · {total} OBSERVATIONS");
+                return;
+            }
+            (current * 4 / 3).max(current + 1).min(total)
+        };
+        self.viewport
+            .show_around(total, visible, self.selected_index(total));
+        let range = self.visible_range(total);
+        self.status = format!(
+            "ZOOM · {}-{} OF {total} · {} OBSERVATIONS",
+            range.start + 1,
+            range.end,
+            range.len()
+        );
+    }
+
+    fn pan_view(&mut self, backward: bool) {
+        let total = self.chart_length();
+        let range = self.visible_range(total);
+        if total == 0 {
+            self.status = "PAN UNAVAILABLE · HISTORY LOADING".to_owned();
+            return;
+        }
+        if range.len() >= total {
+            self.status = "PAN UNAVAILABLE · ZOOM IN FIRST".to_owned();
+            return;
+        }
+        let maximum = total - range.len();
+        let previous = self.viewport.pan_offset.min(maximum);
+        let step = (range.len() / 5).max(1);
+        let next = if backward {
+            previous.saturating_add(step).min(maximum)
+        } else {
+            previous.saturating_sub(step)
+        };
+        let moved = previous.abs_diff(next);
+        self.viewport.pan_offset = next;
+        self.cursor_offset = if backward {
+            self.cursor_offset
+                .saturating_add(moved)
+                .min(total.saturating_sub(1))
+        } else {
+            self.cursor_offset.saturating_sub(moved)
+        };
+        let range = self.visible_range(total);
+        self.status = format!(
+            "PAN · {}-{} OF {total} · INSPECT {}",
+            range.start + 1,
+            range.end,
+            self.selected_index(total) + 1
+        );
+    }
+
+    fn move_inspection(&mut self, backward: bool) {
+        let total = self.chart_length();
+        if total == 0 {
+            self.cursor_offset = if backward {
+                self.cursor_offset.saturating_add(1).min(10_000)
+            } else {
+                self.cursor_offset.saturating_sub(1)
+            };
+            self.status = format!("INSPECT · {} OBSERVATION(S) BACK", self.cursor_offset);
+            return;
+        }
+        self.cursor_offset = if backward {
+            self.cursor_offset
+                .saturating_add(1)
+                .min(total.saturating_sub(1))
+        } else {
+            self.cursor_offset.saturating_sub(1)
+        };
+        self.reveal_inspection(total);
+        self.status = format!(
+            "INSPECT · OBSERVATION {} OF {total}",
+            self.selected_index(total) + 1
+        );
+    }
+
+    fn reveal_inspection(&mut self, total: usize) {
+        let range = self.visible_range(total);
+        if range.is_empty() || range.len() >= total {
+            return;
+        }
+        let selected = self.selected_index(total);
+        if selected < range.start {
+            self.viewport.pan_offset = total.saturating_sub(selected + range.len());
+        } else if selected >= range.end {
+            self.viewport.pan_offset = total.saturating_sub(selected + 1);
+        }
     }
 
     fn control_enabled(&self, control: ChartControl) -> bool {
+        let total = self.chart_length();
+        let visible = self.visible_range(total).len();
         match control {
             ChartControl::ClearComparisons => !self.specification.comparisons.is_empty(),
+            ChartControl::ZoomIn => {
+                total > MIN_VISIBLE_OBSERVATIONS.min(total) && visible > MIN_VISIBLE_OBSERVATIONS
+            }
+            ChartControl::ZoomOut => total > 0 && visible < total,
+            ChartControl::PanBack => {
+                total > 0
+                    && visible < total
+                    && self.viewport.pan_offset < total.saturating_sub(visible)
+            }
+            ChartControl::PanForward => {
+                total > 0
+                    && visible < total
+                    && self.viewport.pan_offset.min(total.saturating_sub(visible)) > 0
+            }
             ChartControl::InspectBack => self.cursor_offset < self.inspection_max_offset(),
             ChartControl::InspectForward | ChartControl::Latest => self.cursor_offset > 0,
             _ => true,
@@ -350,7 +558,11 @@ impl ChartingWorkspace {
             ChartControl::Latest => self.cursor_offset == 0,
             ChartControl::DisplayMode => self.display_mode == ChartDisplayMode::Line,
             ChartControl::LineMode => self.line_mode == ChartLineMode::Compatible,
-            ChartControl::InspectBack
+            ChartControl::ZoomIn
+            | ChartControl::ZoomOut
+            | ChartControl::PanBack
+            | ChartControl::PanForward
+            | ChartControl::InspectBack
             | ChartControl::InspectForward
             | ChartControl::InsertSheet
             | ChartControl::Refresh => false,
@@ -376,6 +588,10 @@ impl ChartingWorkspace {
             ChartControl::Volume => "Toggle volume histogram".to_owned(),
             ChartControl::Comparison => "Toggle SPY comparison".to_owned(),
             ChartControl::ClearComparisons => "Clear all comparisons".to_owned(),
+            ChartControl::ZoomIn => "Zoom into fewer visible observations".to_owned(),
+            ChartControl::ZoomOut => "Zoom out toward full history".to_owned(),
+            ChartControl::PanBack => "Pan the visible window backward".to_owned(),
+            ChartControl::PanForward => "Pan the visible window forward".to_owned(),
             ChartControl::InspectBack => "Inspect previous observation".to_owned(),
             ChartControl::InspectForward => "Inspect next observation".to_owned(),
             ChartControl::Latest => "Inspect latest observation".to_owned(),
@@ -403,7 +619,7 @@ impl ChartingWorkspace {
             ChartControl::Period(period) => {
                 if period != self.specification.period {
                     self.specification.period = period;
-                    self.cursor_offset = 0;
+                    self.reset_view();
                     self.queue_history();
                 }
             }
@@ -432,16 +648,15 @@ impl ChartingWorkspace {
                 self.status = "COMPARISONS CLEARED".to_owned();
                 self.queue_history();
             }
-            ChartControl::InspectBack => {
-                self.cursor_offset = self.cursor_offset.saturating_add(1);
-                self.status = format!("INSPECT · {} OBSERVATION(S) BACK", self.cursor_offset);
-            }
-            ChartControl::InspectForward => {
-                self.cursor_offset = self.cursor_offset.saturating_sub(1);
-                self.status = format!("INSPECT · {} OBSERVATION(S) BACK", self.cursor_offset);
-            }
+            ChartControl::ZoomIn => self.zoom_view(true),
+            ChartControl::ZoomOut => self.zoom_view(false),
+            ChartControl::PanBack => self.pan_view(true),
+            ChartControl::PanForward => self.pan_view(false),
+            ChartControl::InspectBack => self.move_inspection(true),
+            ChartControl::InspectForward => self.move_inspection(false),
             ChartControl::Latest => {
                 self.cursor_offset = 0;
+                self.viewport.pan_offset = 0;
                 self.status = "INSPECT · LATEST OBSERVATION".to_owned();
             }
             ChartControl::DisplayMode => self.toggle_display_mode(),
@@ -592,6 +807,7 @@ impl ChartingWorkspace {
                     self.status = format!("{} LIVE SERIES LOADED", series.len());
                     self.history = Some(series);
                     self.history_error = None;
+                    self.constrain_view_to_history();
                 }
                 Err(error) => {
                     self.status = error.to_string();
@@ -620,6 +836,42 @@ impl ChartingWorkspace {
             ChartDisplayMode::Candlesticks
         } else {
             ChartDisplayMode::Line
+        }
+    }
+
+    fn chart_window(&self, chart: &PreparedChart) -> ChartWindow {
+        let total = chart.primary_values.len();
+        let range = self.visible_range(total);
+        let selected_index = if range.is_empty() {
+            0
+        } else {
+            self.selected_index(total)
+                .clamp(range.start, range.end.saturating_sub(1))
+        };
+        let (minimum, maximum) = chart
+            .lines
+            .iter()
+            .flat_map(|line| {
+                line.points
+                    .iter()
+                    .filter(|point| range.contains(&(point.0 as usize)))
+                    .map(|point| point.1)
+            })
+            .filter(|value| value.is_finite())
+            .fold(
+                (f64::INFINITY, f64::NEG_INFINITY),
+                |(minimum, maximum), value| (minimum.min(value), maximum.max(value)),
+            );
+        let y_bounds = if minimum.is_finite() && maximum.is_finite() {
+            padded_bounds(minimum, maximum)
+        } else {
+            chart.y_bounds
+        };
+        ChartWindow {
+            x_max: range.len().saturating_sub(1).max(1) as f64,
+            range,
+            selected_index,
+            y_bounds,
         }
     }
 
@@ -689,35 +941,43 @@ impl ChartingWorkspace {
         );
     }
 
-    fn render_price_chart(&self, frame: &mut Frame, area: Rect, chart: &PreparedChart) {
+    fn render_price_chart(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        chart: &PreparedChart,
+        window: &ChartWindow,
+    ) {
         let columns = if area.width >= 110 {
             Layout::horizontal([Constraint::Percentage(78), Constraint::Percentage(22)]).split(area)
         } else {
             Layout::horizontal([Constraint::Percentage(100), Constraint::Length(0)]).split(area)
         };
-        let selected_index = chart.primary_values.len().saturating_sub(1).saturating_sub(
-            self.cursor_offset
-                .min(chart.primary_values.len().saturating_sub(1)),
-        );
         if self.effective_display_mode() == ChartDisplayMode::Candlesticks {
-            render_candlesticks(frame, columns[0], chart, selected_index);
+            render_candlesticks(frame, columns[0], chart, window);
         } else {
-            let selected_x = selected_index as f64;
+            let selected_x = window.selected_index.saturating_sub(window.range.start) as f64;
             let cursor = [
-                (selected_x, chart.y_bounds[0]),
-                (selected_x, chart.y_bounds[1]),
+                (selected_x, window.y_bounds[0]),
+                (selected_x, window.y_bounds[1]),
             ];
-            let zero_baseline = [(0.0, 0.0), (chart.x_max, 0.0)];
+            let zero_baseline = [(0.0, 0.0), (window.x_max, 0.0)];
+            let visible_lines = chart
+                .lines
+                .iter()
+                .map(|line| visible_points(&line.points, &window.range))
+                .collect::<Vec<_>>();
             let mut datasets = chart
                 .lines
                 .iter()
-                .map(|line| {
+                .zip(&visible_lines)
+                .map(|(line, points)| {
                     Dataset::default()
                         .name(line.name.clone())
                         .marker(self.line_mode.marker())
                         .graph_type(GraphType::Line)
                         .style(line.color)
-                        .data(&line.points)
+                        .data(points)
                 })
                 .collect::<Vec<_>>();
             if self.specification.normalization == Normalization::PercentChange {
@@ -738,32 +998,33 @@ impl ChartingWorkspace {
                     .style(AMBER)
                     .data(&cursor),
             );
-            let middle = (chart.y_bounds[0] + chart.y_bounds[1]) / 2.0;
-            let lower_middle = (chart.y_bounds[0] + middle) / 2.0;
-            let upper_middle = (middle + chart.y_bounds[1]) / 2.0;
+            let middle = (window.y_bounds[0] + window.y_bounds[1]) / 2.0;
+            let lower_middle = (window.y_bounds[0] + middle) / 2.0;
+            let upper_middle = (middle + window.y_bounds[1]) / 2.0;
             let y_labels = [
-                format!("{:.2}", chart.y_bounds[0]),
+                format!("{:.2}", window.y_bounds[0]),
                 format!("{lower_middle:.2}"),
                 format!("{middle:.2}"),
                 format!("{upper_middle:.2}"),
-                format!("{:.2}", chart.y_bounds[1]),
+                format!("{:.2}", window.y_bounds[1]),
             ];
             let axis_title = match self.specification.normalization {
                 Normalization::Price => "PRICE",
                 Normalization::PercentChange => "% CHANGE",
             };
+            let title = line_inspection_title(chart, window, self.specification.normalization);
             let price_chart = Chart::new(datasets)
-                .block(terminal_block("GRAPH", "PRICE AND COMPARISON"))
+                .block(terminal_block("GRAPH", &title))
                 .x_axis(
                     Axis::default()
-                        .bounds([0.0, chart.x_max])
-                        .labels(["START", self.specification.period.label(), "LATEST"])
+                        .bounds([0.0, window.x_max])
+                        .labels(window_time_labels(chart, &window.range))
                         .style(MUTED),
                 )
                 .y_axis(
                     Axis::default()
                         .title(axis_title)
-                        .bounds(chart.y_bounds)
+                        .bounds(window.y_bounds)
                         .labels(y_labels)
                         .style(AMBER),
                 );
@@ -771,38 +1032,53 @@ impl ChartingWorkspace {
         }
 
         if columns[1].width > 0 {
-            self.render_statistics(frame, columns[1], chart, selected_index);
+            self.render_statistics(frame, columns[1], chart, window);
         }
     }
 
-    fn render_volume_chart(&self, frame: &mut Frame, area: Rect, chart: &PreparedChart) {
+    fn render_volume_chart(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        chart: &PreparedChart,
+        window: &ChartWindow,
+    ) {
+        let volume_bars = &chart.volume_bars[window.range.clone()];
         let volume = Sparkline::default()
-            .data(&chart.volume_bars)
-            .max(chart.volume_max)
+            .data(volume_bars)
+            .max(volume_bars.iter().copied().max().unwrap_or(1).max(1))
             .style(AMBER)
             .block(terminal_block("VOL", "VOLUME HISTOGRAM"));
         frame.render_widget(volume, area);
     }
 
-    fn render_rsi_chart(&self, frame: &mut Frame, area: Rect, chart: &PreparedChart) {
-        let lower_threshold = [(0.0, 30.0), (chart.x_max, 30.0)];
-        let upper_threshold = [(0.0, 70.0), (chart.x_max, 70.0)];
-        let selected_index = chart.primary_values.len().saturating_sub(1).saturating_sub(
-            self.cursor_offset
-                .min(chart.primary_values.len().saturating_sub(1)),
-        );
-        let selected_x = selected_index as f64;
+    fn render_rsi_chart(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        chart: &PreparedChart,
+        window: &ChartWindow,
+    ) {
+        let lower_threshold = [(0.0, 30.0), (window.x_max, 30.0)];
+        let upper_threshold = [(0.0, 70.0), (window.x_max, 70.0)];
+        let selected_x = window.selected_index.saturating_sub(window.range.start) as f64;
         let cursor = [(selected_x, 0.0), (selected_x, 100.0)];
+        let visible_lines = chart
+            .rsi_lines
+            .iter()
+            .map(|line| visible_points(&line.points, &window.range))
+            .collect::<Vec<_>>();
         let mut datasets = chart
             .rsi_lines
             .iter()
-            .map(|line| {
+            .zip(&visible_lines)
+            .map(|(line, points)| {
                 Dataset::default()
                     .name(line.name.clone())
                     .marker(self.line_mode.marker())
                     .graph_type(GraphType::Line)
                     .style(line.color)
-                    .data(&line.points)
+                    .data(points)
             })
             .collect::<Vec<_>>();
         datasets.extend([
@@ -829,7 +1105,7 @@ impl ChartingWorkspace {
         frame.render_widget(
             Chart::new(datasets)
                 .block(terminal_block("RSI", "WILDER RELATIVE STRENGTH"))
-                .x_axis(Axis::default().bounds([0.0, chart.x_max]).style(MUTED))
+                .x_axis(Axis::default().bounds([0.0, window.x_max]).style(MUTED))
                 .y_axis(
                     Axis::default()
                         .bounds([0.0, 100.0])
@@ -845,42 +1121,60 @@ impl ChartingWorkspace {
         frame: &mut Frame,
         area: Rect,
         chart: &PreparedChart,
-        selected_index: usize,
+        window: &ChartWindow,
     ) {
+        let selected_index = window.selected_index;
+        let Some(selected_bar) = chart.primary_bars.get(selected_index) else {
+            return;
+        };
         let selected_value = chart
             .primary_values
             .get(selected_index)
             .copied()
             .unwrap_or_default();
-        let selected_close = chart
-            .primary_closes
-            .get(selected_index)
-            .copied()
-            .unwrap_or_default();
         let observation = selected_index + 1;
         let total = chart.primary_values.len();
+        let visible_bars = &chart.primary_bars[window.range.clone()];
+        let view_high = visible_bars
+            .iter()
+            .map(|bar| bar.high)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let view_low = visible_bars
+            .iter()
+            .map(|bar| bar.low)
+            .fold(f64::INFINITY, f64::min);
         let mut lines = vec![
             Line::from(Span::styled("INSPECTION", AMBER)),
             Line::from(Span::styled(format!("OBS  {observation}/{total}"), MUTED)),
-            Line::from(Span::styled(format!("PX   {selected_close:.2}"), CYAN)),
-            Line::from(Span::styled(format!("PLOT {selected_value:+.2}"), INK)),
-            Line::from(""),
-            Line::from(Span::styled("RANGE", AMBER)),
             Line::from(Span::styled(
-                format!("HIGH {:.2}", chart.session_high),
-                GREEN,
-            )),
-            Line::from(Span::styled(format!("LOW  {:.2}", chart.session_low), RED)),
-            Line::from(Span::styled(
-                format!("SPAN {:.2}", chart.session_high - chart.session_low),
+                inspection_time_label(selected_bar.timestamp),
                 MUTED,
             )),
+            Line::from(Span::styled(format!("O    {:.2}", selected_bar.open), INK)),
             Line::from(Span::styled(
-                format!(
-                    "VOL  {}",
-                    compact_volume(*chart.volume_bars.get(selected_index).unwrap_or(&0))
-                ),
+                format!("H    {:.2}", selected_bar.high),
+                GREEN,
+            )),
+            Line::from(Span::styled(format!("L    {:.2}", selected_bar.low), RED)),
+            Line::from(Span::styled(
+                format!("C    {:.2}", selected_bar.close),
+                CYAN,
+            )),
+            Line::from(Span::styled(format!("PLOT {selected_value:+.2}"), INK)),
+            Line::from(Span::styled(
+                format!("VOL  {}", compact_volume(selected_bar.volume)),
                 AMBER,
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("VIEW {}-{}", window.range.start + 1, window.range.end),
+                AMBER,
+            )),
+            Line::from(Span::styled(format!("HIGH {:.2}", view_high), GREEN)),
+            Line::from(Span::styled(format!("LOW  {:.2}", view_low), RED)),
+            Line::from(Span::styled(
+                format!("SPAN {:.2}", view_high - view_low),
+                MUTED,
             )),
             Line::from(Span::styled(
                 format!("AVG  {}", compact_volume(chart.average_volume)),
@@ -971,7 +1265,7 @@ impl Workspace for ChartingWorkspace {
             &invocation.args,
             &mut self.status,
         );
-        self.cursor_offset = 0;
+        self.reset_view();
         if self.specification.primary != previous_primary
             || self.specification.period != previous_period
             || self.specification.comparisons != previous_comparisons
@@ -983,16 +1277,32 @@ impl Workspace for ChartingWorkspace {
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            KeyCode::Right | KeyCode::Char(']') | KeyCode::Char('t') => {
+            KeyCode::Char(']') | KeyCode::Char('t') => {
                 self.specification.period = self.specification.period.next();
-                self.cursor_offset = 0;
+                self.reset_view();
                 self.queue_history();
                 true
             }
-            KeyCode::Left | KeyCode::Char('[') | KeyCode::Char('T') => {
+            KeyCode::Char('[') | KeyCode::Char('T') => {
                 self.specification.period = self.specification.period.previous();
-                self.cursor_offset = 0;
+                self.reset_view();
                 self.queue_history();
+                true
+            }
+            KeyCode::Up | KeyCode::Char('+' | '=') => {
+                self.zoom_view(true);
+                true
+            }
+            KeyCode::Down | KeyCode::Char('-' | '_') => {
+                self.zoom_view(false);
+                true
+            }
+            KeyCode::Left => {
+                self.pan_view(true);
+                true
+            }
+            KeyCode::Right => {
+                self.pan_view(false);
                 true
             }
             KeyCode::Char('n') => self.activate_control(ChartControl::Normalization),
@@ -1013,17 +1323,16 @@ impl Workspace for ChartingWorkspace {
                 }
             }
             KeyCode::Char(',') => {
-                self.cursor_offset = self.cursor_offset.saturating_add(1).min(10_000);
-                self.status = format!("INSPECT · {} OBSERVATION(S) BACK", self.cursor_offset);
+                self.move_inspection(true);
                 true
             }
             KeyCode::Char('.') => {
-                self.cursor_offset = self.cursor_offset.saturating_sub(1);
-                self.status = format!("INSPECT · {} OBSERVATION(S) BACK", self.cursor_offset);
+                self.move_inspection(false);
                 true
             }
             KeyCode::Home | KeyCode::Char('E') => {
                 self.cursor_offset = 0;
+                self.viewport.pan_offset = 0;
                 self.status = "INSPECT · LATEST OBSERVATION".to_owned();
                 true
             }
@@ -1089,10 +1398,13 @@ impl Workspace for ChartingWorkspace {
             .column
             .saturating_sub(plot_x)
             .min(plot_width.saturating_sub(1));
-        let last = chart.primary_values.len() - 1;
-        let selected = usize::from(relative) * last / usize::from(plot_width);
-        self.cursor_offset = last.saturating_sub(selected);
-        self.status = format!("INSPECT · {} OBSERVATION(S) BACK", self.cursor_offset);
+        let total = chart.primary_values.len();
+        let range = self.visible_range(total);
+        let selected = range.start
+            + usize::from(relative) * range.len().saturating_sub(1)
+                / usize::from(plot_width.saturating_sub(1).max(1));
+        self.cursor_offset = total.saturating_sub(1).saturating_sub(selected);
+        self.status = format!("INSPECT · OBSERVATION {} OF {total}", selected + 1);
         true
     }
 
@@ -1145,18 +1457,19 @@ impl Workspace for ChartingWorkspace {
 
         match self.prepared_chart() {
             Ok(chart) => {
+                let window = self.chart_window(&chart);
                 self.render_header(frame, areas.header, &chart);
                 let plots = plot_areas(
                     areas.plot,
                     !chart.rsi_lines.is_empty(),
                     self.specification.has_study(Study::Volume),
                 );
-                self.render_price_chart(frame, plots.price, &chart);
+                self.render_price_chart(frame, plots.price, &chart, &window);
                 if let Some(rsi_area) = plots.rsi {
-                    self.render_rsi_chart(frame, rsi_area, &chart);
+                    self.render_rsi_chart(frame, rsi_area, &chart, &window);
                 }
                 if let Some(volume_area) = plots.volume {
-                    self.render_volume_chart(frame, volume_area, &chart);
+                    self.render_volume_chart(frame, volume_area, &chart, &window);
                 }
             }
             Err(error) => {
@@ -1308,11 +1621,6 @@ fn prepare_chart(
         }
     }
 
-    let x_max = lines
-        .iter()
-        .filter_map(|line| line.points.last().map(|point| point.0))
-        .fold(1.0_f64, f64::max)
-        .max(1.0);
     let (minimum, maximum) = lines
         .iter()
         .flat_map(|line| line.points.iter().map(|point| point.1))
@@ -1326,7 +1634,6 @@ fn prepare_chart(
         .first()
         .map(|line| line.points.iter().map(|point| point.1).collect())
         .unwrap_or_default();
-    let volume_max = volume_bars.iter().copied().max().unwrap_or(1).max(1);
     let average_volume = if volume_bars.is_empty() {
         0
     } else {
@@ -1336,17 +1643,6 @@ fn prepare_chart(
             .sum::<u128>()
             / volume_bars.len() as u128) as u64
     };
-    let session_high = primary
-        .bars
-        .iter()
-        .map(|bar| bar.high)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let session_low = primary
-        .bars
-        .iter()
-        .map(|bar| bar.low)
-        .fold(f64::INFINITY, f64::min);
-
     Ok(PreparedChart {
         lines,
         rsi_lines,
@@ -1354,17 +1650,95 @@ fn prepare_chart(
         primary_closes,
         primary_bars,
         volume_bars,
-        x_max,
         y_bounds,
-        volume_max,
-        session_high,
-        session_low,
         average_volume,
         last,
         change_percent,
         quality: primary.quality.label(),
         source: primary.source.clone(),
     })
+}
+
+fn visible_points(points: &[(f64, f64)], range: &Range<usize>) -> Vec<(f64, f64)> {
+    points
+        .iter()
+        .filter(|point| range.contains(&(point.0 as usize)))
+        .map(|point| (point.0 - range.start as f64, point.1))
+        .collect()
+}
+
+fn window_time_labels(chart: &PreparedChart, range: &Range<usize>) -> [String; 3] {
+    let Some(first) = chart.primary_bars.get(range.start) else {
+        return [String::new(), String::new(), String::new()];
+    };
+    let last_index = range.end.saturating_sub(1);
+    let middle_index = range.start + range.len().saturating_sub(1) / 2;
+    let last = chart.primary_bars.get(last_index).unwrap_or(first);
+    let middle = chart.primary_bars.get(middle_index).unwrap_or(first);
+    [
+        candle_time_label(first.timestamp, last.timestamp),
+        candle_time_label(middle.timestamp, first.timestamp),
+        candle_time_label(last.timestamp, first.timestamp),
+    ]
+}
+
+fn inspection_time_label(timestamp: i64) -> String {
+    DateTime::from_timestamp(timestamp, 0)
+        .map(|time| {
+            time.with_timezone(&Local)
+                .format("%d %b %H:%M")
+                .to_string()
+                .to_ascii_uppercase()
+        })
+        .unwrap_or_else(|| "TIME UNAVAILABLE".to_owned())
+}
+
+fn line_inspection_title(
+    chart: &PreparedChart,
+    window: &ChartWindow,
+    normalization: Normalization,
+) -> String {
+    let close = chart
+        .primary_closes
+        .get(window.selected_index)
+        .copied()
+        .unwrap_or_default();
+    let plotted = chart
+        .primary_values
+        .get(window.selected_index)
+        .copied()
+        .unwrap_or_default();
+    let time = chart.primary_bars.get(window.selected_index).map_or_else(
+        || "TIME UNAVAILABLE".to_owned(),
+        |bar| inspection_time_label(bar.timestamp),
+    );
+    let plotted = match normalization {
+        Normalization::Price => format!("PLOT {plotted:.2}"),
+        Normalization::PercentChange => format!("PLOT {plotted:+.2}%"),
+    };
+    format!(
+        "PX {close:.2} · {plotted} · {time} · VIEW {}-{}/{}",
+        window.range.start + 1,
+        window.range.end,
+        chart.primary_values.len()
+    )
+}
+
+fn candle_inspection_title(chart: &PreparedChart, window: &ChartWindow) -> String {
+    let Some(bar) = chart.primary_bars.get(window.selected_index) else {
+        return "CANDLESTICKS".to_owned();
+    };
+    format!(
+        "CANDLESTICKS · C {:.2} · O {:.2} H {:.2} L {:.2} · {} · VIEW {}-{}/{}",
+        bar.close,
+        bar.open,
+        bar.high,
+        bar.low,
+        inspection_time_label(bar.timestamp),
+        window.range.start + 1,
+        window.range.end,
+        chart.primary_bars.len()
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1376,21 +1750,19 @@ struct Candle {
     close: f64,
 }
 
-fn render_candlesticks(
-    frame: &mut Frame,
-    area: Rect,
-    chart: &PreparedChart,
-    selected_index: usize,
-) {
-    let block = terminal_block("OHLC", "CANDLESTICKS · LAST BAR MARKER");
+fn render_candlesticks(frame: &mut Frame, area: Rect, chart: &PreparedChart, window: &ChartWindow) {
+    let title = candle_inspection_title(chart, window);
+    let block = terminal_block("OHLC", &title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    if chart.primary_bars.is_empty() || inner.width < 12 || inner.height < 4 {
+    if window.range.is_empty() || inner.width < 12 || inner.height < 4 {
         return;
     }
 
     let candles = chart
         .primary_bars
+        .get(window.range.clone())
+        .unwrap_or_default()
         .iter()
         .map(|bar| Candle {
             timestamp: bar.timestamp,
@@ -1400,6 +1772,9 @@ fn render_candlesticks(
             close: bar.close,
         })
         .collect::<Vec<_>>();
+    if candles.is_empty() {
+        return;
+    }
     let (low, high) = candles
         .iter()
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), candle| {
@@ -1450,7 +1825,7 @@ fn render_candlesticks(
     let candle_center = |index: usize| slot_x(index) + slot - body_width + body_width / 2;
     let selected_display = ranges
         .iter()
-        .position(|range| range.contains(&selected_index))
+        .position(|range| range.contains(&window.selected_index.saturating_sub(window.range.start)))
         .unwrap_or(count - 1);
 
     let buffer = frame.buffer_mut();
@@ -1487,6 +1862,7 @@ fn render_candlesticks(
     for line in chart.lines.iter().skip(1) {
         let mut previous = None;
         for (display_index, sample_index) in sample_indices.iter().copied().enumerate() {
+            let sample_index = window.range.start + sample_index;
             let point = line
                 .points
                 .iter()
@@ -1510,14 +1886,15 @@ fn render_candlesticks(
     overlay.blit(buffer, plot);
 
     if margin > 0 {
+        let visible_last = candles.last().map_or(0.0, |candle| candle.close);
         let row = plot.y
-            + (candle_scale(chart.last, y_low, y_high, usize::from(plot.height) * 2) / 2) as u16;
+            + (candle_scale(visible_last, y_low, y_high, usize::from(plot.height) * 2) / 2) as u16;
         for column in plot.x + usable..plot.x + plot.width {
             if let Some(cell) = buffer.cell_mut((column, row)) {
                 cell.set_char('─').set_fg(CYAN.into());
             }
         }
-        let tag = format!("{:.2}", chart.last);
+        let tag = format!("{visible_last:.2}");
         let tag_width = tag.chars().count() as u16;
         if margin >= tag_width {
             buffer.set_string(
@@ -2004,6 +2381,31 @@ mod tests {
         }
     }
 
+    fn dense_workspace() -> ChartingWorkspace {
+        let mut workspace = ChartingWorkspace::new(Arc::new(StubHistory));
+        workspace.history = Some(vec![HistorySeries {
+            instrument: ChartInstrument::from_terminal_subject("AAPL"),
+            bars: (0..64)
+                .map(|index| {
+                    let close = 100.0 + f64::from(index);
+                    PriceBar {
+                        timestamp: 1_700_000_000 + i64::from(index) * 86_400,
+                        open: close - 0.5,
+                        high: close + 1.0,
+                        low: close - 1.0,
+                        close,
+                        volume: 1_000_000 + index as u64,
+                    }
+                })
+                .collect(),
+            quality: HistoryQuality::Replayed,
+            source: "TEST".to_owned(),
+        }]);
+        workspace.history_error = None;
+        workspace.pending_refresh = None;
+        workspace
+    }
+
     #[test]
     fn chart_command_sets_subject_comparisons_period_mode_and_study() {
         let mut workspace = ChartingWorkspace::new(Arc::new(StubHistory));
@@ -2074,6 +2476,83 @@ mod tests {
         assert_eq!(workspace.cursor_offset, 1);
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)));
         assert_eq!(workspace.cursor_offset, 0);
+    }
+
+    #[test]
+    fn arrow_keys_zoom_and_pan_the_visible_history_around_the_inspection_cursor() {
+        let mut workspace = dense_workspace();
+        assert_eq!(workspace.visible_range(64), 0..64);
+
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)));
+        let zoomed = workspace.visible_range(64);
+        assert!(zoomed.len() < 64);
+        assert_eq!(zoomed.end, 64);
+
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)));
+        let panned = workspace.visible_range(64);
+        assert!(panned.start < zoomed.start);
+        assert!(panned.end < zoomed.end);
+        assert!(panned.contains(&workspace.selected_index(64)));
+
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)));
+        assert_eq!(workspace.visible_range(64), zoomed);
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+        assert!(workspace.visible_range(64).len() > zoomed.len());
+    }
+
+    #[test]
+    fn inspected_ohlc_and_line_values_render_even_without_the_statistics_sidebar() {
+        let mut workspace = dense_workspace();
+        for _ in 0..5 {
+            assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::NONE)));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+
+        terminal
+            .draw(|frame| workspace.render(frame, frame.area()))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("C 158.00"));
+
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE)));
+        terminal
+            .draw(|frame| workspace.render(frame, frame.area()))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("PX 158.00"));
+    }
+
+    #[test]
+    fn plot_click_inspects_within_the_zoomed_and_panned_window() {
+        let mut workspace = dense_workspace();
+        workspace.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        workspace.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        let visible = workspace.visible_range(64);
+        let area = Rect::new(0, 0, 120, 30);
+        let plot = chart_areas(area).plot;
+
+        assert!(workspace.handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: plot.x + 1,
+                row: plot.y + 1,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        ));
+        assert_eq!(workspace.selected_index(64), visible.start);
     }
 
     #[test]
@@ -2296,10 +2775,16 @@ mod tests {
             ))
             .unwrap();
         let chart = prepare_chart(&specification, &[series]).unwrap();
+        let window = ChartWindow {
+            range: 0..chart.primary_values.len(),
+            selected_index: 1,
+            x_max: chart.primary_values.len().saturating_sub(1).max(1) as f64,
+            y_bounds: chart.y_bounds,
+        };
         let mut terminal = Terminal::new(TestBackend::new(70, 14)).unwrap();
 
         terminal
-            .draw(|frame| render_candlesticks(frame, frame.area(), &chart, 1))
+            .draw(|frame| render_candlesticks(frame, frame.area(), &chart, &window))
             .unwrap();
 
         let rendered = terminal
@@ -2313,7 +2798,7 @@ mod tests {
         assert!(rendered.contains('▀') || rendered.contains('▄'));
 
         let mut tiny = Terminal::new(TestBackend::new(12, 8)).unwrap();
-        tiny.draw(|frame| render_candlesticks(frame, frame.area(), &chart, 1))
+        tiny.draw(|frame| render_candlesticks(frame, frame.area(), &chart, &window))
             .unwrap();
     }
 

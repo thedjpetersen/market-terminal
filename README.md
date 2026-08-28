@@ -245,9 +245,13 @@ normalized performance automatically use lines because one candle scale cannot
 truthfully represent multiple normalized instruments. Press `M` to show or hide
 both moving averages, `E` to switch them between SMA and EMA, `I` to toggle RSI,
 and `B` or `V` to toggle volume. `T`/`Shift+T` and `]`/`[` cycle periods; `Home`
-returns the inspection cursor to the latest observation. The same options can
-be requested from the command bar, for example `CHART AAPL 1Y STYLE CANDLES
-EMA20 RSI14`.
+returns the inspection cursor to the latest observation. Use `Up` or `+` to
+zoom in, `Down` or `-` to zoom out, and `Left`/`Right` to pan the visible
+history. `,`/`.` moves the inspection cursor one observation at a time; the
+selected timestamp and numerical close/plotted value remain in the chart title.
+Candle mode also shows OHLC there, while the wide-layout inspection panel adds
+full OHLC and volume. The same options can be requested from the command bar,
+for example `CHART AAPL 1Y STYLE CANDLES EMA20 RSI14`.
 
 To use Alpaca's official Market Data API instead, create Alpaca data keys and
 select the provider explicitly:
