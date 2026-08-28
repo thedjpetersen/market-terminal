@@ -1,7 +1,13 @@
+mod contribution;
 mod domain;
 mod port;
 mod workspace;
 
+pub use contribution::{
+    calculate_contribution, PortfolioContributionCurrencyTotal, PortfolioContributionError,
+    PortfolioContributionInput, PortfolioContributionInputRow, PortfolioContributionRow,
+    PortfolioContributionSnapshot,
+};
 pub use domain::{
     format_money, ExecutionPrice, PortfolioAccountId, PortfolioActivityCurrencyTotal,
     PortfolioActivityEntry, PortfolioActivityKind, PortfolioActivityLedger, PortfolioClosedLot,

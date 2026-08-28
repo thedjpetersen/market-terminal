@@ -118,6 +118,12 @@ move to its own crate later without changing its public vocabulary.
   fee, and signed-net reconciliation, UTC precision disclosures, anonymized
   accounts and orders, Security drill-through, and independent crash-safe
   import-path restoration. The workflow is strictly read-only.
+- **Complete:** first Stage 2 contribution calculation slice as a pure
+  Portfolio-owned boundary: exact single-period gain/loss, additive security
+  contribution, optional benchmark and active contribution, strict per-currency
+  reconciliation, typed metadata, complete-benchmark validation, and explicit
+  centibasis-point rounding residuals. Source adapters and terminal drill-down
+  remain separate work.
 - **Next:** the remaining Stage 2 portfolio/performance, risk, screening, and
   expanded alert-rule families. Provider availability extends the deployment
   surface; deterministic fixtures remain the Stage 1 acceptance baseline and
@@ -378,10 +384,12 @@ ALERT core.drawdown > 8% -> preview -> enable
 cash/activity ledger, dated per-currency valuations, and broker open-tax-lot
 exports supply separate versioned Portfolio inputs. The first Performance slice
 calculates flow-adjusted TWR plus optional benchmark and active return, and the
-first Risk slice consumes positions without storage access. Contribution, attribution,
-historical/factor risk, and stress libraries remain; screening and the
-additional news/topic, portfolio-threshold, calendar, and spreadsheet-expression
-alert rule families remain separate Stage 2 slices.
+first Risk slice consumes positions without storage access. A pure Portfolio
+calculator now reconciles single-period security contribution and optional
+benchmark-active attribution; verified history import and terminal drill-down,
+multi-period attribution, historical/factor risk, and stress libraries remain.
+Screening and the additional news/topic, portfolio-threshold, calendar, and
+spreadsheet-expression alert rule families remain separate Stage 2 slices.
 
 ## Stage 3 — Advanced analytics and paper workflows
 

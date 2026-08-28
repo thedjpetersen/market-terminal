@@ -383,10 +383,13 @@ flows belong to the ending date and are removed from that ending valuation
 before the sub-period return is linked. Optional benchmark valuations produce
 benchmark and active returns. The panel keeps currencies separate, carries a
 deterministic input version and methodology, and rejects malformed or partial
-rows instead of manufacturing a result. Contribution and attribution remain
-unavailable until verified holdings or lot history can be joined to each
-valuation period; cash activity plus one positions snapshot is not silently
-promoted into that history.
+rows instead of manufacturing a result. Portfolio's storage-independent
+contribution engine now accepts verified beginning values, ending values, and
+end-of-period external flows for one period. It calculates additive security
+contribution plus optional benchmark and active contribution with exact money,
+per-currency separation, and explicit centibasis-point rounding residuals. A
+CSV adapter and terminal drill-down still require position-period history; cash
+activity plus one positions snapshot is not silently promoted into that input.
 
 Import a broker open-tax-lot export separately from positions and activity:
 

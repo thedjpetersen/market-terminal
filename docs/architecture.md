@@ -63,6 +63,16 @@ currency, then derives concentration and an explicit non-cash shock with exact
 minor-unit arithmetic. This is the boundary downstream pricing and factor
 engines can replace without gaining access to Portfolio storage.
 
+Portfolio contribution is also a pure calculation boundary. Callers supply one
+verified period of security-level beginning values, ending values, and
+end-of-period external flows plus optional benchmark beginning and ending
+values. The calculator reconciles exact gain/loss and additive contribution per
+currency, returns active contribution when benchmark coverage is complete, and
+reports centibasis-point rounding residuals rather than hiding them. It does not
+read Portfolio storage, join unrelated snapshots, or convert currencies; a
+future import adapter can validate source-specific identity and history before
+constructing the typed input.
+
 `LiveOverviewQuery` composes those two already-loaded, in-memory snapshots for
 the interactive Overview. It performs no network or filesystem work and does
 not infer performance history from a point-in-time CSV. Missing return, risk,
