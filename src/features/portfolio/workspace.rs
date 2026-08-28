@@ -20,7 +20,7 @@ use crate::{
 
 use super::{
     format_money, PortfolioActivityLedger, PortfolioPerformanceSnapshot, PortfolioRepository,
-    PortfolioSnapshot, ID,
+    PortfolioSnapshot, PortfolioTaxLotSnapshot, ID,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,16 +28,23 @@ enum PortfolioView {
     Positions,
     Activity,
     Performance,
+    TaxLots,
 }
 
 impl PortfolioView {
-    const ALL: [Self; 3] = [Self::Positions, Self::Activity, Self::Performance];
+    const ALL: [Self; 4] = [
+        Self::Positions,
+        Self::Activity,
+        Self::Performance,
+        Self::TaxLots,
+    ];
 
     const fn label(self) -> &'static str {
         match self {
             Self::Positions => "POSITIONS",
             Self::Activity => "ACTIVITY",
             Self::Performance => "PERFORMANCE",
+            Self::TaxLots => "LOTS",
         }
     }
 
@@ -78,6 +85,7 @@ impl PortfolioWorkspace {
             PortfolioView::Positions => self.query.load_portfolio().source,
             PortfolioView::Activity => self.query.load_activity().source,
             PortfolioView::Performance => self.query.load_performance().source,
+            PortfolioView::TaxLots => self.query.load_tax_lots().source,
         };
     }
 
@@ -86,6 +94,7 @@ impl PortfolioWorkspace {
             PortfolioView::Positions => self.query.load_portfolio().positions.len(),
             PortfolioView::Activity => self.query.load_activity().entries.len(),
             PortfolioView::Performance => self.query.load_performance().series.len(),
+            PortfolioView::TaxLots => self.query.load_tax_lots().lots.len(),
         }
     }
 
@@ -120,6 +129,12 @@ impl PortfolioWorkspace {
                 .get(self.selected)
                 .and_then(|entry| entry.symbol.clone()),
             PortfolioView::Performance => None,
+            PortfolioView::TaxLots => self
+                .query
+                .load_tax_lots()
+                .lots
+                .get(self.selected)
+                .map(|lot| lot.symbol.clone()),
         };
         let Some(symbol) = symbol else {
             self.status = "SELECTED ROW HAS NO SECURITY TO OPEN".to_owned();
@@ -190,6 +205,25 @@ impl PortfolioWorkspace {
         self.clamp_selection();
     }
 
+    fn import_tax_lots(&mut self, args: &[String]) {
+        let raw_path = args.join(" ");
+        if raw_path.is_empty() {
+            self.status =
+                "TAX-LOT IMPORT REQUIRES A CSV PATH · PORT IMPORT LOTS <FILE.CSV>".to_owned();
+            return;
+        }
+        self.status = match self.query.import_tax_lots_csv(&expand_home(&raw_path)) {
+            Ok(snapshot) => format!(
+                "IMPORTED {} OPEN TAX LOTS · {}",
+                snapshot.lots.len(),
+                snapshot.source
+            ),
+            Err(error) => format!("TAX-LOT IMPORT ERROR · {error}"),
+        };
+        self.view = PortfolioView::TaxLots;
+        self.clamp_selection();
+    }
+
     fn reload_positions(&mut self) {
         self.status = match self.query.reload() {
             Ok(snapshot) => format!(
@@ -226,11 +260,24 @@ impl PortfolioWorkspace {
         self.clamp_selection();
     }
 
+    fn reload_tax_lots(&mut self) {
+        self.status = match self.query.reload_tax_lots() {
+            Ok(snapshot) => format!(
+                "RELOADED {} OPEN TAX LOTS · {}",
+                snapshot.lots.len(),
+                snapshot.source
+            ),
+            Err(error) => format!("TAX-LOT RELOAD ERROR · {error}"),
+        };
+        self.clamp_selection();
+    }
+
     fn reload_current(&mut self) {
         match self.view {
             PortfolioView::Positions => self.reload_positions(),
             PortfolioView::Activity => self.reload_activity(),
             PortfolioView::Performance => self.reload_performance(),
+            PortfolioView::TaxLots => self.reload_tax_lots(),
         }
     }
 }
@@ -248,6 +295,8 @@ impl Workspace for PortfolioWorkspace {
                 "ACTIVITY",
                 "TRANSACTIONS",
                 "PERFORMANCE",
+                "LOTS",
+                "TAXLOTS",
             ],
         }
     }
@@ -257,6 +306,7 @@ impl Workspace for PortfolioWorkspace {
             "POSITIONS" => self.select_view(PortfolioView::Positions),
             "ACTIVITY" | "TRANSACTIONS" => self.select_view(PortfolioView::Activity),
             "PERFORMANCE" => self.select_view(PortfolioView::Performance),
+            "LOTS" | "TAXLOTS" => self.select_view(PortfolioView::TaxLots),
             _ => {}
         }
         let Some(operation) = invocation
@@ -270,6 +320,7 @@ impl Workspace for PortfolioWorkspace {
             "POSITIONS" => self.select_view(PortfolioView::Positions),
             "ACTIVITY" | "TRANSACTIONS" | "LEDGER" => self.select_view(PortfolioView::Activity),
             "PERFORMANCE" | "PERF" => self.select_view(PortfolioView::Performance),
+            "LOTS" | "TAXLOTS" | "TAX-LOTS" => self.select_view(PortfolioView::TaxLots),
             "IMPORT" => {
                 let target = invocation
                     .args
@@ -285,6 +336,11 @@ impl Workspace for PortfolioWorkspace {
                     .is_some_and(|value| matches!(value, "PERFORMANCE" | "PERF" | "VALUATIONS"))
                 {
                     self.import_performance(invocation.args.get(2..).unwrap_or_default());
+                } else if target
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "LOTS" | "TAXLOTS" | "TAX-LOTS"))
+                {
+                    self.import_tax_lots(invocation.args.get(2..).unwrap_or_default());
                 } else {
                     self.import_positions(invocation.args.get(1..).unwrap_or_default());
                 }
@@ -304,6 +360,11 @@ impl Workspace for PortfolioWorkspace {
                     .is_some_and(|value| matches!(value, "PERFORMANCE" | "PERF" | "VALUATIONS"))
                 {
                     self.reload_performance();
+                } else if target
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "LOTS" | "TAXLOTS" | "TAX-LOTS"))
+                {
+                    self.reload_tax_lots();
                 } else {
                     self.reload_positions();
                 }
@@ -333,6 +394,10 @@ impl Workspace for PortfolioWorkspace {
             }
             KeyCode::Char('3') => {
                 self.select_view(PortfolioView::Performance);
+                true
+            }
+            KeyCode::Char('4') => {
+                self.select_view(PortfolioView::TaxLots);
                 true
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -391,12 +456,16 @@ impl Workspace for PortfolioWorkspace {
                 PortfolioView::Performance => {
                     "END-OF-PERIOD FLOWS ARE REMOVED BEFORE LINKING SUB-PERIOD RETURNS".to_owned()
                 }
+                PortfolioView::TaxLots => {
+                    "OPEN LOT BASIS RECONCILES BY CURRENCY · CLOSED TRADES REMAIN SEPARATE"
+                        .to_owned()
+                }
             };
             return true;
         }
         if is_primary_click(event, areas.footer) {
             let controls = [
-                (" 1/2/3/TAB VIEW  ", Some(KeyCode::Tab)),
+                (" 1/2/3/4/TAB VIEW  ", Some(KeyCode::Tab)),
                 ("↑↓/JK SELECT  ", None),
                 ("ENTER/O SECURITY  ", Some(KeyCode::Enter)),
                 ("R RELOAD  ", Some(KeyCode::Char('r'))),
@@ -426,6 +495,7 @@ impl Workspace for PortfolioWorkspace {
         let positions = self.query.load_portfolio();
         let activity = self.query.load_activity();
         let performance = self.query.load_performance();
+        let tax_lots = self.query.load_tax_lots();
         let areas = portfolio_layout(area);
         render_header(
             frame,
@@ -434,6 +504,7 @@ impl Workspace for PortfolioWorkspace {
             &positions,
             &activity,
             &performance,
+            &tax_lots,
         );
         render_tabs(frame, areas.tabs, self.view);
         match self.view {
@@ -448,6 +519,10 @@ impl Workspace for PortfolioWorkspace {
             PortfolioView::Performance => {
                 render_performance(frame, areas.main, &performance, self.selected);
                 render_performance_inputs(frame, areas.side, &performance, &self.status);
+            }
+            PortfolioView::TaxLots => {
+                render_tax_lots(frame, areas.main, &tax_lots, self.selected);
+                render_tax_lot_source(frame, areas.side, &tax_lots, &self.status);
             }
         }
         render_footer(frame, areas.footer, self.view);
@@ -489,6 +564,7 @@ fn render_header(
     positions: &PortfolioSnapshot,
     activity: &PortfolioActivityLedger,
     performance: &PortfolioPerformanceSnapshot,
+    tax_lots: &PortfolioTaxLotSnapshot,
 ) {
     let kpis = Layout::horizontal([Constraint::Ratio(1, 4); 4]).split(area);
     let values = match view {
@@ -512,6 +588,12 @@ fn render_header(
             ),
             ("BENCHMARK", performance.benchmark_return_label()),
             ("ACTIVE RETURN", performance.active_return_label()),
+        ],
+        PortfolioView::TaxLots => [
+            ("OPEN LOTS", tax_lots.lots.len().to_string()),
+            ("COST BASIS", tax_lots.cost_basis_label()),
+            ("CURRENT VALUE", tax_lots.current_value_label()),
+            ("UNREALIZED GAIN", tax_lots.unrealized_gain_label()),
         ],
     };
     for (index, (label, value)) in values.into_iter().enumerate() {
@@ -753,6 +835,115 @@ fn render_activity_source(
     render_side(frame, area, "LEDGER", "EXACT CASH BY CURRENCY", lines);
 }
 
+fn render_tax_lots(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &PortfolioTaxLotSnapshot,
+    selected: usize,
+) {
+    let rows = snapshot
+        .lots
+        .iter()
+        .enumerate()
+        .map(|(index, lot)| {
+            styled_data_row(
+                [
+                    lot.acquired_date.clone(),
+                    lot.account_id.as_str().to_owned(),
+                    format!("{} · {}", lot.symbol, lot.currency),
+                    lot.holding_period.label().to_owned(),
+                    lot.quantity_label(),
+                    format_money(lot.cost_basis),
+                    lot.current_value_label(),
+                    lot.unrealized_gain_label(),
+                    lot.unrealized_return_label(),
+                ],
+                index,
+                selected,
+            )
+        })
+        .collect::<Vec<_>>();
+    render_table(
+        frame,
+        area,
+        "LOTS",
+        "OPEN TAX LOT BASIS",
+        [
+            "ACQUIRED",
+            "ACCOUNT",
+            "SYMBOL · CCY",
+            "TERM",
+            "QTY",
+            "BASIS",
+            "VALUE",
+            "GAIN",
+            "RETURN",
+        ],
+        rows,
+        [
+            Constraint::Percentage(11),
+            Constraint::Percentage(10),
+            Constraint::Percentage(13),
+            Constraint::Percentage(8),
+            Constraint::Percentage(10),
+            Constraint::Percentage(13),
+            Constraint::Percentage(13),
+            Constraint::Percentage(12),
+            Constraint::Percentage(10),
+        ],
+    );
+}
+
+fn render_tax_lot_source(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &PortfolioTaxLotSnapshot,
+    status: &str,
+) {
+    let mut lines = vec![
+        Line::styled("SOURCE / AS OF", AMBER),
+        Line::styled(snapshot.source.clone(), INK),
+        Line::styled(snapshot.as_of.clone(), MUTED),
+        Line::styled(snapshot.input_version.clone(), CYAN),
+        Line::raw(""),
+        Line::styled("LOT RECONCILIATION", AMBER),
+    ];
+    for total in &snapshot.currency_totals {
+        lines.extend([
+            Line::styled(
+                format!(
+                    "{} {} LOTS · BASIS {}",
+                    total.currency,
+                    total.lots,
+                    format_money(total.cost_basis)
+                ),
+                INK,
+            ),
+            Line::styled(
+                format!(
+                    "  VALUE {} · GAIN {} · {} UNPRICED",
+                    format_money(total.current_value),
+                    format_money(total.unrealized_gain),
+                    total.unpriced_lots
+                ),
+                GREEN,
+            ),
+        ]);
+    }
+    lines.extend([
+        Line::raw(""),
+        Line::styled("METHODOLOGY", AMBER),
+        Line::styled(snapshot.methodology.clone(), MUTED),
+        Line::raw(""),
+        Line::styled(status, YELLOW),
+        Line::styled("PORT IMPORT LOTS <CSV>", CYAN),
+    ]);
+    for disclosure in snapshot.disclosures.iter().take(7) {
+        lines.push(Line::styled(format!("• {disclosure}"), MUTED));
+    }
+    render_side(frame, area, "BASIS", "OPEN LOT RECONCILIATION", lines);
+}
+
 fn render_side(
     frame: &mut Frame,
     area: Rect,
@@ -869,7 +1060,7 @@ fn render_performance_inputs(
 fn render_footer(frame: &mut Frame, area: Rect, view: PortfolioView) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(" 1/2/3/TAB ", AMBER),
+            Span::styled(" 1/2/3/4/TAB ", AMBER),
             Span::styled("VIEW  ", MUTED),
             Span::styled("↑↓/JK ", AMBER),
             Span::styled("SELECT  ", MUTED),
@@ -925,6 +1116,8 @@ mod tests {
         }));
         assert_eq!(workspace.view, PortfolioView::Performance);
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert_eq!(workspace.view, PortfolioView::TaxLots);
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
         assert_eq!(workspace.view, PortfolioView::Positions);
     }
 
@@ -967,5 +1160,31 @@ mod tests {
         assert!(rendered.contains("+17.78%"));
         assert!(rendered.contains("+12.40%"));
         assert!(rendered.contains("DEMO-PERFORMANCE-V1"));
+    }
+
+    #[test]
+    fn tax_lot_panel_renders_open_basis_and_security_rows() {
+        let mut app = bootstrap::demo_app();
+        for character in "/LOTS\n".chars() {
+            let code = match character {
+                '\n' => KeyCode::Enter,
+                character => KeyCode::Char(character),
+            };
+            app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+        terminal.draw(|frame| runtime::render(frame, &app)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("OPEN TAX LOT BASIS"));
+        assert!(rendered.contains("DEMO-TAX-LOTS-V1"));
+        assert!(rendered.contains("META"));
+        assert!(rendered.contains("$30,000.00"));
     }
 }

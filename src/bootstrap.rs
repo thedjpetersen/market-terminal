@@ -405,6 +405,15 @@ fn runtime_settings_summary(
             )
         })
         .unwrap_or_else(|| "3 DEFAULT LIVE RSS/ATOM FEEDS".to_owned());
+    let portfolio_paths = [
+        ("POSITIONS", "MARKET_TERMINAL_PORTFOLIO_CSV"),
+        ("ACTIVITY", "MARKET_TERMINAL_PORTFOLIO_ACTIVITY_CSV"),
+        ("PERFORMANCE", "MARKET_TERMINAL_PORTFOLIO_PERFORMANCE_CSV"),
+        ("LOTS", "MARKET_TERMINAL_PORTFOLIO_TAX_LOTS_CSV"),
+    ]
+    .into_iter()
+    .filter_map(|(label, variable)| env_present(variable).then_some(label))
+    .collect::<Vec<_>>();
 
     RuntimeSettingsSummary {
         gallery_replay: false,
@@ -420,16 +429,11 @@ fn runtime_settings_summary(
         chart_symbol: chart_symbol.to_owned(),
         ai_provider,
         keybindings: "DEFAULT · VIM + TMUX FIXED".to_owned(),
-        portfolio_import: match (
-            env_present("MARKET_TERMINAL_PORTFOLIO_CSV"),
-            env_present("MARKET_TERMINAL_PORTFOLIO_ACTIVITY_CSV"),
-        ) {
-            (true, true) => "POSITIONS + ACTIVITY PATHS CONFIGURED",
-            (true, false) => "POSITIONS PATH CONFIGURED",
-            (false, true) => "ACTIVITY PATH CONFIGURED",
-            (false, false) => "NOT CONFIGURED",
-        }
-        .to_owned(),
+        portfolio_import: if portfolio_paths.is_empty() {
+            "NOT CONFIGURED".to_owned()
+        } else {
+            format!("{} PATH(S) CONFIGURED", portfolio_paths.join(" + "))
+        },
         news_sources,
         irc: if env_present("IRC_SERVER") {
             "SERVER CONFIGURED"

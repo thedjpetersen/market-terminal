@@ -97,6 +97,138 @@ pub struct PortfolioCurrencyTotal {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaxLotHoldingPeriod {
+    ShortTerm,
+    LongTerm,
+    Unknown,
+}
+
+impl TaxLotHoldingPeriod {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ShortTerm => "SHORT",
+            Self::LongTerm => "LONG",
+            Self::Unknown => "UNKNOWN",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioTaxLot {
+    pub lot_id: String,
+    pub account_id: PortfolioAccountId,
+    pub instrument_id: InstrumentId,
+    pub symbol: String,
+    pub acquired_date: String,
+    pub holding_period: TaxLotHoldingPeriod,
+    pub currency: Currency,
+    pub quantity: PositionQuantity,
+    pub cost_basis: Money,
+    pub current_value: Option<Money>,
+    pub unrealized_gain: Option<Money>,
+    pub unrealized_return_bps: Option<i32>,
+}
+
+impl PortfolioTaxLot {
+    pub fn quantity_label(&self) -> String {
+        self.quantity.label()
+    }
+
+    pub fn current_value_label(&self) -> String {
+        self.current_value
+            .map(format_money)
+            .unwrap_or_else(|| "UNPRICED".to_owned())
+    }
+
+    pub fn unrealized_gain_label(&self) -> String {
+        self.unrealized_gain
+            .map(format_money)
+            .unwrap_or_else(|| "N/A".to_owned())
+    }
+
+    pub fn unrealized_return_label(&self) -> String {
+        self.unrealized_return_bps
+            .map(format_signed_bps)
+            .unwrap_or_else(|| "N/A".to_owned())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioTaxLotCurrencyTotal {
+    pub currency: Currency,
+    pub lots: usize,
+    pub cost_basis: Money,
+    pub priced_cost_basis: Money,
+    pub current_value: Money,
+    pub unrealized_gain: Money,
+    pub unpriced_lots: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioTaxLotSnapshot {
+    pub lots: Vec<PortfolioTaxLot>,
+    pub currency_totals: Vec<PortfolioTaxLotCurrencyTotal>,
+    pub source: String,
+    pub as_of: String,
+    pub input_version: String,
+    pub methodology: String,
+    pub disclosures: Vec<String>,
+}
+
+impl PortfolioTaxLotSnapshot {
+    pub fn empty(source: impl Into<String>) -> Self {
+        Self {
+            lots: Vec::new(),
+            currency_totals: Vec::new(),
+            source: source.into(),
+            as_of: "—".to_owned(),
+            input_version: "—".to_owned(),
+            methodology: "NO OPEN TAX-LOT INPUT".to_owned(),
+            disclosures: vec![
+                "IMPORT AN OPEN TAX-LOT EXPORT TO RECONCILE LOT COST BASIS".to_owned(),
+                "POSITIONS OR CASH ACTIVITY ARE NOT INVENTED AS TAX LOTS".to_owned(),
+            ],
+        }
+    }
+
+    pub fn cost_basis_label(&self) -> String {
+        one_currency_lot_total(&self.currency_totals, |total| total.cost_basis)
+    }
+
+    pub fn current_value_label(&self) -> String {
+        partial_lot_value_label(&self.currency_totals, |total| total.current_value)
+    }
+
+    pub fn unrealized_gain_label(&self) -> String {
+        partial_lot_value_label(&self.currency_totals, |total| total.unrealized_gain)
+    }
+}
+
+fn partial_lot_value_label(
+    totals: &[PortfolioTaxLotCurrencyTotal],
+    value: impl FnOnce(&PortfolioTaxLotCurrencyTotal) -> Money,
+) -> String {
+    match totals {
+        [] => "N/A".to_owned(),
+        [total] if total.unpriced_lots == total.lots => "N/A".to_owned(),
+        [total] if total.unpriced_lots > 0 => format!("{} · PARTIAL", format_money(value(total))),
+        [total] => format_money(value(total)),
+        totals => format!("{} CCY · SEE LOTS", totals.len()),
+    }
+}
+
+fn one_currency_lot_total(
+    totals: &[PortfolioTaxLotCurrencyTotal],
+    value: impl FnOnce(&PortfolioTaxLotCurrencyTotal) -> Money,
+) -> String {
+    match totals {
+        [] => "N/A".to_owned(),
+        [total] => format_money(value(total)),
+        totals => format!("{} CCY · SEE LOTS", totals.len()),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortfolioActivityKind {
     Buy,
     Sell,

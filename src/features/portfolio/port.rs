@@ -3,7 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::{PortfolioActivityLedger, PortfolioPerformanceSnapshot, PortfolioSnapshot};
+use super::{
+    PortfolioActivityLedger, PortfolioPerformanceSnapshot, PortfolioSnapshot,
+    PortfolioTaxLotSnapshot,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PortfolioError {
@@ -75,6 +78,22 @@ pub trait PortfolioRepository: Send + Sync {
             "NO IMPORTED PERFORMANCE · USE PORT IMPORT PERFORMANCE <FILE.CSV>".to_owned(),
         ))
     }
+
+    fn load_tax_lots(&self) -> PortfolioTaxLotSnapshot {
+        PortfolioTaxLotSnapshot::empty("NO TAX LOTS IMPORTED · USE PORT IMPORT LOTS <FILE.CSV>")
+    }
+
+    fn import_tax_lots_csv(&self, _path: &Path) -> Result<PortfolioTaxLotSnapshot, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS PORTFOLIO PROVIDER DOES NOT SUPPORT TAX-LOT CSV IMPORT".to_owned(),
+        ))
+    }
+
+    fn reload_tax_lots(&self) -> Result<PortfolioTaxLotSnapshot, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "NO IMPORTED TAX LOTS · USE PORT IMPORT LOTS <FILE.CSV>".to_owned(),
+        ))
+    }
 }
 
 /// Persists only the user-selected import location, never portfolio contents.
@@ -99,6 +118,16 @@ pub trait PortfolioImportStateStore: Send + Sync {
     fn save_performance_import_path(&self, _path: &Path) -> Result<(), PortfolioError> {
         Err(PortfolioError::Unsupported(
             "THIS STATE STORE DOES NOT SUPPORT PERFORMANCE IMPORT PATHS".to_owned(),
+        ))
+    }
+
+    fn load_tax_lot_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+        Ok(None)
+    }
+
+    fn save_tax_lot_import_path(&self, _path: &Path) -> Result<(), PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "THIS STATE STORE DOES NOT SUPPORT TAX-LOT IMPORT PATHS".to_owned(),
         ))
     }
 }

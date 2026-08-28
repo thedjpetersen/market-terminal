@@ -11,18 +11,20 @@ use csv::StringRecord;
 use crate::features::portfolio::{
     PortfolioAccountId, PortfolioActivityLedger, PortfolioCurrencyTotal, PortfolioError,
     PortfolioImportStateStore, PortfolioPerformanceSnapshot, PortfolioRepository,
-    PortfolioSnapshot, Position, PositionQuantity,
+    PortfolioSnapshot, PortfolioTaxLotSnapshot, Position, PositionQuantity,
 };
 use crate::foundation::{Currency, InstrumentId, Money};
 
 use super::{
     portfolio_activity_csv::parse_portfolio_activity_csv,
     portfolio_performance_csv::parse_portfolio_performance_csv,
+    portfolio_tax_lot_csv::parse_portfolio_tax_lot_csv,
 };
 
 const MAX_PORTFOLIO_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_ACTIVITY_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PERFORMANCE_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_TAX_LOT_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PORTFOLIO_ROWS: usize = 25_000;
 const MAX_PORTFOLIO_COLUMNS: usize = 256;
 
@@ -33,6 +35,8 @@ pub struct CsvPortfolioRepository {
     activity_path: RwLock<Option<PathBuf>>,
     performance: RwLock<PortfolioPerformanceSnapshot>,
     performance_path: RwLock<Option<PathBuf>>,
+    tax_lots: RwLock<PortfolioTaxLotSnapshot>,
+    tax_lot_path: RwLock<Option<PathBuf>>,
     state_store: Option<Arc<dyn PortfolioImportStateStore>>,
 }
 
@@ -60,6 +64,10 @@ impl CsvPortfolioRepository {
                 "NO PERFORMANCE IMPORTED · USE PORT IMPORT PERFORMANCE <FILE.CSV>",
             )),
             performance_path: RwLock::new(None),
+            tax_lots: RwLock::new(PortfolioTaxLotSnapshot::empty(
+                "NO TAX LOTS IMPORTED · USE PORT IMPORT LOTS <FILE.CSV>",
+            )),
+            tax_lot_path: RwLock::new(None),
             state_store,
         };
         let env_path = env::var_os("MARKET_TERMINAL_PORTFOLIO_CSV")
@@ -170,6 +178,43 @@ impl CsvPortfolioRepository {
                     .source = format!("PERFORMANCE AUTO-IMPORT ERROR · {error}");
             }
         }
+        let env_tax_lot_path = env::var_os("MARKET_TERMINAL_PORTFOLIO_TAX_LOTS_CSV")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let stored_tax_lot_path = if env_tax_lot_path.is_none() {
+            repository
+                .state_store
+                .as_ref()
+                .map(|store| store.load_tax_lot_import_path())
+                .transpose()
+        } else {
+            Ok(None)
+        };
+        let startup_tax_lot_path = match stored_tax_lot_path {
+            Ok(stored) => env_tax_lot_path.or(stored.flatten()),
+            Err(error) => {
+                repository
+                    .tax_lots
+                    .write()
+                    .expect("portfolio tax-lot lock")
+                    .source = format!("TAX-LOT IMPORT STATE ERROR · {error}");
+                env_tax_lot_path
+            }
+        };
+        if let Some(path) = startup_tax_lot_path {
+            let path = expand_home(path);
+            if let Err(error) = repository.import_tax_lot_path(&path) {
+                *repository
+                    .tax_lot_path
+                    .write()
+                    .expect("portfolio tax-lot path lock") = Some(path);
+                repository
+                    .tax_lots
+                    .write()
+                    .expect("portfolio tax-lot lock")
+                    .source = format!("TAX-LOT AUTO-IMPORT ERROR · {error}");
+            }
+        }
         repository
     }
 
@@ -262,6 +307,37 @@ impl CsvPortfolioRepository {
             .expect("portfolio performance path lock") = Some(path.to_path_buf());
         Ok(performance)
     }
+
+    fn import_tax_lot_path(&self, path: &Path) -> Result<PortfolioTaxLotSnapshot, PortfolioError> {
+        let metadata = fs::metadata(path).map_err(|error| {
+            PortfolioError::Io(format!(
+                "CANNOT READ TAX LOTS {} · {error}",
+                display_name(path)
+            ))
+        })?;
+        if metadata.len() > MAX_TAX_LOT_BYTES {
+            return Err(PortfolioError::InvalidCsv(format!(
+                "{} IS TOO LARGE · TAX-LOT LIMIT IS 10 MB",
+                display_name(path)
+            )));
+        }
+        let bytes = fs::read(path).map_err(|error| {
+            PortfolioError::Io(format!(
+                "CANNOT READ TAX LOTS {} · {error}",
+                display_name(path)
+            ))
+        })?;
+        let tax_lots = parse_portfolio_tax_lot_csv(&bytes, display_name(path))?;
+        if let Some(store) = &self.state_store {
+            store.save_tax_lot_import_path(path)?;
+        }
+        *self.tax_lots.write().expect("portfolio tax-lot lock") = tax_lots.clone();
+        *self
+            .tax_lot_path
+            .write()
+            .expect("portfolio tax-lot path lock") = Some(path.to_path_buf());
+        Ok(tax_lots)
+    }
 }
 
 impl PortfolioRepository for CsvPortfolioRepository {
@@ -299,6 +375,17 @@ impl PortfolioRepository for CsvPortfolioRepository {
         path: &Path,
     ) -> Result<PortfolioPerformanceSnapshot, PortfolioError> {
         self.import_performance_path(path)
+    }
+
+    fn load_tax_lots(&self) -> PortfolioTaxLotSnapshot {
+        self.tax_lots
+            .read()
+            .expect("portfolio tax-lot lock")
+            .clone()
+    }
+
+    fn import_tax_lots_csv(&self, path: &Path) -> Result<PortfolioTaxLotSnapshot, PortfolioError> {
+        self.import_tax_lot_path(path)
     }
 
     fn reload(&self) -> Result<PortfolioSnapshot, PortfolioError> {
@@ -341,6 +428,20 @@ impl PortfolioRepository for CsvPortfolioRepository {
                 )
             })?;
         self.import_performance_path(&path)
+    }
+
+    fn reload_tax_lots(&self) -> Result<PortfolioTaxLotSnapshot, PortfolioError> {
+        let path = self
+            .tax_lot_path
+            .read()
+            .expect("portfolio tax-lot path lock")
+            .clone()
+            .ok_or_else(|| {
+                PortfolioError::Unsupported(
+                    "NO IMPORTED TAX LOTS · USE PORT IMPORT LOTS <FILE.CSV>".to_owned(),
+                )
+            })?;
+        self.import_tax_lot_path(&path)
     }
 }
 
@@ -1023,6 +1124,7 @@ mod tests {
         path: Mutex<Option<PathBuf>>,
         activity_path: Mutex<Option<PathBuf>>,
         performance_path: Mutex<Option<PathBuf>>,
+        tax_lot_path: Mutex<Option<PathBuf>>,
     }
 
     impl PortfolioImportStateStore for MemoryImportState {
@@ -1066,6 +1168,22 @@ mod tests {
         fn save_performance_import_path(&self, path: &Path) -> Result<(), PortfolioError> {
             *self
                 .performance_path
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(path.to_path_buf());
+            Ok(())
+        }
+
+        fn load_tax_lot_import_path(&self) -> Result<Option<PathBuf>, PortfolioError> {
+            Ok(self
+                .tax_lot_path
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone())
+        }
+
+        fn save_tax_lot_import_path(&self, path: &Path) -> Result<(), PortfolioError> {
+            *self
+                .tax_lot_path
                 .lock()
                 .unwrap_or_else(|error| error.into_inner()) = Some(path.to_path_buf());
             Ok(())
@@ -1197,6 +1315,8 @@ MSFT,MICROSOFT CORP,4,$500.00,"$2,000.00","$1,600.00",25%,USD
             activity_path: RwLock::new(None),
             performance: RwLock::new(PortfolioPerformanceSnapshot::empty("TEST")),
             performance_path: RwLock::new(None),
+            tax_lots: RwLock::new(PortfolioTaxLotSnapshot::empty("TEST")),
+            tax_lot_path: RwLock::new(None),
             state_store: None,
         };
         fs::write(&path, "Symbol,Quantity,Market Value\nAAPL,2,400\n").unwrap();
@@ -1291,6 +1411,68 @@ MSFT,MICROSOFT CORP,4,$500.00,"$2,000.00","$1,600.00",25%,USD
             "+5.00%"
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn persistent_repository_restores_tax_lots_independently() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = env::temp_dir().join(format!("market-terminal-tax-lots-{unique}.csv"));
+        fs::write(
+            &path,
+            "Symbol,Date Acquired,Term,Quantity,Cost Basis,Current Value,Currency\nAAPL,2024-01-02,Long,2,250,400,USD\n",
+        )
+        .unwrap();
+        let state = Arc::new(MemoryImportState::default());
+        let first = CsvPortfolioRepository::persistent(state.clone());
+
+        first.import_tax_lots_csv(&path).unwrap();
+        let restored = CsvPortfolioRepository::persistent(state);
+
+        assert_eq!(restored.load_tax_lots().lots.len(), 1);
+        assert_eq!(restored.load_tax_lots().cost_basis_label(), "$250.00");
+        assert_eq!(restored.load_tax_lots().unrealized_gain_label(), "$150.00");
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires MARKET_TERMINAL_PORTFOLIO_TAX_LOTS_CSV pointing to a real broker export"]
+    fn live_configured_tax_lots_reconcile_without_demo_fallbacks() {
+        let _ = dotenvy::dotenv();
+        assert!(
+            env::var_os("MARKET_TERMINAL_PORTFOLIO_TAX_LOTS_CSV").is_some(),
+            "set MARKET_TERMINAL_PORTFOLIO_TAX_LOTS_CSV to an actual open-lot export"
+        );
+        let repository = CsvPortfolioRepository::from_env();
+        let snapshot = repository.load_tax_lots();
+
+        assert!(!snapshot.lots.is_empty(), "{}", snapshot.source);
+        assert!(snapshot.source.starts_with("CSV ·"), "{}", snapshot.source);
+        assert!(!snapshot.source.contains("DEMO"));
+        assert!(snapshot.input_version.starts_with("CSV-FNV1A64-"));
+        assert!(snapshot.lots.iter().all(|lot| {
+            lot.account_id.as_str().starts_with("ACCOUNT ")
+                && !lot.account_id.as_str().contains('*')
+        }));
+        for total in &snapshot.currency_totals {
+            let lots = snapshot
+                .lots
+                .iter()
+                .filter(|lot| lot.currency == total.currency)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                lots.iter()
+                    .map(|lot| lot.cost_basis.minor_units())
+                    .sum::<i128>(),
+                total.cost_basis.minor_units()
+            );
+            assert_eq!(
+                total.current_value.minor_units() - total.priced_cost_basis.minor_units(),
+                total.unrealized_gain.minor_units()
+            );
+        }
     }
 
     #[test]

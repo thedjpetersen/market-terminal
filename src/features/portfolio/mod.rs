@@ -5,8 +5,9 @@ mod workspace;
 pub use domain::{
     format_money, PortfolioAccountId, PortfolioActivityCurrencyTotal, PortfolioActivityEntry,
     PortfolioActivityKind, PortfolioActivityLedger, PortfolioCurrencyTotal,
-    PortfolioPerformanceSeries, PortfolioPerformanceSnapshot, PortfolioSnapshot,
-    PortfolioValuationPoint, Position, PositionQuantity,
+    PortfolioPerformanceSeries, PortfolioPerformanceSnapshot, PortfolioSnapshot, PortfolioTaxLot,
+    PortfolioTaxLotCurrencyTotal, PortfolioTaxLotSnapshot, PortfolioValuationPoint, Position,
+    PositionQuantity, TaxLotHoldingPeriod,
 };
 pub use port::{PortfolioError, PortfolioImportStateStore, PortfolioRepository};
 pub use workspace::PortfolioWorkspace;

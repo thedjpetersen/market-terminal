@@ -28,7 +28,7 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "help",
         prepare: prepare_help,
-        hashes: [0xa8d3eaac702baf6e, 0x0e528b3751691a45, 0x130195651bfce82a],
+        hashes: [0xa8d3eaac702baf6e, 0xb0244685f88431fe, 0x2f5b1b60c428a0ff],
     },
     Golden {
         name: "spreadsheet-error",

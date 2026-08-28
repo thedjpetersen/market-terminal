@@ -103,6 +103,11 @@ move to its own crate later without changing its public vocabulary.
   CSV import, exact flow-adjusted TWR, optional benchmark and active return,
   strict per-currency separation, versioned methodology/disclosures, and
   independent crash-safe import-path restoration.
+- **Complete:** first Stage 2 tax-lot slice with bounded open-lot CSV import,
+  strict acquired-date and positive-quantity validation, exact per-currency
+  basis/value/unrealized-gain reconciliation, explicit unpriced and unknown-term
+  states, anonymized accounts, Security drill-through, and independent
+  crash-safe import-path restoration.
 - **Next:** the remaining Stage 2 portfolio/performance, risk, screening, and
   expanded alert-rule families. Provider availability extends the deployment
   surface; deterministic fixtures remain the Stage 1 acceptance baseline and
@@ -360,14 +365,14 @@ ALERT core.drawdown > 8% -> preview -> enable
   as simulated/local until an external notification channel is configured.
 
 **Status: in progress.** Position-snapshot ingestion, the first exact
-cash/activity ledger, and dated per-currency valuations supply separate
-versioned Portfolio inputs. The first Performance slice calculates
-flow-adjusted TWR plus optional benchmark and active return, and the first Risk
-slice consumes positions without storage access. Verified broker trade and
-tax-lot history, contribution, attribution, historical/factor risk, and stress
-libraries remain; screening and the additional news/topic,
-portfolio-threshold, calendar, and spreadsheet-expression alert rule families
-remain separate Stage 2 slices.
+cash/activity ledger, dated per-currency valuations, and broker open-tax-lot
+exports supply separate versioned Portfolio inputs. The first Performance slice
+calculates flow-adjusted TWR plus optional benchmark and active return, and the
+first Risk slice consumes positions without storage access. Verified broker
+trade and closed-lot/realized-gain history, contribution, attribution,
+historical/factor risk, and stress libraries remain; screening and the
+additional news/topic, portfolio-threshold, calendar, and spreadsheet-expression
+alert rule families remain separate Stage 2 slices.
 
 ## Stage 3 — Advanced analytics and paper workflows
 

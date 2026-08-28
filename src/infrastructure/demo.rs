@@ -4,8 +4,9 @@ use crate::features::{
     overview::{OverviewQuery, OverviewSnapshot},
     portfolio::{
         PortfolioAccountId, PortfolioCurrencyTotal, PortfolioPerformanceSeries,
-        PortfolioPerformanceSnapshot, PortfolioRepository, PortfolioSnapshot,
-        PortfolioValuationPoint, Position, PositionQuantity,
+        PortfolioPerformanceSnapshot, PortfolioRepository, PortfolioSnapshot, PortfolioTaxLot,
+        PortfolioTaxLotCurrencyTotal, PortfolioTaxLotSnapshot, PortfolioValuationPoint, Position,
+        PositionQuantity, TaxLotHoldingPeriod,
     },
     security::{
         Estimate, Filing, FinancialPeriod, OwnerPosition, PeerComparison, SecurityError,
@@ -439,6 +440,85 @@ impl PortfolioRepository for DemoData {
                 "DETERMINISTIC GALLERY VALUATIONS · NOT INTERACTIVE USER DATA".to_owned(),
                 "BENCHMARK IS A DETERMINISTIC COMPARISON SERIES".to_owned(),
                 "NO POSITION CONTRIBUTION OR FACTOR ATTRIBUTION".to_owned(),
+            ],
+        }
+    }
+
+    fn load_tax_lots(&self) -> PortfolioTaxLotSnapshot {
+        let usd = Currency::new("USD").expect("USD is valid");
+        let lot = |id: &str,
+                   symbol: &str,
+                   date: &str,
+                   term: TaxLotHoldingPeriod,
+                   quantity: i128,
+                   basis: i128,
+                   value: i128,
+                   return_bps: i32| PortfolioTaxLot {
+            lot_id: id.to_owned(),
+            account_id: PortfolioAccountId::new("DEMO ACCOUNT"),
+            instrument_id: InstrumentId::new(format!(
+                "demo:instrument:{}",
+                symbol.to_ascii_lowercase()
+            )),
+            symbol: symbol.to_owned(),
+            acquired_date: date.to_owned(),
+            holding_period: term,
+            currency: usd,
+            quantity: PositionQuantity::from_scaled_units(quantity),
+            cost_basis: Money::from_minor_units(basis, usd),
+            current_value: Some(Money::from_minor_units(value, usd)),
+            unrealized_gain: Some(Money::from_minor_units(value - basis, usd)),
+            unrealized_return_bps: Some(return_bps),
+        };
+        PortfolioTaxLotSnapshot {
+            lots: vec![
+                lot(
+                    "DEMO-LOT-1",
+                    "META",
+                    "2024-01-12",
+                    TaxLotHoldingPeriod::LongTerm,
+                    100_000_000,
+                    3_000_000,
+                    5_000_000,
+                    6_667,
+                ),
+                lot(
+                    "DEMO-LOT-2",
+                    "META",
+                    "2026-05-15",
+                    TaxLotHoldingPeriod::ShortTerm,
+                    50_000_000,
+                    2_000_000,
+                    2_500_000,
+                    2_500,
+                ),
+                lot(
+                    "DEMO-LOT-3",
+                    "AAPL",
+                    "2023-09-08",
+                    TaxLotHoldingPeriod::LongTerm,
+                    100_000_000,
+                    1_500_000,
+                    2_000_000,
+                    3_333,
+                ),
+            ],
+            currency_totals: vec![PortfolioTaxLotCurrencyTotal {
+                currency: usd,
+                lots: 3,
+                cost_basis: Money::from_minor_units(6_500_000, usd),
+                priced_cost_basis: Money::from_minor_units(6_500_000, usd),
+                current_value: Money::from_minor_units(9_500_000, usd),
+                unrealized_gain: Money::from_minor_units(3_000_000, usd),
+                unpriced_lots: 0,
+            }],
+            source: "DETERMINISTIC DEMO".to_owned(),
+            as_of: "2026-08-25 16:00 ET".to_owned(),
+            input_version: "DEMO-TAX-LOTS-V1".to_owned(),
+            methodology: "DETERMINISTIC OPEN-LOT BASIS FIXTURE · USD".to_owned(),
+            disclosures: vec![
+                "DETERMINISTIC GALLERY LOTS · NOT INTERACTIVE USER DATA".to_owned(),
+                "OPEN LOTS ONLY · NO REALIZED-GAIN OR CLOSED-TRADE HISTORY".to_owned(),
             ],
         }
     }

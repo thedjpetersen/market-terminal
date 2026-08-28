@@ -330,10 +330,11 @@ return and Sharpe remain `N/A` because a positions snapshot does not contain
 enough transaction history to calculate them honestly. No broker password or
 API credential is required, and the CSV stays local.
 
-Portfolio has three clickable, keyboard-addressable views: `1` Positions, `2`
-Activity, and `3` Performance. `Tab`, `Shift+Tab`, `h/l`, and the arrow keys
-switch views; `j/k` selects rows, and Enter opens a row's resolved security when
-one exists. Import a separate cash-account or broker activity export with:
+Portfolio has four clickable, keyboard-addressable views: `1` Positions, `2`
+Activity, `3` Performance, and `4` Lots. `Tab`, `Shift+Tab`, `h/l`, and the
+arrow keys switch views; `j/k` selects rows, and Enter opens a row's resolved
+security when one exists. Import a separate cash-account or broker activity
+export with:
 
 ```text
 PORT IMPORT ACTIVITY "~/Downloads/activity.csv"
@@ -386,6 +387,30 @@ rows instead of manufacturing a result. Contribution and attribution remain
 unavailable until verified holdings or lot history can be joined to each
 valuation period; cash activity plus one positions snapshot is not silently
 promoted into that history.
+
+Import a broker open-tax-lot export separately from positions and activity:
+
+```text
+PORT IMPORT LOTS "~/Downloads/tax-lots.csv"
+PORT RELOAD LOTS
+```
+
+The required columns are `Symbol`, `Date Acquired`, `Quantity`, and total `Cost
+Basis`. Optional columns include account, holding-period term, current value,
+and currency. The adapter accepts common aliases, normalizes dates, replaces
+broker account identifiers with import-local labels, and refuses the entire
+import when a purported lot is malformed. Configure the same independent input
+at startup with:
+
+```dotenv
+MARKET_TERMINAL_PORTFOLIO_TAX_LOTS_CSV="~/Downloads/tax-lots.csv"
+```
+
+`PORT LOTS` reconciles total basis, priced basis, current value, and unrealized
+gain exactly by currency. Missing current values stay visible as `UNPRICED` and
+are excluded from value and gain; unlike currencies are never combined. This is
+an open-lot snapshot, not closed-trade history, a realized-gain ledger, tax
+advice, or enough evidence to calculate position contribution and attribution.
 
 Overview immediately reflects the same in-memory imported portfolio and live
 news cache. A point-in-time positions export does not contain a return series,

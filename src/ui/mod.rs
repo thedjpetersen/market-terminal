@@ -492,6 +492,8 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             Line::raw("PORT ACTIVITY        Open exact cash/activity ledger"),
             Line::raw("PORT IMPORT ACTIVITY <CSV>  Import cash or broker activity"),
             Line::raw("PORT PERFORMANCE     Show performance input coverage"),
+            Line::raw("PORT LOTS            Open exact tax-lot basis"),
+            Line::raw("PORT IMPORT LOTS <CSV>  Import broker open lots"),
             Line::raw("PORT RELOAD          Reload positions"),
             Line::raw("SHEET IMPORT <CSV>   Replace active sheet"),
             Line::raw("SHEET EXPORT <CSV>   Export active sheet"),

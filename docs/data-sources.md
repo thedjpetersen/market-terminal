@@ -187,6 +187,44 @@ endorsed by, or sponsored by Yahoo.
   activity is explicitly not verified broker trade history. Activity without
   dated valuations does not produce TWR, contribution, or attribution.
 
+## User portfolio performance CSV
+
+- **Surface:** Portfolio Performance.
+- **Source/ownership:** a local dated valuation export selected by the user.
+  Required inputs are date and portfolio value; external flow, benchmark value,
+  and reporting currency are optional and explicitly disclosed when absent.
+- **Retention/bounds:** parsed values remain in process. Only the independent
+  selected path is stored in private crash-safe state. Files are capped at 10
+  MB, 100,000 data rows, and 64 columns; any malformed row refuses the import.
+- **Quality:** exact-money sub-period returns remove end-of-period external flows
+  before linking into TWR. Benchmark and active return are calculated only from
+  a complete benchmark column. Returns remain separate by currency, every
+  snapshot has a deterministic input version and methodology, and no
+  contribution or attribution is inferred.
+
+## User portfolio open-tax-lot CSV
+
+- **Surface:** Portfolio Lots and Security drill-through from each resolved
+  symbol row.
+- **Source/ownership:** a local broker open-lot export selected by the user. No
+  broker credential is collected. Required inputs are symbol, acquired date,
+  positive quantity, and total cost basis; account, provider holding-period
+  term, current value, and currency are optional.
+- **Retention/privacy:** lot data remains in process and CSV contents are not
+  copied. Only the independent path is stored in private crash-safe state.
+  Broker account identifiers become import-local labels before reaching the
+  domain or UI.
+- **Bounds:** files are capped at 10 MB, 100,000 data rows, 128 columns, and
+  eight displayed rejection details. A malformed security, date, quantity,
+  basis, value, or currency refuses the whole import.
+- **Quality:** cost basis, priced basis, current value, and unrealized gain
+  reconcile exactly in minor units by currency. Unpriced lots remain visible
+  and excluded from value/gain, unknown provider holding periods remain
+  explicit, and no FX rate is invented. The displayed as-of is the local import
+  time because this schema has no provider valuation timestamp. This snapshot
+  is not closed-trade history, a realized-gain ledger, tax advice, contribution,
+  or attribution.
+
 ## User workbook and CSV
 
 - **Surface:** interactive Spreadsheet workbook and active-sheet CSV exchange.
