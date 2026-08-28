@@ -34,7 +34,8 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 - Find — canonical instrument identity and ranked symbol/company discovery
 - Monitor — configurable watchlists, bounded quote streams, sorting,
   provider day ranges, bounded session sparklines, responsive columns,
-  data-quality states, last-known-good fallback, and replay
+  data-quality states, last-known-good fallback, plus spatial/follow routing for
+  visible rows and discrete sort, direction, column, and refresh controls
 - Chart — comparative performance, zero baselines, inspection cursor, market
   profile statistics, half-block OHLC candlesticks, volume histograms, SMA/EMA
   overlays, and Wilder RSI
@@ -82,7 +83,8 @@ from `alphai-tui`. Press `Tab`/`Shift+Tab` or `1`/`2`/`3` to focus Monitor,
 Chart, or News. Clicking inside a pane focuses it and sends subsequent keys to
 that pane. The three visible pane headers also participate in `Esc` spatial
 focus and `F` follow hints; child actions are namespaced through Desk while
-retaining their real body coordinates. On short terminals the News pane yields
+retaining their real body coordinates. Monitor rows and controls therefore remain
+directly routable inside the split Desk. On short terminals the News pane yields
 instead of crushing the market panels and is removed from routing; use `NEWS`
 for the full feed.
 

@@ -2324,6 +2324,31 @@ mod tests {
             app.focused_workspace_action(workspace_area).unwrap().id,
             "pane:news"
         );
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let monitor_row_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action.starts_with("pane:monitor/row:0:")
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in monitor_row_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.advance_tick();
+        assert_eq!(
+            app.active_workspace(),
+            app.workspaces.resolve_target("security").unwrap()
+        );
     }
 
     #[test]

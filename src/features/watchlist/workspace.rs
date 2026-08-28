@@ -24,7 +24,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
+    app::{AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor},
     features::market_data::{
         DataQuality, MarketDataError, MarketDataQuery, Price, Quantity, QuoteSnapshot,
         QuoteSubscription, QuoteSubscriptionRequest, SubscriptionMetrics,
@@ -43,6 +43,51 @@ use super::{
 
 const DEFAULT_SNAPSHOT_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const SESSION_TRACE_CAPACITY: usize = 64;
+
+#[derive(Debug, Clone, Copy)]
+struct MonitorAreas {
+    header: Rect,
+    table: Rect,
+    footer: Rect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MonitorControl {
+    Open,
+    SortField,
+    SortDirection,
+    Columns,
+    Refresh,
+}
+
+impl MonitorControl {
+    const fn action_id(self) -> &'static str {
+        match self {
+            Self::Open => "control:open",
+            Self::SortField => "control:sort-field",
+            Self::SortDirection => "control:sort-direction",
+            Self::Columns => "control:columns",
+            Self::Refresh => "control:refresh",
+        }
+    }
+
+    fn from_action_id(id: &str) -> Option<Self> {
+        match id {
+            "control:open" => Some(Self::Open),
+            "control:sort-field" => Some(Self::SortField),
+            "control:sort-direction" => Some(Self::SortDirection),
+            "control:columns" => Some(Self::Columns),
+            "control:refresh" => Some(Self::Refresh),
+            _ => None,
+        }
+    }
+}
+
+struct MonitorFooterSegment {
+    key: &'static str,
+    detail: String,
+    control: Option<MonitorControl>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColumnPreset {
@@ -355,6 +400,77 @@ impl WatchlistWorkspace {
         };
         responsive_columns(desired, available_width)
     }
+
+    fn footer_segments(&self) -> Vec<MonitorFooterSegment> {
+        vec![
+            MonitorFooterSegment {
+                key: " ↑↓/JK ",
+                detail: "SELECT  ".to_owned(),
+                control: None,
+            },
+            MonitorFooterSegment {
+                key: "ENTER ",
+                detail: "OPEN SEC  ".to_owned(),
+                control: Some(MonitorControl::Open),
+            },
+            MonitorFooterSegment {
+                key: "S ",
+                detail: format!("SORT {}  ", self.definition.sort.field.label()),
+                control: Some(MonitorControl::SortField),
+            },
+            MonitorFooterSegment {
+                key: "SHIFT-S ",
+                detail: format!("DIR {}  ", self.definition.sort.direction.marker()),
+                control: Some(MonitorControl::SortDirection),
+            },
+            MonitorFooterSegment {
+                key: "C ",
+                detail: format!("COLUMNS {}  ", self.column_preset.label()),
+                control: Some(MonitorControl::Columns),
+            },
+            MonitorFooterSegment {
+                key: "R ",
+                detail: "REFRESH".to_owned(),
+                control: Some(MonitorControl::Refresh),
+            },
+        ]
+    }
+
+    fn control_areas(&self, footer: Rect) -> Vec<(MonitorControl, Rect)> {
+        let mut x = footer.x;
+        let mut controls = Vec::new();
+        for segment in self.footer_segments() {
+            let width = (segment.key.chars().count() + segment.detail.chars().count()) as u16;
+            if let Some(control) = segment.control {
+                let visible_width = width.min(footer.right().saturating_sub(x));
+                if visible_width > 0 {
+                    controls.push((control, Rect::new(x, footer.y, visible_width, 1)));
+                }
+            }
+            x = x.saturating_add(width);
+        }
+        controls
+    }
+
+    fn activate_control(&mut self, control: MonitorControl) -> bool {
+        match control {
+            MonitorControl::Open => self.open_selected(),
+            MonitorControl::SortField => self.cycle_sort(),
+            MonitorControl::SortDirection => self.toggle_sort_direction(),
+            MonitorControl::Columns => self.column_preset = self.column_preset.next(),
+            MonitorControl::Refresh => self.refresh(),
+        }
+        true
+    }
+
+    fn open_selected(&mut self) {
+        if let Some(row) = self.rows.get(self.selected) {
+            self.pending_intents.push(AppIntent::DispatchCommand {
+                command: format!("SEC {}", row.item.symbol),
+                origin: ID,
+            });
+        }
+    }
 }
 
 impl Workspace for WatchlistWorkspace {
@@ -404,12 +520,7 @@ impl Workspace for WatchlistWorkspace {
                 true
             }
             KeyCode::Enter => {
-                if let Some(row) = self.rows.get(self.selected) {
-                    self.pending_intents.push(AppIntent::DispatchCommand {
-                        command: format!("SEC {}", row.item.symbol),
-                        origin: ID,
-                    });
-                }
+                self.open_selected();
                 true
             }
             KeyCode::Char('a') => {
@@ -426,49 +537,102 @@ impl Workspace for WatchlistWorkspace {
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
-        let areas = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(8),
-            Constraint::Length(2),
-        ])
-        .split(area);
-        if let Some(index) = table_row_at(event, areas[1], self.rows.len()) {
+        let areas = monitor_areas(area);
+        if let Some(index) = table_row_at(event, areas.table, self.rows.len()) {
             self.selected = index;
             return true;
         }
-        if crate::ui::is_primary_click(event, areas[2]) {
-            let controls = [
-                (" ↑↓/JK SELECT  ".to_owned(), None),
-                ("ENTER OPEN SEC  ".to_owned(), Some(KeyCode::Enter)),
-                (
-                    format!(
-                        "S/SHIFT-S SORT {} {}  ",
-                        self.definition.sort.field.label(),
-                        self.definition.sort.direction.marker()
-                    ),
-                    Some(KeyCode::Char('s')),
-                ),
-                (
-                    format!("C COLUMNS {}  ", self.column_preset.label()),
-                    Some(KeyCode::Char('c')),
-                ),
-                ("R REFRESH".to_owned(), Some(KeyCode::Char('r'))),
-            ];
-            let mut x = areas[2].x;
-            for (label, key) in controls {
-                let width = label.chars().count() as u16;
-                if event.column >= x && event.column < x.saturating_add(width) {
-                    return key
-                        .is_none_or(|key| self.handle_key(KeyEvent::new(key, KeyModifiers::NONE)));
+        if crate::ui::is_primary_click(event, areas.footer) {
+            for (control, control_area) in self.control_areas(areas.footer) {
+                if crate::ui::contains(control_area, event.column, event.row) {
+                    return self.activate_control(control);
                 }
-                x = x.saturating_add(width);
             }
             return true;
         }
-        if let Some(key) = scroll_key(event, areas[1]) {
+        if let Some(key) = scroll_key(event, areas.table) {
             return self.handle_key(key);
         }
         false
+    }
+
+    fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
+        let areas = monitor_areas(area);
+        let visible_rows = usize::from(areas.table.height.saturating_sub(4)).min(self.rows.len());
+        let preferred_row = (self.selected < visible_rows)
+            .then_some(self.selected)
+            .or_else(|| (visible_rows > 0).then_some(0));
+        let mut actions = self
+            .rows
+            .iter()
+            .take(visible_rows)
+            .enumerate()
+            .map(|(index, row)| {
+                let mut action = WorkspaceAction::new(
+                    format!("row:{index}:{}", row.item.instrument_id.as_str()),
+                    format!("Open {} security research", row.item.symbol),
+                    Rect::new(
+                        areas.table.x.saturating_add(1),
+                        areas.table.y.saturating_add(3 + index as u16),
+                        areas.table.width.saturating_sub(2),
+                        1,
+                    ),
+                );
+                if Some(index) == preferred_row {
+                    action = action.preferred();
+                }
+                action
+            })
+            .collect::<Vec<_>>();
+
+        actions.extend(
+            self.control_areas(areas.footer)
+                .into_iter()
+                .filter(|(control, _)| *control != MonitorControl::Open || !self.rows.is_empty())
+                .map(|(control, area)| {
+                    let label = match control {
+                        MonitorControl::Open => "Open selected security".to_owned(),
+                        MonitorControl::SortField => format!(
+                            "Cycle sort field from {}",
+                            self.definition.sort.field.label()
+                        ),
+                        MonitorControl::SortDirection => format!(
+                            "Toggle sort direction from {}",
+                            self.definition.sort.direction.marker()
+                        ),
+                        MonitorControl::Columns => {
+                            format!("Cycle columns from {}", self.column_preset.label())
+                        }
+                        MonitorControl::Refresh => "Refresh monitor quotes".to_owned(),
+                    };
+                    WorkspaceAction::new(control.action_id(), label, area)
+                }),
+        );
+        actions
+    }
+
+    fn activate_action(&mut self, id: &str) -> bool {
+        if let Some(control) = MonitorControl::from_action_id(id) {
+            return self.activate_control(control);
+        }
+        let Some(row_id) = id.strip_prefix("row:") else {
+            return false;
+        };
+        let Some((index, instrument_id)) = row_id.split_once(':') else {
+            return false;
+        };
+        let Ok(index) = index.parse::<usize>() else {
+            return false;
+        };
+        let Some(row) = self.rows.get(index) else {
+            return false;
+        };
+        if row.item.instrument_id.as_str() != instrument_id {
+            return false;
+        }
+        self.selected = index;
+        self.open_selected();
+        true
     }
 
     fn poll_intents(&mut self) -> Vec<AppIntent> {
@@ -481,12 +645,7 @@ impl Workspace for WatchlistWorkspace {
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
-        let areas = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(8),
-            Constraint::Length(2),
-        ])
-        .split(area);
+        let areas = monitor_areas(area);
         let quality_counts = quality_counts(&self.rows);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
@@ -505,10 +664,10 @@ impl Workspace for WatchlistWorkspace {
                 Span::styled(self.status.as_str(), YELLOW),
             ]))
             .block(terminal_block("MON", "MARKET MONITOR")),
-            areas[0],
+            areas.header,
         );
 
-        let columns = self.visible_columns(areas[1].width.saturating_sub(2));
+        let columns = self.visible_columns(areas.table.width.saturating_sub(2));
         let widths = columns
             .iter()
             .map(|column| column_width(*column))
@@ -534,31 +693,29 @@ impl Workspace for WatchlistWorkspace {
                 .header(header)
                 .column_spacing(1)
                 .block(terminal_block("WL", "LIVE SNAPSHOTS")),
-            areas[1],
+            areas.table,
         );
 
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(" ↑↓/JK ", AMBER),
-                Span::styled("SELECT  ", MUTED),
-                Span::styled("ENTER ", AMBER),
-                Span::styled("OPEN SEC  ", MUTED),
-                Span::styled("S/SHIFT-S ", AMBER),
-                Span::styled(
-                    format!(
-                        "SORT {} {}  ",
-                        self.definition.sort.field.label(),
-                        self.definition.sort.direction.marker()
-                    ),
-                    MUTED,
-                ),
-                Span::styled("C ", AMBER),
-                Span::styled(format!("COLUMNS {}  ", self.column_preset.label()), MUTED),
-                Span::styled("R ", AMBER),
-                Span::styled("REPLAY", MUTED),
-            ])),
-            areas[2],
-        );
+        let mut footer = Vec::new();
+        for segment in self.footer_segments() {
+            footer.push(Span::styled(segment.key, AMBER));
+            footer.push(Span::styled(segment.detail, MUTED));
+        }
+        frame.render_widget(Paragraph::new(Line::from(footer)), areas.footer);
+    }
+}
+
+fn monitor_areas(area: Rect) -> MonitorAreas {
+    let areas = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(8),
+        Constraint::Length(2),
+    ])
+    .split(area);
+    MonitorAreas {
+        header: areas[0],
+        table: areas[1],
+        footer: areas[2],
     }
 }
 
@@ -1025,6 +1182,73 @@ mod tests {
         assert!(workspace.handle_mouse(click(2, 7), Rect::new(0, 0, 120, 30)));
 
         assert_eq!(workspace.selected, 1);
+    }
+
+    #[test]
+    fn visible_actions_route_rows_and_discrete_footer_controls() {
+        let mut workspace =
+            WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(StubCatalog));
+        let area = Rect::new(0, 0, 160, 30);
+        let actions = workspace.actions(area);
+
+        let first = actions
+            .iter()
+            .find(|action| action.id.starts_with("row:0:"))
+            .unwrap();
+        assert!(first.preferred);
+        assert!(actions
+            .iter()
+            .any(|action| action.id == "control:sort-field"));
+        assert!(actions
+            .iter()
+            .any(|action| action.id == "control:sort-direction"));
+        assert!(actions.iter().any(|action| action.id == "control:columns"));
+        assert!(actions.iter().any(|action| action.id == "control:refresh"));
+        assert!(actions.iter().all(|action| {
+            action.area.x >= area.x
+                && action.area.y >= area.y
+                && action.area.right() <= area.right()
+                && action.area.bottom() <= area.bottom()
+        }));
+
+        assert!(workspace.activate_action("control:sort-field"));
+        assert_eq!(workspace.definition.sort.field, SortField::Last);
+        let direction = workspace.definition.sort.direction;
+        assert!(workspace.activate_action("control:sort-direction"));
+        assert_eq!(workspace.definition.sort.direction, direction.toggled());
+        assert!(workspace.activate_action("control:columns"));
+        assert_eq!(workspace.column_preset, ColumnPreset::Trading);
+
+        let second = workspace
+            .actions(area)
+            .into_iter()
+            .find(|action| action.id.starts_with("row:1:"))
+            .unwrap()
+            .id;
+        assert!(workspace.activate_action(&second));
+        assert!(matches!(
+            workspace.poll_intents().as_slice(),
+            [AppIntent::DispatchCommand { command, origin }]
+                if command.starts_with("SEC ") && *origin == ID
+        ));
+        assert!(!workspace.activate_action("row:1:stale-identity"));
+        assert!(!workspace.activate_action("control:unknown"));
+    }
+
+    #[test]
+    fn narrow_action_geometry_contains_only_visible_rows_and_controls() {
+        let workspace = WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(StubCatalog));
+        let area = Rect::new(0, 0, 42, 18);
+        let actions = workspace.actions(area);
+
+        assert!(actions.iter().any(|action| action.id.starts_with("row:")));
+        assert!(!actions.iter().any(|action| action.id == "control:refresh"));
+        assert!(actions.iter().all(|action| {
+            action.area.x >= area.x
+                && action.area.y >= area.y
+                && action.area.right() <= area.right()
+                && action.area.bottom() <= area.bottom()
+        }));
     }
 
     #[test]
