@@ -5,6 +5,7 @@ mod input;
 mod keymap;
 mod settings;
 mod workspace;
+mod workspace_presets;
 
 use std::{
     collections::BTreeMap,
@@ -18,6 +19,9 @@ use ratatui::layout::Rect;
 use crate::{
     features::persistence::{SessionState, SessionStateRepository},
     ui::{self, ShellClickTarget},
+};
+use workspace_presets::{
+    WorkspacePreset, WorkspacePresetCatalog, WorkspacePresetPreview, WorkspaceReturnPoint,
 };
 
 pub use command_inference::{
@@ -38,6 +42,7 @@ pub use workspace::{
 };
 
 const HINT_ALPHABET: &[u8] = b"ASDFGHJKLQWERTYUIOPZXCVBNM";
+const PRESET_RETURN_PREFERENCE: &str = "workspace_preset_return";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ShellHintTarget {
@@ -125,6 +130,8 @@ pub struct App {
     recent_commands: Vec<String>,
     preferences: BTreeMap<String, String>,
     theme_name: String,
+    preset_catalog: WorkspacePresetCatalog,
+    preset_preview: Option<WorkspacePresetPreview>,
     should_quit: bool,
 }
 
@@ -165,6 +172,8 @@ impl App {
             recent_commands: Vec::new(),
             preferences: BTreeMap::new(),
             theme_name: crate::ui::theme::active_theme_name().to_owned(),
+            preset_catalog: WorkspacePresetCatalog::built_in(),
+            preset_preview: None,
             should_quit: false,
         }
     }
@@ -243,6 +252,10 @@ impl App {
         self.help_visible
     }
 
+    pub(crate) fn workspace_preset_preview(&self) -> Option<&WorkspacePresetPreview> {
+        self.preset_preview.as_ref()
+    }
+
     /// Returns the exact command catalog exposed by the interactive Help view.
     pub fn help_commands(&self) -> Vec<HelpCommand> {
         let mut commands = Vec::new();
@@ -271,6 +284,11 @@ impl App {
                 "THEME",
                 &["THEME"][..],
                 "Cycle the terminal color theme or select a named theme.",
+            ),
+            (
+                "PRESET",
+                &["PRESET"][..],
+                "Preview, apply, or return from a versioned role workspace preset.",
             ),
         ];
         commands.extend(
@@ -454,6 +472,11 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) {
         if input::is_force_quit(key) {
             self.should_quit = true;
+            return;
+        }
+
+        if self.preset_preview.is_some() {
+            self.handle_workspace_preset_key(key);
             return;
         }
 
@@ -811,6 +834,9 @@ impl App {
 
     /// Applies a terminal mouse event using the geometry of the last rendered frame.
     pub fn handle_mouse(&mut self, event: MouseEvent, frame_area: Rect) {
+        if self.preset_preview.is_some() {
+            return;
+        }
         self.tmux_prefix_pending = false;
         self.panel_focus = false;
         self.focused_action = None;
@@ -932,6 +958,11 @@ impl App {
             .filter(|invocation| invocation.function == "THEME")
         {
             self.apply_theme_command(invocation);
+        } else if let Some(invocation) = invocation
+            .as_ref()
+            .filter(|invocation| invocation.function == "PRESET")
+        {
+            self.apply_workspace_preset_command(invocation);
         } else if self.workspaces.resolve_command(&command).is_some() {
             command_target = self.dispatch_workspace_command(&command);
         } else if !command.is_empty() {
@@ -1614,6 +1645,194 @@ impl App {
         } else {
             self.open_assistant_drawer();
         }
+    }
+
+    fn apply_workspace_preset_command(&mut self, invocation: &CommandInvocation) {
+        let Some(requested) = invocation.args.first() else {
+            self.command_feedback = Some(format!(
+                "PRESET ROLES · {} · USE PRESET <ROLE> OR PRESET RETURN",
+                self.preset_catalog.labels()
+            ));
+            return;
+        };
+        if invocation.args.len() != 1 {
+            self.command_feedback = Some("USAGE · PRESET <ROLE|RETURN>".to_owned());
+            return;
+        }
+        if requested.eq_ignore_ascii_case("LIST") {
+            self.command_feedback =
+                Some(format!("PRESET ROLES · {}", self.preset_catalog.labels()));
+            return;
+        }
+        if requested.eq_ignore_ascii_case("RETURN") {
+            self.stage_workspace_return_preview();
+            return;
+        }
+        let Some(preset) = self.preset_catalog.find(requested).cloned() else {
+            self.command_feedback = Some(format!(
+                "UNKNOWN PRESET · {} · AVAILABLE {}",
+                requested.to_ascii_uppercase(),
+                self.preset_catalog.labels()
+            ));
+            return;
+        };
+        self.stage_workspace_preset_preview(&preset);
+    }
+
+    fn stage_workspace_preset_preview(&mut self, preset: &WorkspacePreset) {
+        let current_order = self.workspace_order_strings();
+        let projected = self
+            .workspaces
+            .project_workspace_order(&preset.workspace_order);
+        let proposed_order = projected
+            .into_iter()
+            .map(|id| id.as_str().to_owned())
+            .collect::<Vec<_>>();
+        let unavailable = preset
+            .workspace_order
+            .iter()
+            .filter(|workspace| self.workspaces.resolve_target(workspace).is_none())
+            .cloned()
+            .collect();
+        self.stage_workspace_preset_modal(WorkspacePresetPreview {
+            id: preset.id.clone(),
+            version: preset.version,
+            label: preset.label.clone(),
+            description: preset.description.clone(),
+            current_order,
+            proposed_order,
+            unavailable,
+            restoring_custom: false,
+        });
+    }
+
+    fn stage_workspace_return_preview(&mut self) {
+        let Some(encoded) = self.preferences.get(PRESET_RETURN_PREFERENCE) else {
+            self.command_feedback = Some("NO CUSTOM WORKSPACE RETURN POINT IS SAVED".to_owned());
+            return;
+        };
+        let Ok(return_point) = WorkspaceReturnPoint::decode(encoded) else {
+            self.command_feedback = Some("CUSTOM WORKSPACE RETURN POINT IS INVALID".to_owned());
+            return;
+        };
+        let proposed_order = self
+            .workspaces
+            .project_workspace_order(&return_point.workspace_order)
+            .into_iter()
+            .map(|id| id.as_str().to_owned())
+            .collect();
+        self.stage_workspace_preset_modal(WorkspacePresetPreview {
+            id: "custom".to_owned(),
+            version: 1,
+            label: "Custom workspace".to_owned(),
+            description: "Restore the workspace order and active destination saved before the first role preset was applied.".to_owned(),
+            current_order: self.workspace_order_strings(),
+            proposed_order,
+            unavailable: return_point
+                .workspace_order
+                .iter()
+                .filter(|workspace| self.workspaces.resolve_target(workspace).is_none())
+                .cloned()
+                .collect(),
+            restoring_custom: true,
+        });
+    }
+
+    fn stage_workspace_preset_modal(&mut self, preview: WorkspacePresetPreview) {
+        self.close_help();
+        self.close_settings();
+        self.close_assistant_drawer();
+        self.panel_focus = false;
+        self.focused_action = None;
+        self.hint_mode = None;
+        self.preset_preview = Some(preview);
+    }
+
+    fn handle_workspace_preset_key(&mut self, key: KeyEvent) {
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            return;
+        }
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('y' | 'Y') => self.confirm_workspace_preset(),
+            KeyCode::Esc | KeyCode::Char('n' | 'N' | 'q' | 'Q') => {
+                self.preset_preview = None;
+                self.command_feedback =
+                    Some("WORKSPACE PRESET CANCELED · NO CHANGES MADE".to_owned());
+            }
+            _ => {}
+        }
+    }
+
+    fn confirm_workspace_preset(&mut self) {
+        let Some(preview) = self.preset_preview.take() else {
+            return;
+        };
+        if !preview.restoring_custom && !self.preferences.contains_key(PRESET_RETURN_PREFERENCE) {
+            let return_point = WorkspaceReturnPoint {
+                active_workspace: self.active_workspace.as_str().to_owned(),
+                workspace_order: self.workspace_order_strings(),
+            };
+            match return_point.encode() {
+                Ok(encoded) => {
+                    self.preferences
+                        .insert(PRESET_RETURN_PREFERENCE.to_owned(), encoded);
+                }
+                Err(error) => {
+                    self.command_feedback = Some(format!("PRESET APPLY FAILED · {error}"));
+                    return;
+                }
+            }
+        }
+
+        let requested_active = if preview.restoring_custom {
+            self.preferences
+                .get(PRESET_RETURN_PREFERENCE)
+                .and_then(|encoded| WorkspaceReturnPoint::decode(encoded).ok())
+                .and_then(|return_point| {
+                    self.workspaces
+                        .resolve_target(&return_point.active_workspace)
+                })
+        } else {
+            preview
+                .proposed_order
+                .first()
+                .and_then(|workspace| self.workspaces.resolve_target(workspace))
+        };
+        self.workspaces
+            .apply_workspace_order(&preview.proposed_order);
+        if let Some(target) = requested_active {
+            let previous = self.active_workspace;
+            if previous != target {
+                self.workspaces.on_blur(previous);
+                self.active_workspace = target;
+                self.publish_workspace_activation(previous);
+            }
+        }
+        if preview.restoring_custom {
+            self.preferences.remove(PRESET_RETURN_PREFERENCE);
+        }
+        self.workspaces.update_shell_context(self.active_workspace);
+        self.command_feedback = Some(if preview.restoring_custom {
+            "CUSTOM WORKSPACE RESTORED".to_owned()
+        } else {
+            format!(
+                "{} PRESET V{} APPLIED · PRESET RETURN RESTORES CUSTOM ORDER",
+                preview.label.to_ascii_uppercase(),
+                preview.version
+            )
+        });
+        self.persist_session();
+    }
+
+    fn workspace_order_strings(&self) -> Vec<String> {
+        self.workspaces
+            .workspace_order()
+            .into_iter()
+            .map(|id| id.as_str().to_owned())
+            .collect()
     }
 
     fn open_settings(&mut self) {
@@ -3451,6 +3670,86 @@ mod tests {
             .expect("saved session");
         assert_eq!(saved.active_workspace(), Some(CAPTURING.as_str()));
         assert_eq!(saved.workspace_order(), &["portfolio", "capturing"]);
+    }
+
+    #[test]
+    fn role_preset_preview_cancels_without_mutating_the_workspace() {
+        let mut app = bootstrap::demo_app();
+        let original_active = app.active_workspace();
+        let original_order = app.workspaces.workspace_order();
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "PRESET TRADER".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(app.workspace_preset_preview().is_some());
+        assert_eq!(app.active_workspace(), original_active);
+        assert_eq!(app.workspaces.workspace_order(), original_order);
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert!(app.workspace_preset_preview().is_none());
+        assert_eq!(app.active_workspace(), original_active);
+        assert_eq!(app.workspaces.workspace_order(), original_order);
+        assert!(!app.preferences.contains_key(PRESET_RETURN_PREFERENCE));
+    }
+
+    #[test]
+    fn role_preset_survives_restart_and_return_restores_custom_workspace() {
+        let repository = Arc::new(MemorySessionRepository {
+            state: Mutex::new(Some(
+                SessionState::new(
+                    Some(PORTFOLIO.as_str().to_owned()),
+                    vec![PORTFOLIO.as_str().to_owned(), OVERVIEW.as_str().to_owned()],
+                    Vec::new(),
+                    BTreeMap::new(),
+                )
+                .expect("valid custom session"),
+            )),
+        });
+        let mut app = bootstrap::demo_app().with_session_repository(repository.clone());
+        let custom_order = app.workspace_order_strings();
+        assert_eq!(app.active_workspace(), PORTFOLIO);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "PRESET TRADER".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(app.workspaces.workspace_order()[0], DESK_ID);
+        assert_eq!(app.active_workspace(), DESK_ID);
+        assert!(app.preferences.contains_key(PRESET_RETURN_PREFERENCE));
+
+        let mut restarted = bootstrap::demo_app().with_session_repository(repository.clone());
+        assert_eq!(restarted.workspaces.workspace_order()[0], DESK_ID);
+        assert_eq!(restarted.active_workspace(), DESK_ID);
+
+        restarted.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for character in "PRESET RETURN".chars() {
+            restarted.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        restarted.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(restarted
+            .workspace_preset_preview()
+            .is_some_and(|preview| preview.restoring_custom));
+        restarted.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+        assert_eq!(restarted.workspace_order_strings(), custom_order);
+        assert_eq!(restarted.active_workspace(), PORTFOLIO);
+        assert!(!restarted.preferences.contains_key(PRESET_RETURN_PREFERENCE));
+        let saved = repository
+            .state
+            .lock()
+            .expect("session lock")
+            .clone()
+            .expect("saved session");
+        assert_eq!(saved.workspace_order(), custom_order);
+        assert_eq!(saved.active_workspace(), Some(PORTFOLIO.as_str()));
+        assert!(!saved.preferences().contains_key(PRESET_RETURN_PREFERENCE));
     }
 
     #[test]

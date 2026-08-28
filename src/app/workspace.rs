@@ -578,6 +578,21 @@ impl WorkspaceRegistry {
     /// Applies a durable workspace order while preserving newly registered
     /// workspaces and ignoring stale identifiers from older installations.
     pub fn apply_workspace_order(&mut self, requested: &[String]) {
+        let order = self.project_workspace_order(requested);
+        self.entries.sort_by_key(|entry| {
+            order
+                .iter()
+                .position(|id| *id == entry.descriptor().id)
+                .unwrap_or(usize::MAX)
+        });
+    }
+
+    /// Projects a requested order onto the current registry without mutation.
+    ///
+    /// Unknown identifiers are reported by preset previews but never become
+    /// shell state. Newly registered workspaces retain their current relative
+    /// order after the requested destinations.
+    pub fn project_workspace_order(&self, requested: &[String]) -> Vec<WorkspaceId> {
         let mut order = Vec::new();
         for persisted_id in requested {
             if let Some(id) = self.entries.iter().find_map(|entry| {
@@ -589,12 +604,14 @@ impl WorkspaceRegistry {
                 }
             }
         }
-        self.entries.sort_by_key(|entry| {
-            order
-                .iter()
-                .position(|id| *id == entry.descriptor().id)
-                .unwrap_or(usize::MAX)
-        });
+        let remaining = self
+            .entries
+            .iter()
+            .map(|entry| entry.descriptor().id)
+            .filter(|id| !order.contains(id))
+            .collect::<Vec<_>>();
+        order.extend(remaining);
+        order
     }
 
     fn build_indexes(
@@ -861,6 +878,28 @@ mod tests {
             *activated.lock().expect("activation capture lock"),
             ["row:0"]
         );
+    }
+
+    #[test]
+    fn projected_order_ignores_unknowns_and_preserves_new_workspaces() {
+        let one = WorkspaceId::new("one");
+        let two = WorkspaceId::new("two");
+        let three = WorkspaceId::new("three");
+        let mut registry = WorkspaceRegistry::new(vec![
+            Box::new(Stub::new(descriptor(one, '1', &["ONE"]))),
+            Box::new(Stub::new(descriptor(two, '2', &["TWO"]))),
+            Box::new(Stub::new(descriptor(three, '3', &["THREE"]))),
+        ]);
+        let requested = vec!["two".to_owned(), "retired".to_owned(), "TWO".to_owned()];
+
+        assert_eq!(
+            registry.project_workspace_order(&requested),
+            vec![two, one, three]
+        );
+        assert_eq!(registry.workspace_order(), vec![one, two, three]);
+
+        registry.apply_workspace_order(&requested);
+        assert_eq!(registry.workspace_order(), vec![two, one, three]);
     }
 
     #[test]

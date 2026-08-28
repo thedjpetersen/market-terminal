@@ -28,7 +28,12 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "help",
         prepare: prepare_help,
-        hashes: [0x9ea45eb3cff6559d, 0xb6f3e15ed8c9910a, 0x928ae7e8e8f3c05d],
+        hashes: [0xc606e9b59e3d94f3, 0x801ada1ed7bff7d0, 0xaf23406824fdb6cb],
+    },
+    Golden {
+        name: "workspace-preset-preview",
+        prepare: prepare_workspace_preset_preview,
+        hashes: [0x4cc072226fb733a1, 0x1e2d6be4abc5b584, 0xba1d8f937e51d562],
     },
     Golden {
         name: "spreadsheet-error",
@@ -131,6 +136,10 @@ fn prepare_find(app: &mut App) {
 
 fn prepare_help(app: &mut App) {
     dispatch(app, "HELP");
+}
+
+fn prepare_workspace_preset_preview(app: &mut App) {
+    dispatch(app, "PRESET TRADER");
 }
 
 fn prepare_risk(app: &mut App) {

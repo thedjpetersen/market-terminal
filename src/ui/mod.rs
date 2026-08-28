@@ -313,6 +313,7 @@ fn uses_immersive_shell(app: &App) -> bool {
         && app.workspaces.shell_chrome(app.active_workspace()) == ShellChrome::Immersive
         && !app.help_visible()
         && !app.settings_visible()
+        && app.workspace_preset_preview().is_none()
         && !app.panel_focus()
         && app.shell_hints().is_none()
 }
@@ -347,9 +348,137 @@ pub fn render(frame: &mut Frame, app: &App) {
     if app.settings_visible() {
         render_settings(frame, layout.workspace, app);
     }
+    if app.workspace_preset_preview().is_some() {
+        render_workspace_preset_preview(frame, layout.workspace, app);
+    }
     if app.shell_hints().is_some() {
         render_shell_hints(frame, layout, app);
     }
+}
+
+fn render_workspace_preset_preview(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(preview) = app.workspace_preset_preview() else {
+        return;
+    };
+    let panel = help_panel_area(area);
+    frame.render_widget(Clear, panel);
+    let title = if preview.restoring_custom {
+        " RESTORE CUSTOM WORKSPACE "
+    } else {
+        " WORKSPACE PRESET PREVIEW "
+    };
+    let block = Block::new()
+        .borders(Borders::ALL)
+        .border_style(theme::AMBER)
+        .title(Line::from(vec![
+            Span::styled(
+                title,
+                Style::new()
+                    .bg(theme::AMBER.into())
+                    .fg(theme::BG.into())
+                    .bold(),
+            ),
+            Span::styled(
+                format!(
+                    " {} · V{} ",
+                    preview.label.to_ascii_uppercase(),
+                    preview.version
+                ),
+                theme::AMBER,
+            ),
+        ]));
+    let inner = block.inner(panel);
+    frame.render_widget(block, panel);
+    let rows = Layout::vertical([
+        Constraint::Length(4),
+        Constraint::Min(5),
+        Constraint::Length(3),
+    ])
+    .split(inner);
+    let unavailable = if preview.unavailable.is_empty() {
+        "All destinations are available.".to_owned()
+    } else {
+        format!(
+            "Unavailable destinations will be skipped: {}",
+            preview.unavailable.join(", ")
+        )
+    };
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                preview.description.clone(),
+                Style::new().fg(theme::INK.into()).bold(),
+            ),
+            Line::styled(unavailable, theme::MUTED),
+            Line::styled(
+                "Nothing changes until you confirm. Applying a role preserves one crash-safe custom return point.",
+                theme::MUTED,
+            ),
+        ])
+        .wrap(Wrap { trim: true }),
+        rows[0],
+    );
+
+    let columns =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(rows[1]);
+    let available_rows = usize::from(columns[0].height.saturating_sub(2)).max(1);
+    frame.render_widget(
+        Paragraph::new(workspace_order_preview_lines(
+            &preview.current_order,
+            available_rows,
+        ))
+        .block(components::terminal_block("NOW", "CURRENT ORDER")),
+        columns[0],
+    );
+    frame.render_widget(
+        Paragraph::new(workspace_order_preview_lines(
+            &preview.proposed_order,
+            available_rows,
+        ))
+        .block(components::terminal_block("NEXT", "PROPOSED ORDER")),
+        columns[1],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                " ENTER / Y  APPLY     ESC / N  CANCEL ",
+                Style::new()
+                    .bg(theme::CYAN.into())
+                    .fg(theme::BG.into())
+                    .bold(),
+            ),
+            Line::styled(
+                if preview.restoring_custom {
+                    "Confirmation consumes the saved return point."
+                } else {
+                    "Run PRESET RETURN to recover your original workspace order."
+                },
+                theme::MUTED,
+            ),
+        ]),
+        rows[2],
+    );
+}
+
+fn workspace_order_preview_lines(order: &[String], available_rows: usize) -> Vec<Line<'static>> {
+    let visible = order.len().min(available_rows);
+    let mut lines = order
+        .iter()
+        .take(visible)
+        .enumerate()
+        .map(|(index, workspace)| {
+            Line::from(vec![
+                Span::styled(format!("{:>2}  ", index + 1), theme::AMBER),
+                Span::styled(workspace.to_ascii_uppercase(), theme::INK),
+            ])
+        })
+        .collect::<Vec<_>>();
+    if order.len() > visible && !lines.is_empty() {
+        let remaining = order.len() - visible;
+        let last = lines.len() - 1;
+        lines[last] = Line::styled(format!("    +{remaining} MORE"), theme::MUTED);
+    }
+    lines
 }
 
 fn render_spatial_focus(frame: &mut Frame, area: Rect, app: &App) {

@@ -113,6 +113,15 @@ secret-free effective startup configuration. On the first persistent launch,
 this setup screen opens automatically once. It shows credential presence but
 never credential values, and identifies which `.env` changes require a restart.
 
+Run `PRESET TRADER`, `PRESET QUANT`, `PRESET PM`, `PRESET RISK`, or
+`PRESET OPS` to preview a versioned role-oriented workspace order. The modal
+shows the current and proposed order before anything changes; confirm with
+`Enter`/`Y` or cancel with `Esc`/`N`. The first applied role preserves the
+current active workspace and complete custom order in crash-safe session state.
+`PRESET RETURN` previews and restores that return point, including after a
+restart. Unknown or retired workspace IDs are disclosed and skipped while new
+workspaces retain their relative order.
+
 Tmux-style panel switching is also available. Press `Ctrl+B`, release it, then
 use `Left`/`Right` or `N`/`P` for the next or previous workspace. Use `1`–`9`
 and `0` to select the corresponding numbered workspace, or `?` for help.
@@ -123,8 +132,8 @@ history work directly. Press `Esc` with a non-empty command to enter optional
 Vi `NORMAL` mode: use `h`/`l`, `0`/`$`, `w`/`b`, `x`, `D`, `dd`, and
 `i`/`a`/`I`/`A`. Press `Esc` again to cancel the command.
 
-The interactive binary restores the active workspace, workspace order, and
-recent commands from crash-safe, versioned local state. Set
+The interactive binary restores the active workspace, workspace order, preset
+return point, and recent commands from crash-safe, versioned local state. Set
 `MARKET_TERMINAL_STATE_DIR` to override the platform default. Corrupt current
 state falls back to the previous valid generation and never blocks startup.
 

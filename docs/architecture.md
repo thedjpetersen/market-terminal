@@ -23,6 +23,12 @@ bootstrap ──▶ app kernel
   actions; activation is revalidated against the current feature state.
   Its generic `DeskWorkspace` composes three existing workspace instances and
   routes focus/render/input without importing their domain models.
+  Versioned role workspace presets are validated from a bounded declarative
+  seed document. The shell projects them through the live registry, previews
+  unavailable destinations before mutation, and stores one encoded custom
+  return point inside the existing session preferences. Presets therefore do
+  not import feature state, hard-code registry indices, or erase layouts when a
+  workspace is added or retired.
   It snapshots its shell state through the persistence context's narrow
   repository port.
 - `features/<name>` is a bounded context. It owns its domain types, outbound

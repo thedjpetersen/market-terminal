@@ -239,6 +239,13 @@ move to its own crate later without changing its public vocabulary.
   Portfolio domain types or repository access. Watchlist also consumes the
   foundation-owned canonical `InstrumentId` directly rather than Market Data's
   compatibility alias.
+- **In progress:** P1 saved workspace experience. Five versioned Trader, Quant,
+  PM, Risk, and Ops seeds now project through the live registry, disclose
+  missing destinations, and require an explicit modal confirmation. The first
+  applied role persists a crash-safe custom return point; `PRESET RETURN`
+  restores the exact active workspace and semantic order after restart without
+  discarding newly registered workspaces. Editable Launchpad tiles, pane/view
+  state capture, and unified discovery remain.
 - **Next:** execute the P1 Mission Control, launchpad, saved-layout, and unified
   discovery package, then the remaining Stage 2 risk, screening, and alert-rule
   families. Provider availability
@@ -318,7 +325,7 @@ continues.
 | Reference capability | Status | Market Terminal evidence | Gap required for parity |
 | --- | --- | --- | --- |
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
-| Mission Control, launchpad, ticker tape | Partial | Overview, Desk, Markets, persisted active workspace | Add configurable launch tiles, live pulse strip, priority stack, and saved role presets. |
+| Mission Control, launchpad, ticker tape | Partial | Overview, Desk, Markets, persisted active workspace, and previewable versioned role presets | Add configurable launch tiles, live pulse strip, priority stack, and editable saved layouts. |
 | Keyboard navigation and icon rail | Covered | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, Chart periods/studies/comparisons/inspection/modes/promotion/refresh, modal-safe News filters/headlines/story/calendar/reader actions, Overview periods/cards/live holdings/headlines/context controls, Alerts rows/mutations/Security/refresh controls, and Spreadsheet cells/rows/formula/tabs/workflow controls | Preserve the action and modal-trapping contracts as new controls and overlays are added. |
 | Saved views and workspace presets | Partial | Workspace order, active workspace, layout and command history persist | Persist/restore view parameters, filters, selected instrument, table columns, chart state, pane geometry, and Trader/Quant/PM/Risk/Ops presets. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
@@ -515,6 +522,15 @@ workspace recovery experience while retaining the terminal shell.
 restarts, restores the same semantic frame, switches presets, and returns without
 state loss. Mission Control remains useful with every external provider offline
 and labels each unavailable card rather than substituting fixture data.
+
+**Current P1 evidence:** the versioned seed catalog and registry projection are
+implemented. `PRESET <ROLE>` is keyboard-only, modal, cancelable, and
+non-mutating until confirmation; `PRESET RETURN` survives process restart and
+restores the pre-preset active workspace/order. Unit coverage locks catalog
+validation, unknown/deduplicated workspace degradation, cancel semantics, and a
+full apply/restart/return round trip. A three-size semantic frame locks the
+preview itself. This completes the preset-order slice, not pane/view capture or
+the Launchpad editor; those remain required for P1 exit.
 
 ### P2 — Market-data fabric, microstructure, and chart workstation
 

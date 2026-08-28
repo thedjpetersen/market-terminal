@@ -56,11 +56,11 @@
       "capability": "Launchpad tiles and workspace templates",
       "owner": "Application Shell",
       "priority": "P1",
-      "market_status": "missing",
+      "market_status": "partial",
       "upstream_maturity": "substantive",
       "reference_files": ["frontend/src/pages/Launchpad.tsx", "frontend/src/components/layout/LaunchpadWorkspace.tsx", "frontend/src/components/layout/TemplateGallery.tsx", "frontend/tests/e2e/workspace-templates.spec.ts"],
       "acceptance_tests": ["LAUNCHPAD-EDIT", "LAUNCHPAD-PRESET", "LAUNCHPAD-RESTART"],
-      "gap": "Add editable command/instrument/view tiles, keyboard reorder, safe preset preview, import/export, and crash-safe persistence for Trader, Quant, PM, Risk, and Ops seeds."
+      "gap": "Versioned Trader, Quant, PM, Risk, and Ops seeds now have safe modal preview, registry-aware degradation, crash-safe apply/restart/return, and explicit confirmation. Add editable command/instrument/view tiles, keyboard reorder, rename/remove, import/export, and saved pane contents to complete Launchpad parity."
     },
     {
       "id": "OTUI-005",

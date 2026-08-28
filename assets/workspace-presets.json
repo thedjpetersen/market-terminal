@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "presets": [
+    {
+      "id": "trader",
+      "version": 1,
+      "label": "Trader",
+      "description": "Execution-first workspace order with live monitoring, charting, news, and alerts close at hand.",
+      "workspace_order": ["desk", "watchlist", "markets", "charting", "news", "alerts", "security", "overview", "portfolio", "risk", "spreadsheet", "instrument_search", "chat", "assistant"]
+    },
+    {
+      "id": "quant",
+      "version": 1,
+      "label": "Quant",
+      "description": "Model-first workspace order for spreadsheet research, chart studies, risk, and security discovery.",
+      "workspace_order": ["spreadsheet", "charting", "risk", "instrument_search", "security", "markets", "watchlist", "portfolio", "overview", "desk", "news", "alerts", "chat", "assistant"]
+    },
+    {
+      "id": "pm",
+      "version": 1,
+      "label": "Portfolio Manager",
+      "description": "Portfolio-first workspace order for holdings, performance, risk, markets, and research.",
+      "workspace_order": ["overview", "portfolio", "risk", "markets", "news", "security", "watchlist", "charting", "spreadsheet", "desk", "instrument_search", "alerts", "chat", "assistant"]
+    },
+    {
+      "id": "risk",
+      "version": 1,
+      "label": "Risk",
+      "description": "Risk-first workspace order for exposure, portfolio diagnostics, alerts, and scenario work.",
+      "workspace_order": ["risk", "portfolio", "markets", "alerts", "spreadsheet", "charting", "overview", "security", "watchlist", "news", "desk", "instrument_search", "chat", "assistant"]
+    },
+    {
+      "id": "ops",
+      "version": 1,
+      "label": "Operations",
+      "description": "Exception-first workspace order for alerts, reconciliation, market status, and collaboration.",
+      "workspace_order": ["alerts", "portfolio", "markets", "watchlist", "news", "chat", "overview", "risk", "security", "spreadsheet", "desk", "charting", "instrument_search", "assistant"]
+    }
+  ]
+}
