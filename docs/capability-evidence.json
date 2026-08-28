@@ -29,7 +29,8 @@
           "section": "Local shell, navigation, and presentation state"
         }
       ],
-      "performance_cases": ["command_dispatch"]
+      "performance_cases": ["command_dispatch"],
+      "state_gallery": "docs/capability-gallery.json"
     },
     {
       "id": "OTUI-002",
@@ -61,7 +62,8 @@
           "section": "Local shell, navigation, and presentation state"
         }
       ],
-      "performance_cases": ["visible_action_routing"]
+      "performance_cases": ["visible_action_routing"],
+      "state_gallery": "docs/capability-gallery.json"
     },
     {
       "id": "OTUI-006",
@@ -89,7 +91,8 @@
           "section": "Local shell, navigation, and presentation state"
         }
       ],
-      "performance_cases": ["responsive_theme_render"]
+      "performance_cases": ["responsive_theme_render"],
+      "state_gallery": "docs/capability-gallery.json"
     }
   ]
 }

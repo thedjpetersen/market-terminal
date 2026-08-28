@@ -682,8 +682,13 @@ real command, Help entry, implementation file, semantic golden, deterministic
 contract test, data-source declaration, and performance case. The 50 ms p95
 gate independently measures exact command dispatch, visible-action routing, a
 full 160 × 48 themed render, and spreadsheet edits with 10,000 populated cells.
-The machine-readable mappings live in
-[`docs/capability-evidence.json`](docs/capability-evidence.json).
+CI also renders every `covered` capability in loading, populated, empty,
+delayed, stale, denied, partial, and failed states at 80 × 24, 120 × 36, and
+160 × 48. Inapplicable states must render a visible reason instead of inventing
+provider behavior. The machine-readable mappings live in
+[`docs/capability-evidence.json`](docs/capability-evidence.json), with the
+locked state matrix in
+[`docs/capability-gallery.json`](docs/capability-gallery.json).
 
 ## Experience gallery
 

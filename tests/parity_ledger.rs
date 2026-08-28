@@ -286,6 +286,9 @@ fn validate_capability_evidence(ledger: &Value, evidence: &Value) -> Result<(), 
                 return Err(format!("{id} performance case {case:?} does not resolve"));
             }
         }
+        let state_gallery = required_string(entry, "state_gallery", id)?;
+        read_repository_file(state_gallery)
+            .map_err(|error| format!("{id} state-gallery evidence: {error}"))?;
     }
 
     if evidenced != covered {

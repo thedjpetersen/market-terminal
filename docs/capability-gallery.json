@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "required_status": "covered",
+  "states": ["loading", "populated", "empty", "delayed", "stale", "denied", "partial", "failed"],
+  "sizes": ["80x24", "120x36", "160x48"],
+  "frames": [
+    {
+      "id": "otui-001-loading",
+      "capability_id": "OTUI-001",
+      "state": "loading",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "Exact command discovery is local and synchronous; background AI inference is a separate adapter state.",
+      "semantic_hash": "5124cd26341d9b3b"
+    },
+    {
+      "id": "otui-001-populated",
+      "capability_id": "OTUI-001",
+      "state": "populated",
+      "disposition": "rendered",
+      "scenario": "help-directory",
+      "reason": "The live Help catalog renders every exact shell and workspace command.",
+      "semantic_hash": "68d2429f8ba9b9e6"
+    },
+    {
+      "id": "otui-001-empty",
+      "capability_id": "OTUI-001",
+      "state": "empty",
+      "disposition": "rendered",
+      "scenario": "empty-command",
+      "reason": "An empty command editor remains usable and exposes its editing contract.",
+      "semantic_hash": "a700749609f31a3e"
+    },
+    {
+      "id": "otui-001-delayed",
+      "capability_id": "OTUI-001",
+      "state": "delayed",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "Exact local command resolution has no freshness clock or delayed-data claim.",
+      "semantic_hash": "4ddfa026b5eea250"
+    },
+    {
+      "id": "otui-001-stale",
+      "capability_id": "OTUI-001",
+      "state": "stale",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "The Help catalog is rebuilt from the current registry and cannot be served stale.",
+      "semantic_hash": "a1e16dc142f51c14"
+    },
+    {
+      "id": "otui-001-denied",
+      "capability_id": "OTUI-001",
+      "state": "denied",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "Local command and Help discovery require no account, key, role, or entitlement.",
+      "semantic_hash": "5e7e63bd33157288"
+    },
+    {
+      "id": "otui-001-partial",
+      "capability_id": "OTUI-001",
+      "state": "partial",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "Registry construction rejects partial command catalogs instead of mounting them.",
+      "semantic_hash": "6755e42197ad91cc"
+    },
+    {
+      "id": "otui-001-failed",
+      "capability_id": "OTUI-001",
+      "state": "failed",
+      "disposition": "rendered",
+      "scenario": "malformed-command",
+      "reason": "Malformed quoted input fails closed and remains in the command surface for repair.",
+      "semantic_hash": "61e4504c95986e40"
+    },
+    {
+      "id": "otui-002-loading",
+      "capability_id": "OTUI-002",
+      "state": "loading",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "Shell focus and follow labels are derived synchronously from current rectangles.",
+      "semantic_hash": "d6f56bd0bf15c3e7"
+    },
+    {
+      "id": "otui-002-populated",
+      "capability_id": "OTUI-002",
+      "state": "populated",
+      "disposition": "rendered",
+      "scenario": "follow-hints",
+      "reason": "The populated Overview viewport exposes shell and feature-owned follow targets.",
+      "semantic_hash": "9791dec3ea27da3c"
+    },
+    {
+      "id": "otui-002-empty",
+      "capability_id": "OTUI-002",
+      "state": "empty",
+      "disposition": "rendered",
+      "scenario": "empty-panel-focus",
+      "reason": "A workspace without leaf actions falls back to deterministic workspace-rail focus.",
+      "semantic_hash": "91c2fcca41fef8ac"
+    },
+    {
+      "id": "otui-002-delayed",
+      "capability_id": "OTUI-002",
+      "state": "delayed",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "Focus geometry has no delayed-data classification and is recomputed after resize.",
+      "semantic_hash": "447b1cd004fe64d8"
+    },
+    {
+      "id": "otui-002-stale",
+      "capability_id": "OTUI-002",
+      "state": "stale",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "Stale action identities are rejected on activation rather than rendered as valid targets.",
+      "semantic_hash": "f0e462858b16d33f"
+    },
+    {
+      "id": "otui-002-denied",
+      "capability_id": "OTUI-002",
+      "state": "denied",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "Local keyboard and pointer routing require no external permission or entitlement.",
+      "semantic_hash": "501272bcfaaa628c"
+    },
+    {
+      "id": "otui-002-partial",
+      "capability_id": "OTUI-002",
+      "state": "partial",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "Invalid and off-screen actions are suppressed; the shell never advertises a partial target.",
+      "semantic_hash": "474bc6703f2b3ab8"
+    },
+    {
+      "id": "otui-002-failed",
+      "capability_id": "OTUI-002",
+      "state": "failed",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "Routing failure is an activation result, not a persistent display state; focus is revalidated immediately.",
+      "semantic_hash": "273ce85fd5329233"
+    },
+    {
+      "id": "otui-006-loading",
+      "capability_id": "OTUI-006",
+      "state": "loading",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "Built-in themes and responsive layout are local constants with no loading phase.",
+      "semantic_hash": "bf957d5a1ebb2c41"
+    },
+    {
+      "id": "otui-006-populated",
+      "capability_id": "OTUI-006",
+      "state": "populated",
+      "disposition": "rendered",
+      "scenario": "nord-theme",
+      "reason": "A named theme is applied to a populated responsive Overview frame.",
+      "semantic_hash": "88db71b92bbe5ac9"
+    },
+    {
+      "id": "otui-006-empty",
+      "capability_id": "OTUI-006",
+      "state": "empty",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "The built-in preset registry is non-empty by construction and rejects an empty catalog.",
+      "semantic_hash": "b7091238ee91531f"
+    },
+    {
+      "id": "otui-006-delayed",
+      "capability_id": "OTUI-006",
+      "state": "delayed",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "Theme resolution and terminal layout have no provider freshness semantics.",
+      "semantic_hash": "ea6d824f70e3d3ac"
+    },
+    {
+      "id": "otui-006-stale",
+      "capability_id": "OTUI-006",
+      "state": "stale",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "The active theme resolves directly from current session state on every frame.",
+      "semantic_hash": "1d2d81965322bf76"
+    },
+    {
+      "id": "otui-006-denied",
+      "capability_id": "OTUI-006",
+      "state": "denied",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "Built-in presentation settings require no role, network, license, or entitlement.",
+      "semantic_hash": "356571358412cb62"
+    },
+    {
+      "id": "otui-006-partial",
+      "capability_id": "OTUI-006",
+      "state": "partial",
+      "disposition": "not_applicable",
+      "scenario": "baseline",
+      "reason": "A preset defines every semantic color slot or is rejected at compile time.",
+      "semantic_hash": "c63cb96de0cb4df7"
+    },
+    {
+      "id": "otui-006-failed",
+      "capability_id": "OTUI-006",
+      "state": "failed",
+      "disposition": "rendered",
+      "scenario": "invalid-theme",
+      "reason": "An unknown theme name is rejected while the previous valid palette remains active.",
+      "semantic_hash": "dc32f2280ae19e8b"
+    }
+  ]
+}

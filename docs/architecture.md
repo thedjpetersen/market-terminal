@@ -222,6 +222,26 @@ before mutation, so an acknowledgement that became unavailable is rejected.
 Security promotion emits an application intent only after re-reading the selected
 rule, preserving bounded-context ownership while preventing stale-symbol routing.
 
+## Capability completion evidence
+
+`docs/openterminalui-parity-ledger.json` is the source of capability status.
+Marking an `OTUI-*` item `covered` creates two fail-closed obligations. First,
+`docs/capability-evidence.json` must resolve the capability to the live Help
+catalog plus real implementation, semantic-golden, contract-test, data-source,
+and performance evidence. Second, `docs/capability-gallery.json` must provide
+exactly one loading, populated, empty, delayed, stale, denied, partial, and
+failed frame. `tests/capability_gallery.rs` renders every frame at 80 × 24,
+120 × 36, and 160 × 48 and locks the symbols, colors, and modifiers into a
+reviewed aggregate hash.
+
+The gallery distinguishes `rendered` from `not_applicable`. A synchronous local
+capability must not manufacture provider loading, delay, staleness, permission,
+or partial-data behavior merely to fill the matrix. Instead it renders a
+high-contrast, non-color-only `NOT APPLICABLE` frame with a substantive reason.
+Every covered capability still needs a real populated reference. Adding a new
+covered ledger item or removing any state therefore fails CI until its evidence
+and all three responsive frames are reviewed together.
+
 ## Cross-feature events
 
 The application kernel owns an in-process, typed event bus. Subscriptions are

@@ -224,6 +224,12 @@ move to its own crate later without changing its public vocabulary.
   semantic frames, named deterministic contract tests, data-source-register
   sections, and independently measured performance cases. A regression test
   proves that deleting any required category rejects the completion claim.
+- **Complete:** the P0 eight-state capability gallery. Every ledger item marked
+  `covered` has one loading, populated, empty, delayed, stale, denied, partial,
+  and failed case rendered at 80 x 24, 120 x 36, and 160 x 48. Symbols, colors,
+  and modifiers are hash-locked. Synchronous local capabilities render explicit
+  `NOT APPLICABLE` states with reasons instead of fabricated provider behavior;
+  every capability still requires a real populated reference.
 - **Complete:** executable modular-monolith dependency enforcement. CI scans
   production feature source and rejects direct infrastructure imports,
   cross-bounded-context imports, domain/port dependencies on shell or rendering,
@@ -233,9 +239,9 @@ move to its own crate later without changing its public vocabulary.
   Portfolio domain types or repository access. Watchlist also consumes the
   foundation-owned canonical `InstrumentId` directly rather than Market Data's
   compatibility alias.
-- **Next:** execute the OpenTerminalUI parity track below, finishing the P0
-  eight-state capability gallery, then the remaining
-  Stage 2 risk, screening, and alert-rule families. Provider availability
+- **Next:** execute the P1 Mission Control, launchpad, saved-layout, and unified
+  discovery package, then the remaining Stage 2 risk, screening, and alert-rule
+  families. Provider availability
   extends the deployment surface; deterministic fixtures remain the acceptance
   baseline and opt-in live contracts verify real provider behavior.
 
@@ -397,8 +403,11 @@ feature list from becoming a collection of menu placeholders.
 - Implement spatial arrow routing from registered rectangles, including split
   panes and nested controls. Define deterministic tie-breaking, wrapping policy,
   disabled/hidden actions, modal trapping, Escape hierarchy, and focus restoration.
-- Add a parity gallery that renders every capability's loading, populated, empty,
-  delayed, stale, denied, partial, and failed states at all three supported sizes.
+- Add a parity gallery that renders every capability eligible to be marked
+  `covered` in loading, populated, empty, delayed, stale, denied, partial, and
+  failed states at all three supported sizes. States that cannot exist for a
+  synchronous local capability must render an explicit reason rather than a
+  fabricated provider condition.
 - Add CI checks that a capability cannot be marked complete without its command,
   Help entry, semantic goldens, deterministic contract test, data-source register
   entry, and performance case.
@@ -413,7 +422,7 @@ Security, Portfolio, Chart, News, Alerts, and Spreadsheet frames; spatial focus
 has geometry/property tests; the ledger is pinned to an exact upstream commit and
 CI rejects incomplete evidence links.
 
-**Status: in progress.** The checked-in source ledger now covers 40 capabilities
+**Status: complete.** The checked-in source ledger now covers 40 capabilities
 and is pinned, uniquely identified, source-linked, maturity-qualified, owned,
 prioritized, and validated by `tests/parity_ledger.rs`. The bounded feature-action
 contract now filters invalid, disabled, duplicate, off-screen, and excess actions,
@@ -427,9 +436,8 @@ visible tabs, security-capable rows, and reload as the leaf reference. Desk now
 supplies visible split-pane headers and safely namespaced nested child actions,
 with responsive hidden-pane exclusion. Monitor now supplies its visible rows and
 discrete footer controls from the same geometry used by rendering and mouse input,
-including real nested routing inside Desk. Remaining gallery states and
-enforcement that completed capabilities link real implementation
-evidence remain. Security now contributes its responsive tabs, live chart,
+including real nested routing inside Desk. Security now contributes its responsive
+tabs, live chart,
 Form 4 and regulatory filing rows, peer links, and retry/refresh states from one
 shared geometry model, with stale view/symbol/accession validation and a
 shell-level follow-routing test. Chart now supplies direct period destinations
@@ -467,8 +475,13 @@ item marked `covered`; `tests/parity_ledger.rs` fails closed unless each item
 resolves through the live Help catalog and checked-in implementation, semantic
 golden, deterministic contract, data-source, and performance evidence. The
 performance gate now budgets command dispatch, visible-action routing, a full
-responsive themed frame, and the 10,000-cell edit path independently. P0 remains
-open only for the full eight-state capability gallery.
+responsive themed frame, and the 10,000-cell edit path independently. The
+capability gallery now derives the exact set of `covered` IDs from the ledger,
+requires all eight state names exactly once, renders each at all three supported
+sizes, and locks symbols, colors, and modifiers. Real states use the live app;
+inapplicable states render an explicit reason. Promoting a capability to
+`covered`, removing a frame, inventing a ninth state, or changing a frame without
+reviewing its hash now fails CI. These checks close the P0 evidence harness.
 `tests/architecture_boundaries.rs` now enforces
 dependency direction on every CI run. The first remediation moved Assistant's portfolio
 context behind an Assistant-owned port and composition-root translator, and
