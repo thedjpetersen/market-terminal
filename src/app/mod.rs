@@ -4149,6 +4149,50 @@ mod tests {
     }
 
     #[test]
+    fn typed_security_research_view_survives_restart_exactly() {
+        let session = Arc::new(MemorySessionRepository::default());
+        let documents = Arc::new(MemoryFeatureRepository::default());
+        let mut app = bootstrap::demo_app()
+            .with_saved_view_repository(documents.clone())
+            .with_session_repository(session.clone());
+        app.settings_visible = false;
+        app.settings_first_run = false;
+
+        app.command = "SEC MSFT US --view=filings".to_owned();
+        app.execute_command();
+        app.command = "VIEW SAVE Microsoft Filings".to_owned();
+        app.execute_command();
+
+        let expected = app.saved_views.views[0].workspace_state.clone();
+        assert_eq!(expected.workspace, SECURITY.as_str());
+        assert_eq!(
+            expected.fields.get("symbol"),
+            Some(&ViewValue::Text("MSFT US".to_owned()))
+        );
+        assert_eq!(
+            expected.fields.get("research_view"),
+            Some(&ViewValue::Text("filings".to_owned()))
+        );
+
+        let mut restarted = bootstrap::demo_app()
+            .with_saved_view_repository(documents)
+            .with_session_repository(session);
+        restarted.settings_visible = false;
+        restarted.settings_first_run = false;
+        restarted.command = "VIEW RESTORE Microsoft Filings".to_owned();
+        restarted.execute_command();
+
+        assert_eq!(restarted.active_workspace(), SECURITY);
+        assert_eq!(
+            restarted.workspaces.capture_view(SECURITY).unwrap(),
+            expected
+        );
+        assert!(restarted
+            .command_feedback()
+            .is_some_and(|message| message.contains("VIEW RESTORED") && message.contains("EXACT")));
+    }
+
+    #[test]
     fn feature_intent_can_restore_a_saved_layout_through_the_shell_router() {
         let documents = Arc::new(MemoryFeatureRepository::default());
         let mut app = bootstrap::demo_app().with_saved_view_repository(documents);

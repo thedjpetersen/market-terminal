@@ -31,7 +31,10 @@ Alert documents are sampled at startup so rendering performs no filesystem I/O.
   fields. Desk fields include bounded Monitor-width and market-row-height
   percentages plus the focused pane and nested child envelopes. Chart fields
   can include canonical instrument identity, periods, studies, comparisons,
-  cursor/viewport positions, and display modes.
+  cursor/viewport positions, and display modes. Security fields include its
+  provider-neutral instrument ID, terminal symbol, stable research-tab key, and
+  optional Form 4 accession; they exclude SEC page content, filing URLs, prices,
+  fundamentals, and publisher responses.
   Spreadsheet view fields include the local workbook ID, worksheet name and
   ordinal fallback, selected cell, and viewport origin; cell content remains in
   the separately versioned workbook document. Saved views do not persist

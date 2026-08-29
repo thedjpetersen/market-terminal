@@ -160,15 +160,19 @@ plus the active workspace; Desk views additionally retain the focused pane,
 bounded column/row percentages, and nested Monitor, Chart, and News state.
 Legacy Desk views recover the original 45/55 geometry; malformed geometry
 degrades explicitly without discarding valid child state. Chart state includes
-canonical instrument identity, period, normalization, comparisons, studies, inspection cursor,
-zoom/pan window, and display modes. Spreadsheet views retain the durable
+canonical instrument identity, period, normalization, comparisons, studies,
+inspection cursor, zoom/pan window, and display modes. Security views retain
+the provider-neutral instrument ID, terminal symbol, active research tab, and
+stable selected Form 4 accession. The selection follows the accession when a
+refresh reorders rows; a missing filing falls back visibly instead of opening a
+different document. Spreadsheet views retain the durable
 workbook identity, stable worksheet name with ordinal fallback, selected cell,
 and row/column viewport. Workbook cells, clipboard contents, and undo history
 remain in their owning document/session boundaries rather than being copied into
 a layout. Restores report `EXACT` only when every applicable field was accepted.
-A retired workspace, missing workbook, renamed worksheet, malformed instrument,
-unsupported field, or future capability produces an explicit `DEGRADED` result
-while the remaining valid layout is recovered.
+A retired workspace, missing workbook, renamed worksheet, malformed instrument
+or filing identity, unsupported field, or future capability produces an explicit
+`DEGRADED` result while the remaining valid layout is recovered.
 
 Run `LAUNCH` (or press `L`) for the persistent Launchpad. Arrow keys or HJKL
 select tiles, `Enter` opens the selected destination, `<`/`>` reorders it, and `X`

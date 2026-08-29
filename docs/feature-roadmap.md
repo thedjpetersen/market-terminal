@@ -260,8 +260,9 @@ move to its own crate later without changing its public vocabulary.
   typed nested Desk/Chart state across restart with migration and explicit
   degradation. Launchpad now has typed objects plus bounded atomic import/export,
   Spreadsheet has typed workbook/sheet/viewport recovery, and Desk split
-  geometry is configurable and restart-safe. Remaining workspace capture and
-  unified discovery remain.
+  geometry is configurable and restart-safe. Security now restores canonical
+  instrument, research tab, and stable Form 4 selection. Remaining table/filter
+  workspace capture and unified discovery remain.
 - **Next:** extend typed view capture through the remaining workspaces, then
   execute the P1 unified-discovery package before the remaining Stage 2 risk,
   screening, and alert-rule families. Provider availability
@@ -343,7 +344,7 @@ continues.
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
 | Mission Control, launchpad, ticker tape | Partial | Live pulse, imported portfolio, provider events, source health, saved work, inspectable priority ranking, persistent editable typed Launchpad with portable import/export, typed Desk/Chart/Spreadsheet saved views, and versioned role presets | Add recoverable state for the remaining workspaces and a denser configurable ticker/pulse surface. |
 | Keyboard navigation and icon rail | Covered | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, Chart periods/studies/comparisons/inspection/modes/promotion/refresh, modal-safe News filters/headlines/story/calendar/reader actions, Overview periods/cards/live holdings/headlines/context controls, Alerts rows/mutations/Security/refresh controls, and Spreadsheet cells/rows/formula/tabs/workflow controls | Preserve the action and modal-trapping contracts as new controls and overlays are added. |
-| Saved views and workspace presets | Partial | Workspace order, active workspace, role presets, schema-v2 nested Desk/Chart state with bounded split geometry, and workbook/sheet/cell/viewport Spreadsheet state persist with migration and degraded recovery | Extend typed capture to research tabs, filters, sort, columns, and remaining tables. |
+| Saved views and workspace presets | Partial | Workspace order, active workspace, role presets, schema-v2 nested Desk/Chart state with bounded split geometry, Security instrument/tab/Form 4 selection, and workbook/sheet/cell/viewport Spreadsheet state persist with migration and degraded recovery | Extend typed capture to News/Monitor/Portfolio/Alerts filters, sort, columns, selections, and scroll. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
 | Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
 | Snapshot/streaming data and provider fallback | Partial | Yahoo, Alpha Vantage, Alpaca, Finnhub, bounded workers, coalescing, LKG cache, replay | Add capability-aware provider waterfall, durable bar cache, session calendars, health routing, and cross-provider provenance. |
@@ -590,8 +591,19 @@ command never partially applies. Unit evidence covers commands, clamping,
 pointer/action geometry, legacy and malformed restoration; the keyboard-only
 restart test now locks focus, nested Chart state, and exact split geometry. A
 three-size semantic golden plus a native full-color capture lock the responsive
-surface. P1 exit still requires capture adoption for the remaining research and
-table workspaces and unified discovery.
+surface. Security Research now persists its provider-neutral instrument ID,
+terminal symbol, stable research-tab key, and optional Form 4 accession without
+copying provider records or document URLs into shell storage. Form 4 selection
+is rematched by accession after asynchronous refresh, so provider reordering
+cannot silently select a different filing; a missing accession falls back to the
+first visible row with an explicit source-status disclosure. Malformed identity,
+retired tab, unsafe accession, and unknown future fields degrade independently.
+Unit evidence locks reordered and missing filing behavior, and an application
+restart test restores an exact MSFT Filings view. A three-size semantic golden
+locks the Filings surface at 80×24, 120×36, and 160×48. P1 exit still requires
+capture adoption for News filters/story selection, Monitor sort/columns/row,
+Portfolio view/row, Alerts rule selection, and other meaningful table scroll
+positions, followed by unified discovery.
 
 ### P2 — Market-data fabric, microstructure, and chart workstation
 

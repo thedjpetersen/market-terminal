@@ -14,7 +14,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor},
+    app::{
+        AppIntent, CommandInvocation, ViewRestoreReport, ViewValue, Workspace, WorkspaceAction,
+        WorkspaceDescriptor, WorkspaceViewState,
+    },
     ui::{
         components::{render_pairs, render_table, styled_row, terminal_block},
         is_primary_click, table_row_at,
@@ -115,8 +118,10 @@ fn research_row_area(area: Rect, index: usize) -> Option<Rect> {
 pub struct SecurityWorkspace {
     query: Arc<dyn SecurityQuery>,
     symbol: String,
+    instrument_id: String,
     research_view: ResearchView,
     selected_insider: usize,
+    selected_insider_accession: Option<String>,
     document_opener: Option<Arc<dyn SecurityDocumentOpener>>,
     document_status: String,
     pending_intents: Vec<AppIntent>,
@@ -150,6 +155,9 @@ impl SecurityWorkspace {
         symbol: String,
         document_opener: Option<Arc<dyn SecurityDocumentOpener>>,
     ) -> Self {
+        let identity = super::SecurityIdentity::from_terminal_symbol(&symbol);
+        let instrument_id = identity.instrument_id.to_string();
+        let symbol = identity.terminal_symbol;
         let (refresh_sender, worker_receiver) = sync_channel::<SecurityRefresh>(1);
         let (worker_sender, refresh_receiver) = sync_channel::<SecurityRefreshResult>(1);
         let worker_query = query.clone();
@@ -176,8 +184,10 @@ impl SecurityWorkspace {
         let mut workspace = Self {
             query,
             symbol,
+            instrument_id,
             research_view: ResearchView::Financials,
             selected_insider: 0,
+            selected_insider_accession: None,
             document_opener,
             document_status: "O/ENTER OPENS SELECTED SEC FILING".to_owned(),
             pending_intents: Vec::new(),
@@ -211,12 +221,45 @@ impl SecurityWorkspace {
             .map_or(0, |page| page.research.insider_transactions.len());
         if count == 0 {
             self.selected_insider = 0;
+            self.selected_insider_accession = None;
             return;
         }
         self.selected_insider = self
             .selected_insider
             .saturating_add_signed(delta)
             .min(count - 1);
+        self.remember_selected_insider();
+    }
+
+    fn remember_selected_insider(&mut self) {
+        self.selected_insider_accession = self.page.as_ref().and_then(|page| {
+            page.research
+                .insider_transactions
+                .get(self.selected_insider)
+                .map(|transaction| transaction.accession.clone())
+        });
+    }
+
+    fn resolve_selected_insider(&mut self, page: &SecurityPage) {
+        let requested = self.selected_insider_accession.as_deref();
+        let resolved = requested.and_then(|accession| {
+            page.research
+                .insider_transactions
+                .iter()
+                .position(|transaction| transaction.accession == accession)
+        });
+        self.selected_insider = resolved
+            .unwrap_or(0)
+            .min(page.research.insider_transactions.len().saturating_sub(1));
+        if requested.is_some() && resolved.is_none() {
+            self.document_status =
+                "SAVED FORM 4 SELECTION UNAVAILABLE · USING FIRST VISIBLE ROW".to_owned();
+        }
+        self.selected_insider_accession = page
+            .research
+            .insider_transactions
+            .get(self.selected_insider)
+            .map(|transaction| transaction.accession.clone());
     }
 
     fn open_selected_insider_filing(&mut self) {
@@ -268,6 +311,7 @@ impl SecurityWorkspace {
             return false;
         };
         self.selected_insider = index;
+        self.remember_selected_insider();
         let Some(url) = url else {
             self.document_status = "SELECTED FORM 4 HAS NO PUBLISHER LINK".to_owned();
             return true;
@@ -359,9 +403,8 @@ impl SecurityWorkspace {
             }
             match refresh.result {
                 Ok(page) => {
-                    self.selected_insider = self
-                        .selected_insider
-                        .min(page.research.insider_transactions.len().saturating_sub(1));
+                    self.instrument_id = page.research.identity.instrument_id.to_string();
+                    self.resolve_selected_insider(&page);
                     self.page = Some(page);
                     self.error = None;
                 }
@@ -428,9 +471,15 @@ impl Workspace for SecurityWorkspace {
             subject.pop();
         }
         if !subject.is_empty() {
-            self.symbol = subject.join(" ");
+            self.symbol =
+                super::SecurityIdentity::from_terminal_symbol(&subject.join(" ")).terminal_symbol;
         }
         if self.symbol != previous_symbol {
+            self.instrument_id = super::SecurityIdentity::from_terminal_symbol(&self.symbol)
+                .instrument_id
+                .to_string();
+            self.selected_insider = 0;
+            self.selected_insider_accession = None;
             self.queue_refresh();
         }
         true
@@ -488,6 +537,7 @@ impl Workspace for SecurityWorkspace {
                     )
                 }) {
                     self.selected_insider = index;
+                    self.remember_selected_insider();
                 }
                 return true;
             }
@@ -512,6 +562,7 @@ impl Workspace for SecurityWorkspace {
                     .map_or(0, |page| page.research.insider_transactions.len()),
             ) {
                 self.selected_insider = index;
+                self.remember_selected_insider();
                 return true;
             }
         }
@@ -863,6 +914,145 @@ impl Workspace for SecurityWorkspace {
         ];
         render_pairs(frame, areas.sources, "SRC", "SOURCE STATUS", &source_status);
     }
+
+    fn capture_view(&self) -> WorkspaceViewState {
+        let mut state = WorkspaceViewState::new(ID.as_str())
+            .with_field("instrument_id", ViewValue::Text(self.instrument_id.clone()))
+            .with_field("symbol", ViewValue::Text(self.symbol.clone()))
+            .with_field(
+                "research_view",
+                ViewValue::Text(research_action_key(self.research_view).to_owned()),
+            );
+        if let Some(accession) = self.selected_insider_accession.as_ref().or_else(|| {
+            self.page.as_ref().and_then(|page| {
+                page.research
+                    .insider_transactions
+                    .get(self.selected_insider)
+                    .map(|transaction| &transaction.accession)
+            })
+        }) {
+            state = state.with_field(
+                "selected_insider_accession",
+                ViewValue::Text(accession.clone()),
+            );
+        }
+        state
+    }
+
+    fn restore_view(&mut self, state: &WorkspaceViewState) -> ViewRestoreReport {
+        if !state.workspace.eq_ignore_ascii_case(ID.as_str()) {
+            return ViewRestoreReport::warning(format!(
+                "saved state belongs to {}, not security",
+                state.workspace
+            ));
+        }
+        let mut report = ViewRestoreReport::default();
+        let mut identity_changed = false;
+        let instrument_id = state.fields.get("instrument_id");
+        let symbol = state.fields.get("symbol");
+        if instrument_id.is_some() || symbol.is_some() {
+            match (
+                instrument_id.and_then(ViewValue::as_text),
+                symbol.and_then(ViewValue::as_text),
+            ) {
+                (Some(instrument_id), Some(symbol))
+                    if valid_security_identity(instrument_id, symbol) =>
+                {
+                    identity_changed = self.symbol != symbol || self.instrument_id != instrument_id;
+                    self.symbol = symbol.to_owned();
+                    self.instrument_id = instrument_id.to_owned();
+                    if identity_changed {
+                        self.selected_insider = 0;
+                        self.selected_insider_accession = None;
+                        self.queue_refresh();
+                    }
+                    report.restored_fields += 2;
+                }
+                _ => {
+                    report.skipped_fields +=
+                        usize::from(instrument_id.is_some()) + usize::from(symbol.is_some());
+                    report
+                        .warnings
+                        .push("security instrument identity is incomplete or invalid".to_owned());
+                }
+            }
+        }
+        if let Some(value) = state.fields.get("research_view") {
+            match value.as_text().and_then(research_view_from_saved_key) {
+                Some(view) => {
+                    self.research_view = view;
+                    report.restored_fields += 1;
+                }
+                None => {
+                    report.skipped_fields += 1;
+                    report
+                        .warnings
+                        .push("security research view is unavailable".to_owned());
+                }
+            }
+        }
+        if let Some(value) = state.fields.get("selected_insider_accession") {
+            match value.as_text().filter(|value| valid_accession(value)) {
+                Some(accession) => {
+                    self.selected_insider_accession = Some(accession.to_owned());
+                    if !identity_changed {
+                        if let Some(page) = self.page.take() {
+                            self.resolve_selected_insider(&page);
+                            self.page = Some(page);
+                        }
+                    }
+                    report.restored_fields += 1;
+                }
+                None => {
+                    report.skipped_fields += 1;
+                    report
+                        .warnings
+                        .push("security Form 4 selection is invalid".to_owned());
+                }
+            }
+        }
+
+        const KNOWN_FIELDS: [&str; 4] = [
+            "instrument_id",
+            "symbol",
+            "research_view",
+            "selected_insider_accession",
+        ];
+        let unknown = state
+            .fields
+            .keys()
+            .filter(|field| !KNOWN_FIELDS.contains(&field.as_str()))
+            .count();
+        if unknown > 0 {
+            report.skipped_fields += unknown;
+            report
+                .warnings
+                .push(format!("ignored {unknown} future security field(s)"));
+        }
+        report
+    }
+}
+
+fn research_view_from_saved_key(value: &str) -> Option<ResearchView> {
+    ResearchView::ALL
+        .into_iter()
+        .find(|view| research_action_key(*view) == value)
+}
+
+fn valid_security_identity(instrument_id: &str, symbol: &str) -> bool {
+    if instrument_id.trim().is_empty() || symbol.trim().is_empty() {
+        return false;
+    }
+    let normalized = super::SecurityIdentity::from_terminal_symbol(symbol);
+    normalized.terminal_symbol == symbol && symbol.split_whitespace().count() == 2
+}
+
+fn valid_accession(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 fn availability(count: usize, unavailable: &'static str) -> String {
@@ -1272,6 +1462,127 @@ mod tests {
     }
 
     #[test]
+    fn typed_view_restores_instrument_tab_and_stable_form4_selection() {
+        let mut source = SecurityWorkspace::new(Arc::new(StubQuery));
+        let mut source_page = stub_page("AAPL US");
+        source_page.research.identity = SecurityIdentity::from_sec_cik(320_193, "AAPL");
+        source.instrument_id = source_page.research.identity.instrument_id.to_string();
+        source_page.research.insider_transactions = vec![
+            insider_transaction("FORM4-OLDER"),
+            insider_transaction("FORM4-SELECTED"),
+        ];
+        source.page = Some(source_page);
+        source.research_view = ResearchView::Ownership;
+        source.selected_insider = 1;
+        source.remember_selected_insider();
+        let state = source.capture_view();
+
+        assert_eq!(
+            state.fields.get("instrument_id"),
+            Some(&ViewValue::Text("sec:cik:0000320193".to_owned()))
+        );
+        assert_eq!(
+            state.fields.get("research_view"),
+            Some(&ViewValue::Text("ownership".to_owned()))
+        );
+        assert_eq!(
+            state.fields.get("selected_insider_accession"),
+            Some(&ViewValue::Text("FORM4-SELECTED".to_owned()))
+        );
+
+        let mut restored = SecurityWorkspace::new(Arc::new(StubQuery));
+        let mut reordered = stub_page("AAPL US");
+        reordered.research.identity = SecurityIdentity::from_sec_cik(320_193, "AAPL");
+        reordered.research.insider_transactions = vec![
+            insider_transaction("FORM4-SELECTED"),
+            insider_transaction("FORM4-OLDER"),
+        ];
+        restored.instrument_id = reordered.research.identity.instrument_id.to_string();
+        restored.page = Some(reordered);
+        let report = restored.restore_view(&state);
+
+        assert_eq!(report.restored_fields, 4);
+        assert_eq!(report.skipped_fields, 0);
+        assert_eq!(restored.symbol, "AAPL US");
+        assert_eq!(restored.research_view, ResearchView::Ownership);
+        assert_eq!(restored.selected_insider, 0);
+        assert_eq!(
+            restored.selected_insider_accession.as_deref(),
+            Some("FORM4-SELECTED")
+        );
+        assert_eq!(restored.capture_view(), state);
+
+        let mut transitioning = SecurityWorkspace::new(Arc::new(StubQuery));
+        let mut stale_page = stub_page("AAPL US");
+        stale_page.research.insider_transactions = vec![insider_transaction("FORM4-AAPL")];
+        transitioning.page = Some(stale_page);
+        let next_instrument = WorkspaceViewState::new(ID.as_str())
+            .with_field(
+                "instrument_id",
+                ViewValue::Text("terminal:msft-us".to_owned()),
+            )
+            .with_field("symbol", ViewValue::Text("MSFT US".to_owned()))
+            .with_field(
+                "selected_insider_accession",
+                ViewValue::Text("FORM4-MSFT".to_owned()),
+            );
+        transitioning.restore_view(&next_instrument);
+        assert_eq!(
+            transitioning.selected_insider_accession.as_deref(),
+            Some("FORM4-MSFT")
+        );
+
+        let mut refreshed_page = stub_page("MSFT US");
+        refreshed_page.research.insider_transactions = vec![insider_transaction("FORM4-MSFT")];
+        transitioning.resolve_selected_insider(&refreshed_page);
+        assert_eq!(transitioning.selected_insider, 0);
+        assert_eq!(
+            transitioning.selected_insider_accession.as_deref(),
+            Some("FORM4-MSFT")
+        );
+    }
+
+    #[test]
+    fn typed_view_degrades_invalid_future_and_missing_form4_state() {
+        let mut workspace = SecurityWorkspace::new(Arc::new(StubQuery));
+        let mut page = stub_page("AAPL US");
+        page.research.insider_transactions = vec![insider_transaction("FORM4-CURRENT")];
+        workspace.page = Some(page);
+        let invalid = WorkspaceViewState::new(ID.as_str())
+            .with_field("instrument_id", ViewValue::Text(String::new()))
+            .with_field("symbol", ViewValue::Text("aapl".to_owned()))
+            .with_field("research_view", ViewValue::Text("future".to_owned()))
+            .with_field(
+                "selected_insider_accession",
+                ViewValue::Text("../../unsafe".to_owned()),
+            )
+            .with_field("future_field", ViewValue::Boolean(true));
+        let report = workspace.restore_view(&invalid);
+
+        assert_eq!(report.restored_fields, 0);
+        assert_eq!(report.skipped_fields, 5);
+        assert_eq!(report.warnings.len(), 4);
+        assert_eq!(workspace.symbol, "AAPL US");
+        assert_eq!(workspace.research_view, ResearchView::Financials);
+
+        let missing = WorkspaceViewState::new(ID.as_str()).with_field(
+            "selected_insider_accession",
+            ViewValue::Text("FORM4-RETIRED".to_owned()),
+        );
+        let report = workspace.restore_view(&missing);
+        assert_eq!(report.restored_fields, 1);
+        assert_eq!(workspace.selected_insider, 0);
+        assert_eq!(
+            workspace.document_status,
+            "SAVED FORM 4 SELECTION UNAVAILABLE · USING FIRST VISIBLE ROW"
+        );
+        assert_eq!(
+            workspace.selected_insider_accession.as_deref(),
+            Some("FORM4-CURRENT")
+        );
+    }
+
+    #[test]
     fn vim_keys_select_and_open_form4_source_filing() {
         let opener = Arc::new(StubDocumentOpener::default());
         let mut workspace = SecurityWorkspace::with_symbol_and_document_opener(
@@ -1291,6 +1602,10 @@ mod tests {
         assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE,)));
 
         assert_eq!(workspace.selected_insider, 1);
+        assert_eq!(
+            workspace.selected_insider_accession.as_deref(),
+            Some("0000000000-26-000002")
+        );
         assert_eq!(
             *opener
                 .opened

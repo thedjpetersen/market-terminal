@@ -56,6 +56,11 @@ const GOLDENS: &[Golden] = &[
         hashes: [0x25721fb84a222df1, 0x2086e600fe23b906, 0x22aba07c701e79e0],
     },
     Golden {
+        name: "security-filings",
+        prepare: prepare_security_filings,
+        hashes: [0xf103e810cd528534, 0xbe2480070c52e9a8, 0x894dfb7feaae813e],
+    },
+    Golden {
         name: "spreadsheet-error",
         prepare: prepare_spreadsheet_error,
         hashes: [0xe20f49fbabedc1bc, 0x6cc81e54570bde28, 0xbb7a539b51f8bd24],
@@ -261,6 +266,12 @@ fn prepare_launchpad(app: &mut App) {
 
 fn prepare_desk_layout(app: &mut App) {
     dispatch(app, "DESK LAYOUT 60 65");
+}
+
+fn prepare_security_filings(app: &mut App) {
+    dispatch(app, "SEC AAPL US --view=filings");
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    app.advance_tick();
 }
 
 fn prepare_risk(app: &mut App) {

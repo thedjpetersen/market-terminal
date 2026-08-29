@@ -42,8 +42,14 @@ bootstrap ──▶ app kernel
   exact layout commands validate both axes before mutating, so a malformed
   two-axis request cannot partially resize the Desk. Legacy views restore the
   original geometry and invalid percentages produce a degraded report without
-  preventing valid pane or child restoration. Desk and Chart are the first rich
-  adopters. Unknown fields remain inert data, so a newer
+  preventing valid pane or child restoration. Security owns another typed
+  adopter: its envelope carries provider-neutral instrument identity, terminal
+  subject, research-tab key, and optional stable Form 4 accession. The accession
+  is retained while asynchronous data reloads and resolved against the returned
+  page by identity rather than row index. Reordered rows therefore restore
+  exactly; a disappeared filing selects the first available row and discloses
+  the fallback in the source-status panel. Provider page data and document URLs
+  never enter the saved-view document. Unknown fields remain inert data, so a newer
   snapshot can degrade on an older binary without coupling migrations to the
   registry or panicking at startup. Session and saved-view documents remain
   independent failure domains.
