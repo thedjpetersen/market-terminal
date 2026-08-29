@@ -300,6 +300,17 @@ move to its own crate later without changing its public vocabulary.
   dimension-checked, legacy definitions migrate as implicit `AND`, and selected
   rows route directly to Chart. Arithmetic formulas, broader field dimensions,
   factors, heatmaps, and whole-result promotion remain.
+- **Complete:** first dependency-enabling P6 Backtesting slice. The new bounded
+  context owns an immutable integer-price history input, next-open long-only SMA
+  template, exact whole-share/cash ledger, explicit per-side basis-point cost and
+  fixed commission, decision/fill audit, marked equity, return, drawdown, and
+  turnover. Independent configuration, data, input, and run hashes reproduce the
+  artifact. A composition-root translator copies Chart history through a
+  Backtesting-owned port; identity/OHLC failures fail closed. Capacity-one work,
+  stale-generation rejection, last-valid-result behavior, typed saved-view
+  recovery, spatial/follow actions, three-size rendering, adversarial
+  no-look-ahead/cost/reproduction tests, and a 5,000-bar p95 gate lock the slice.
+  It remains explicitly research-only with no order path.
 - **Next:** add P2/P3 hotlists/breadth/heatmaps, Screening
   arithmetic and whole-result promotion, factor research, and compound alert
   families. Provider availability
@@ -941,6 +952,19 @@ Match the reference's research lifecycle with stronger reproducibility controls.
   session calendars, corporate actions, signal timing, universe membership,
   warm-up, order lifecycle, partial fills, commissions, spread/slippage/latency/
   impact, cash, borrow, leverage, and deterministic seeded execution.
+  - **Delivered foundation:** `BACKTEST` owns an immutable, bounded integer-price
+    bar contract and a deterministic SMA-crossover reference template. Signals
+    are recorded at close and execute only at the next open; whole-share cash,
+    symmetric basis-point costs, fixed commissions, fill audit, marked equity,
+    return, maximum drawdown, and turnover reconcile in one pure engine. Every
+    artifact exposes source/quality/input version and independent config/data/run
+    digests. Backtesting consumes history through its own port and a
+    composition-root Chart translator, runs asynchronously with stale-result
+    rejection, restores typed configuration, and has no broker or order intent.
+  - **Still required:** point-in-time universe membership, session calendars,
+    corporate actions, shorts/borrow/leverage, order lifecycle, partial fills,
+    spread/slippage/latency/impact decomposition, seeded stochastic execution,
+    persistence, export, and paper promotion.
 - Ship representative trend, mean-reversion, breakout, momentum, RSI/MACD/
   Bollinger/VWAP and allocation templates as tested examples, not performance
   promises. Every template identifies assumptions and has a no-leakage test.
@@ -1074,6 +1098,7 @@ not an automatic expansion of this commitment.
 | News & Events | stories, topics, transcripts, calendars, event links | Instrument Master, news/event adapters | `StoryArrived`, `EventUpdated` |
 | Portfolio & Risk | books, positions, lots, P&L, attribution, exposures, scenarios | Instrument Master, Market Data, pricing/risk engines | `PositionChanged`, `RiskCalculated` |
 | Screening & Analytics | universes, filters, rankings, comparables, reusable studies | Instrument Master, Market Data, fundamentals | saved screens and result sets |
+| Backtesting | immutable research inputs, timing, simulated ledger, metrics, reproducible run artifacts | point-in-time history and later paper-execution contracts | versioned research run artifacts |
 | Alerts | alert rules, schedules, delivery state, acknowledgement | events exposed by other contexts, notification adapters | `AlertTriggered` |
 | Trading & Orders | order intent, validation, routing, fills, allocations | Instrument Master, Market Data, Portfolio, broker adapters | `OrderStateChanged`, `FillReceived` |
 | Collaboration & Export | notes, snapshots, reports, CSV/JSON export | read models from other contexts | exported artifact metadata |

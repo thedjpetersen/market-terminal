@@ -159,6 +159,18 @@ bootstrap ──▶ app kernel
   historical payloads fail closed. Saved views contain only the
   definition and row-anchor identities; the versioned universe and rank
   evidence remain derived feature state. See `docs/screening.md`.
+  Backtesting is another consumer-owned context. Its port requests only a
+  canonical instrument and receives integer-price bars plus source, quality, and
+  input version. The composition-root `ChartBacktestHistory` translator may
+  depend on both public ports, but Backtesting never imports Charting. The pure
+  engine owns timing, costs, cash, whole-share positions, decision/fill audit,
+  equity, drawdown, turnover, and immutable configuration/data/run digests.
+  Signals observed at a close are eligible only for the next open, making the
+  time boundary visible in both types and terminal output. A capacity-one worker
+  coalesces history and calculation work away from input/rendering and rejects
+  stale generations; failures retain a clearly labeled last valid artifact.
+  Saved views keep bounded research configuration, never bars or results. See
+  `docs/backtesting.md`.
 - `foundation` contains only stable, narrowly shared value objects. Canonical
   instrument identity lives here; provider quote schemas and feature state do
   not.

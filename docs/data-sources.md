@@ -22,6 +22,14 @@ observation time, quality, missing values, and a deterministic input version;
 it does not forward-fill fields, join observations from different calls, or
 persist provider data.
 
+Backtesting is a third consumer-owned projection. Its current input adapter asks
+the configured Chart history port for one year of the requested instrument,
+requires the returned canonical identity to match, validates every OHLC value,
+and converts prices to integer millionths before research evaluation. It retains
+the exact source and quality labels and derives a content-addressed input version;
+it does not replace missing history, join providers, infer corporate actions, or
+send any order.
+
 ## Local shell, navigation, and presentation state
 
 - **Surfaces:** command routing, unified discovery and Help, workspace/panel
@@ -77,6 +85,11 @@ persist provider data.
   timestamps, evaluation results, exclusions, and rank evidence; those are
   recomputed from the current point-in-time snapshot. Missing definitions or row
   identities degrade independently.
+  Backtest view fields include canonical instrument identity, symbol, bounded
+  moving-average windows, execution-cost basis points, fixed commission, active
+  Summary/Trades subview, and selected trade row. Historical bars, signals,
+  fills, equity, metrics, and run hashes remain derived in memory and never enter
+  the saved-view document.
   Spreadsheet view fields include the local workbook ID, worksheet name and
   ordinal fallback, selected cell, and viewport origin; cell content remains in
   the separately versioned workbook document. Saved views do not persist

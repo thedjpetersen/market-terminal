@@ -4,6 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use market_terminal::{
     bootstrap,
     features::{
+        backtesting::{run_backtest, BacktestBar, BacktestConfig},
         screening::{
             evaluate_screen, universe_content_digest, Comparison, ScreenClause, ScreenDefinition,
             ScreenExpression, ScreenField, ScreenSortDirection, UniverseMember, UniverseSnapshot,
@@ -35,6 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         discovery_search_case()?,
         visible_action_routing_case()?,
         responsive_theme_render_case()?,
+        backtest_replay_case()?,
         screening_evaluation_case()?,
         spreadsheet_edit_case()?,
     ];
@@ -53,6 +55,38 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+fn backtest_replay_case() -> Result<CaseResult, Box<dyn Error>> {
+    let config = BacktestConfig::moving_average_cross("performance:instrument", "PERF");
+    let bars = (0..5_000)
+        .map(|index| {
+            let trend = 100_000_000_i64 + index as i64 * 2_500;
+            let cycle = ((index % 180) as i64 - 90).abs() * 20_000;
+            let close = trend + cycle;
+            BacktestBar {
+                timestamp: 1_600_000_000 + index as i64 * 86_400,
+                open_micros: close - 10_000,
+                high_micros: close + 100_000,
+                low_micros: close - 100_000,
+                close_micros: close,
+                volume: 10_000_000 + index as u64,
+            }
+        })
+        .collect::<Vec<_>>();
+    let expected = run_backtest(&config, &bars, "PERFORMANCE", "REPLAY", "PERF-V1")?.run_digest;
+    let p95_ms = measure(|_| {
+        let run = run_backtest(&config, &bars, "PERFORMANCE", "REPLAY", "PERF-V1")?;
+        if run.run_digest != expected {
+            return Err("backtest replay digest changed".into());
+        }
+        Ok(())
+    })?;
+    Ok(CaseResult {
+        name: "backtest_replay",
+        p95_ms,
+        context: "bars=5000 next_open=true costs=true digest=verified".to_owned(),
+    })
 }
 
 fn discovery_search_case() -> Result<CaseResult, Box<dyn Error>> {

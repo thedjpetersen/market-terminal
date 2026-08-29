@@ -5,6 +5,7 @@ use crate::{
     features::{
         alerts::{AlertStateStore, AlertsQuery, AlertsWorkspace},
         assistant::{AssistantContextQuery, AssistantGateway, AssistantWorkspace},
+        backtesting::BacktestWorkspace,
         charting::{ChartHistoryQuery, ChartInstrument, ChartingWorkspace},
         chat::{ChatGateway, ChatWorkspace},
         instrument::{InstrumentSearch, InstrumentSearchWorkspace},
@@ -21,15 +22,15 @@ use crate::{
         watchlist::{WatchlistCatalog, WatchlistWorkspace},
     },
     infrastructure::{
-        AiCommandInference, AlpacaMarketData, AlphaVantageMarketData, CodexAppServerConfig,
-        CodexAppServerGateway, ConfiguredWatchlistCatalog, CsvPortfolioRepository,
-        DemoAlertsReplay, DemoChartHistory, DemoChatGateway, DemoData, DemoInstrumentSearch,
-        DemoMarketDataReplay, DemoSpreadsheetMarketData, DemoWatchlistCatalog, FinnhubMarketData,
-        IrcChatGateway, LiveAlertsQuery, LiveMarketsQuery, LiveNewsFeed, LiveOverviewQuery,
-        LiveSecurityQuery, LiveSpreadsheetMarketData, LocalLaunchpadFiles, LocalPersistence,
-        LocalSpreadsheetFiles, MarketScreeningUniverseQuery, OpenRouterConfig, OpenRouterGateway,
-        PortfolioAssistantContextQuery, PortfolioRiskQuery, SecInstrumentSearch,
-        SystemNewsArticleOpener, YahooMarketData,
+        AiCommandInference, AlpacaMarketData, AlphaVantageMarketData, ChartBacktestHistory,
+        CodexAppServerConfig, CodexAppServerGateway, ConfiguredWatchlistCatalog,
+        CsvPortfolioRepository, DemoAlertsReplay, DemoChartHistory, DemoChatGateway, DemoData,
+        DemoInstrumentSearch, DemoMarketDataReplay, DemoSpreadsheetMarketData,
+        DemoWatchlistCatalog, FinnhubMarketData, IrcChatGateway, LiveAlertsQuery, LiveMarketsQuery,
+        LiveNewsFeed, LiveOverviewQuery, LiveSecurityQuery, LiveSpreadsheetMarketData,
+        LocalLaunchpadFiles, LocalPersistence, LocalSpreadsheetFiles, MarketScreeningUniverseQuery,
+        OpenRouterConfig, OpenRouterGateway, PortfolioAssistantContextQuery, PortfolioRiskQuery,
+        SecInstrumentSearch, SystemNewsArticleOpener, YahooMarketData,
     },
 };
 
@@ -165,6 +166,7 @@ fn build_app(providers: AppProviders) -> App {
         market_data.clone(),
         watchlist_catalog.clone(),
     ));
+    let backtest_history = Arc::new(ChartBacktestHistory::new(chart_history.clone()));
 
     let workspaces = WorkspaceRegistry::new(vec![
         Box::new(OverviewWorkspace::new(overview_query)),
@@ -187,6 +189,7 @@ fn build_app(providers: AppProviders) -> App {
                 "watchlist".to_owned(),
                 "markets".to_owned(),
                 "screening".to_owned(),
+                "backtesting".to_owned(),
                 "charting".to_owned(),
                 "chat".to_owned(),
                 "alerts".to_owned(),
@@ -211,6 +214,7 @@ fn build_app(providers: AppProviders) -> App {
             (Some(store), None) => ScreeningWorkspace::persistent(screening_query, store),
             (None, _) => ScreeningWorkspace::new(screening_query),
         }),
+        Box::new(BacktestWorkspace::new(backtest_history)),
         Box::new(ChartingWorkspace::with_primary(
             chart_history,
             chart_primary,

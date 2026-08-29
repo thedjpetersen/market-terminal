@@ -1,5 +1,6 @@
 pub mod alerts;
 pub mod assistant;
+pub mod backtesting;
 pub mod charting;
 pub mod chat;
 pub mod instrument;

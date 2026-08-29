@@ -353,11 +353,11 @@
       "capability": "Look-ahead-safe backtesting and tear sheets",
       "owner": "Backtesting",
       "priority": "P6",
-      "market_status": "missing",
+      "market_status": "partial",
       "upstream_maturity": "substantive",
       "reference_files": ["backend/core/backtester.py", "backend/core/vectorized_backtest.py", "backend/core/execution_model.py", "backend/reports/tearsheet_routes.py", "frontend/tests/e2e/backtesting-tabs.spec.ts"],
       "acceptance_tests": ["BACKTEST-NO-LOOKAHEAD", "BACKTEST-COST-RECONCILIATION", "BACKTEST-REPRODUCE-HASH"],
-      "gap": "Add point-in-time data, calendars, actions, timing, universe membership, warm-up, lifecycle and costs, deterministic fills, representative templates, analytics, and reproducible terminal/CSV tear sheets."
+      "gap": "The first bounded slice now provides immutable integer-price inputs, close-to-next-open timing, whole-share cash accounting, explicit costs, fill audit, equity/drawdown/turnover, reproducible hashes, typed recovery, and adversarial evidence. Add calendars, corporate actions, universes, richer lifecycle/fills/costs, templates, benchmarks, persistence/export, and complete terminal/CSV tear sheets."
     },
     {
       "id": "OTUI-032",

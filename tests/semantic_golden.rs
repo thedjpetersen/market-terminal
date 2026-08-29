@@ -51,12 +51,12 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "help",
         prepare: prepare_help,
-        hashes: [0xe0d6d2a61dda9297, 0xc555b735918f2e04, 0xd3ee58528ecdae1b],
+        hashes: [0x38259c5200c969bd, 0x716e8c24f0f398f4, 0xf618b42208d90fcd],
     },
     Golden {
         name: "workspace-preset-preview",
         prepare: prepare_workspace_preset_preview,
-        hashes: [0x198bbffce0964ae2, 0x66f1733875c43a3a, 0x613989da1719f885],
+        hashes: [0x0c92cc352dd16d9a, 0x9d2329ccf8489e86, 0x74771149581602b1],
     },
     Golden {
         name: "launchpad",

@@ -43,12 +43,15 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 - Screening — versioned point-in-time universes, typed multi-clause filters,
   deterministic ranking, explicit null/coverage handling, saved definitions,
   and explainable row evidence
+- Backtest — reproducible, next-bar moving-average research replay with explicit
+  execution costs, integer-share accounting, immutable hashes, equity/drawdown,
+  and a signal-to-fill audit; it has no live order path
 - Chat — TLS-capable IRC market rooms with bounded queues, background reconnect,
   participant presence, notices, actions, and an inline composer
 - Alerts — idempotent, debounced local rules with acknowledgement and audit state
 
 Use the labeled navigation keys, click a visible workspace tab, or type a
-function such as `MON`, `CHART`, `SCREEN`, `SHEET`, `CHAT`, `FIND`, or `ASK` into the
+function such as `MON`, `CHART`, `SCREEN`, `BACKTEST`, `SHEET`, `CHAT`, `FIND`, or `ASK` into the
 command bar. Exact functions always take precedence; otherwise the configured
 AI command plane infers one command through a bounded, background request.
 Cashtags such as `$META`, company names, and requests such as `show me Meta`
@@ -139,6 +142,27 @@ publication and safe to repeat after interruption. Mouse,
 spatial focus, and `F` hints use those same identity-checked actions. See
 [the Screening contract](docs/screening.md) for limits, persistence, and the
 remaining P2/P3 scope.
+
+`BACKTEST` opens the first P6 research-replay slice. It consumes the same
+provider-neutral historical-price adapter through a Backtesting-owned port, but
+copies each input into an immutable integer-price contract before evaluation:
+
+```text
+BACKTEST AAPL
+BACKTEST MSFT FAST 10 SLOW 50 COST 5 COMMISSION 1.00
+```
+
+The reference strategy is deliberately narrow: long-only SMA crossover signals
+are observed at a bar close and can execute only at the next bar's open. Buys
+and sells apply the configured all-in basis-point penalty and fixed commission;
+cash, integer shares, turnover, marked equity, and drawdown reconcile from those
+fills. Every result displays independent configuration, data, and run digests,
+the source/quality/input version, and the full signal-to-execution timestamps.
+Runs execute on a capacity-one worker, reject stale completions, retain the last
+valid result on failure, and round-trip their configuration through saved views.
+This is research replay—not paper or live trading—and does not model corporate
+actions, calendars, borrow, leverage, partial fills, impact, dividends, or taxes.
+See [the Backtesting contract](docs/backtesting.md).
 
 `DESK` (aliases `SPLIT` and `DASHBOARD`) opens the combined workspace adapted
 from `alphai-tui`. Press `Tab`/`Shift+Tab` or `1`/`2`/`3` to focus Monitor,
@@ -1052,6 +1076,7 @@ src/
 │   ├── persistence/ versioned session + opaque feature-document ports
 │   ├── watchlist/   monitor model + catalog port + workspace
 │   ├── charting/    chart specification + history port + workspace
+│   ├── backtesting/ immutable replay inputs + engine + audit workspace
 │   ├── chat/        IRC domain + gateway port + workspace
 │   ├── spreadsheet/ workbook domain + application + presentation
 │   └── assistant/   AI conversation domain + provider port + workspace
