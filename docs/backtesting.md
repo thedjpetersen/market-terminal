@@ -64,6 +64,7 @@ BT <symbol> ...
 BACKTEST SAVE
 BACKTEST LIST
 BACKTEST OPEN <RUN-DIGEST>
+BACKTEST COMPARE <BASELINE-RUN-DIGEST> <CANDIDATE-RUN-DIGEST>
 BACKTEST DELETE <RUN-DIGEST>
 BACKTEST EXPORT <PATH>
 BACKTEST EXPORT! <PATH>
@@ -75,7 +76,20 @@ refuses replacement; `EXPORT!` opts into crash-safe atomic replacement. Portable
 JSON is capped at 8 MiB. Export
 never fetches newer market data or silently reruns the strategy.
 
-Use `1`/`2` or `Tab` for Summary and Trades, arrows or `j`/`k` in the fill audit,
+`COMPARE` loads and verifies two immutable saved artifacts, then refuses the
+comparison unless instrument identity, source, quality, input version, complete
+data digest, observation bounds, bar count, and initial cash are identical. Only
+the supported FAST, SLOW, COST, and COMMISSION configuration dimensions may
+differ. The resulting schema-versioned evidence records both run, artifact, and
+configuration digests; exact parameter changes; paired final-equity, return,
+drawdown, turnover, and trade-count deltas; and its own complete comparison
+digest. It never chooses a winner, reruns either strategy, or treats in-sample
+deltas as significance, robustness, or expected performance. Comparison state is
+derived from the durable source runs and is deliberately not copied into saved
+views.
+
+Use `1`/`2`/`3` or `Tab` for Summary, Trades, and an available Comparison; arrows
+or `j`/`k` in the fill audit,
 `r`/`F9` to reproduce the current run, and `c` to open the source instrument in
 Chart. Mouse, spatial focus, and follow hints expose the same tabs, rerun, and
 Chart actions. Saved views retain only the instrument identity, bounded template
@@ -88,12 +102,15 @@ decisions, signals precede fills, costed equity is below an otherwise identical
 cost-free run, malformed histories fail closed, repeated inputs reproduce the
 whole artifact, the composition translator is stable, saved views round-trip,
 immutable storage is idempotent and corruption-detecting, portable export is
-private and explicit-overwrite-only, and all three terminal sizes render. The
+private and explicit-overwrite-only, paired comparison rejects non-identical
+inputs and detects delta mutation, and all three terminal sizes render. The
 release performance gate runs 5,000 bars
-100 times and verifies the same run digest under the global 50 ms p95 budget.
+100 times and verifies the same run digest under the global 50 ms p95 budget. A
+separate 5,000-bar paired-comparison case revalidates both source artifacts,
+reconciles every delta, and verifies the comparison digest under the same budget.
 
 Still required for P6 includes session calendars, corporate actions, universe
 membership, partial fills and impact, additional templates, benchmarks and tear
-sheets, richer experiment tracking, sweeps, walk-forward/purged validation,
+sheets, durable experiment grouping/states, sweeps, walk-forward/purged validation,
 robustness, statistical research, governance, paper promotion, and input-bar
 retention for exact offline reruns.

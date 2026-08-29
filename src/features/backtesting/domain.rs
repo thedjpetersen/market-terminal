@@ -115,10 +115,153 @@ pub struct BacktestArtifact {
     pub disclosures: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BacktestComparisonSide {
+    pub run_digest: String,
+    pub artifact_digest: String,
+    pub config_digest: String,
+    pub fast_window: usize,
+    pub slow_window: usize,
+    pub execution_cost_bps: u32,
+    pub commission_micros: i64,
+    pub final_equity_micros: i64,
+    pub total_return_bps: i32,
+    pub max_drawdown_bps: u32,
+    pub turnover_bps: u32,
+    pub trades: usize,
+}
+
+impl From<&BacktestArtifact> for BacktestComparisonSide {
+    fn from(artifact: &BacktestArtifact) -> Self {
+        Self {
+            run_digest: artifact.run_digest.clone(),
+            artifact_digest: artifact.artifact_digest.clone(),
+            config_digest: artifact.config_digest.clone(),
+            fast_window: artifact.config.fast_window,
+            slow_window: artifact.config.slow_window,
+            execution_cost_bps: artifact.config.execution_cost_bps,
+            commission_micros: artifact.config.commission_micros,
+            final_equity_micros: artifact.final_equity_micros,
+            total_return_bps: artifact.total_return_bps,
+            max_drawdown_bps: artifact.max_drawdown_bps,
+            turnover_bps: artifact.turnover_bps,
+            trades: artifact.trades.len(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BacktestComparison {
+    pub schema_version: u16,
+    pub instrument_id: String,
+    pub symbol: String,
+    pub source: String,
+    pub quality: String,
+    pub input_version: String,
+    pub data_digest: String,
+    pub bars: usize,
+    pub first_timestamp: i64,
+    pub last_timestamp: i64,
+    pub initial_cash_micros: i64,
+    pub baseline: BacktestComparisonSide,
+    pub candidate: BacktestComparisonSide,
+    pub changed_parameters: Vec<String>,
+    pub final_equity_delta_micros: i128,
+    pub total_return_delta_bps: i64,
+    pub max_drawdown_delta_bps: i64,
+    pub turnover_delta_bps: i64,
+    pub trade_count_delta: i64,
+    pub comparison_digest: String,
+    pub methodology: String,
+    pub disclosure: String,
+}
+
+impl BacktestComparison {
+    pub fn validate(&self) -> Result<(), BacktestError> {
+        if self.schema_version != 1 {
+            return Err(BacktestError::Incomparable(format!(
+                "unsupported comparison schema {}",
+                self.schema_version
+            )));
+        }
+        if self.baseline.run_digest == self.candidate.run_digest {
+            return Err(BacktestError::Incomparable(
+                "baseline and candidate must be different immutable runs".to_owned(),
+            ));
+        }
+        if self.instrument_id.trim().is_empty()
+            || self.symbol.trim().is_empty()
+            || self.source.trim().is_empty()
+            || self.quality.trim().is_empty()
+            || self.input_version.trim().is_empty()
+            || self.data_digest.trim().is_empty()
+            || self.bars == 0
+            || self.bars > MAX_BACKTEST_BARS
+            || self.first_timestamp >= self.last_timestamp
+            || self.initial_cash_micros <= 0
+            || self.changed_parameters.is_empty()
+            || self.changed_parameters.len() > 4
+            || self.methodology.trim().is_empty()
+            || self.methodology.len() > 1_024
+            || self.disclosure.trim().is_empty()
+            || self.disclosure.len() > 1_024
+        {
+            return Err(BacktestError::Incomparable(
+                "comparison identity, dimensions, or changed parameters are invalid".to_owned(),
+            ));
+        }
+        for side in [&self.baseline, &self.candidate] {
+            if side.run_digest.trim().is_empty()
+                || side.artifact_digest.trim().is_empty()
+                || side.config_digest.trim().is_empty()
+                || side.fast_window < 2
+                || side.fast_window >= side.slow_window
+                || side.slow_window > MAX_MOVING_AVERAGE_WINDOW
+                || side.execution_cost_bps > 1_000
+                || side.commission_micros < 0
+            {
+                return Err(BacktestError::Incomparable(
+                    "comparison side evidence or configuration is invalid".to_owned(),
+                ));
+            }
+        }
+        if self.changed_parameters != comparison_parameter_changes(&self.baseline, &self.candidate)
+        {
+            return Err(BacktestError::Incomparable(
+                "changed parameter evidence does not reconcile".to_owned(),
+            ));
+        }
+        if self.final_equity_delta_micros
+            != i128::from(self.candidate.final_equity_micros)
+                - i128::from(self.baseline.final_equity_micros)
+            || self.total_return_delta_bps
+                != i64::from(self.candidate.total_return_bps)
+                    - i64::from(self.baseline.total_return_bps)
+            || self.max_drawdown_delta_bps
+                != i64::from(self.candidate.max_drawdown_bps)
+                    - i64::from(self.baseline.max_drawdown_bps)
+            || self.turnover_delta_bps
+                != i64::from(self.candidate.turnover_bps) - i64::from(self.baseline.turnover_bps)
+            || self.trade_count_delta != self.candidate.trades as i64 - self.baseline.trades as i64
+        {
+            return Err(BacktestError::Incomparable(
+                "comparison deltas do not reconcile".to_owned(),
+            ));
+        }
+        if self.comparison_digest != comparison_digest(self) {
+            return Err(BacktestError::Incomparable(
+                "comparison integrity digest does not match content".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BacktestError {
     InvalidConfig(String),
     InvalidBars(String),
+    Incomparable(String),
     Arithmetic(String),
 }
 
@@ -189,9 +332,100 @@ impl fmt::Display for BacktestError {
         match self {
             Self::InvalidConfig(message) => write!(formatter, "invalid backtest config: {message}"),
             Self::InvalidBars(message) => write!(formatter, "invalid backtest bars: {message}"),
+            Self::Incomparable(message) => write!(formatter, "incomparable backtests: {message}"),
             Self::Arithmetic(message) => write!(formatter, "backtest arithmetic failed: {message}"),
         }
     }
+}
+
+pub fn compare_backtests(
+    baseline: &BacktestArtifact,
+    candidate: &BacktestArtifact,
+) -> Result<BacktestComparison, BacktestError> {
+    baseline.validate()?;
+    candidate.validate()?;
+    if baseline.run_digest == candidate.run_digest {
+        return Err(BacktestError::Incomparable(
+            "baseline and candidate resolve to the same run".to_owned(),
+        ));
+    }
+    let compatible = baseline.instrument_id == candidate.instrument_id
+        && baseline.symbol == candidate.symbol
+        && baseline.source == candidate.source
+        && baseline.quality == candidate.quality
+        && baseline.input_version == candidate.input_version
+        && baseline.data_digest == candidate.data_digest
+        && baseline.bars == candidate.bars
+        && baseline.first_timestamp == candidate.first_timestamp
+        && baseline.last_timestamp == candidate.last_timestamp
+        && baseline.initial_cash_micros == candidate.initial_cash_micros;
+    if !compatible {
+        return Err(BacktestError::Incomparable(
+            "runs must share instrument, source, quality, input version, data digest, dates, bars, and initial cash"
+                .to_owned(),
+        ));
+    }
+
+    let baseline_side = BacktestComparisonSide::from(baseline);
+    let candidate_side = BacktestComparisonSide::from(candidate);
+    let changed_parameters = comparison_parameter_changes(&baseline_side, &candidate_side);
+    if changed_parameters.is_empty() {
+        return Err(BacktestError::Incomparable(
+            "runs have no supported configuration difference".to_owned(),
+        ));
+    }
+
+    let mut comparison = BacktestComparison {
+        schema_version: 1,
+        instrument_id: baseline.instrument_id.clone(),
+        symbol: baseline.symbol.clone(),
+        source: baseline.source.clone(),
+        quality: baseline.quality.clone(),
+        input_version: baseline.input_version.clone(),
+        data_digest: baseline.data_digest.clone(),
+        bars: baseline.bars,
+        first_timestamp: baseline.first_timestamp,
+        last_timestamp: baseline.last_timestamp,
+        initial_cash_micros: baseline.initial_cash_micros,
+        baseline: baseline_side,
+        candidate: candidate_side,
+        changed_parameters,
+        final_equity_delta_micros: i128::from(candidate.final_equity_micros)
+            - i128::from(baseline.final_equity_micros),
+        total_return_delta_bps: i64::from(candidate.total_return_bps)
+            - i64::from(baseline.total_return_bps),
+        max_drawdown_delta_bps: i64::from(candidate.max_drawdown_bps)
+            - i64::from(baseline.max_drawdown_bps),
+        turnover_delta_bps: i64::from(candidate.turnover_bps) - i64::from(baseline.turnover_bps),
+        trade_count_delta: candidate.trades.len() as i64 - baseline.trades.len() as i64,
+        comparison_digest: String::new(),
+        methodology: "PAIRED DESCRIPTIVE DELTAS OVER IDENTICAL VERSIONED INPUT DATA".to_owned(),
+        disclosure: "IN-SAMPLE COMPARISON ONLY · NO SIGNIFICANCE, ROBUSTNESS, OR PERFORMANCE CLAIM"
+            .to_owned(),
+    };
+    comparison.comparison_digest = comparison_digest(&comparison);
+    comparison.validate()?;
+    Ok(comparison)
+}
+
+fn comparison_parameter_changes(
+    baseline: &BacktestComparisonSide,
+    candidate: &BacktestComparisonSide,
+) -> Vec<String> {
+    let mut changes = Vec::new();
+    if baseline.fast_window != candidate.fast_window {
+        changes.push("FAST".to_owned());
+    }
+    if baseline.slow_window != candidate.slow_window {
+        changes.push("SLOW".to_owned());
+    }
+    if baseline.execution_cost_bps != candidate.execution_cost_bps {
+        changes.push("COST".to_owned());
+    }
+    if baseline.commission_micros != candidate.commission_micros {
+        changes.push("COMMISSION".to_owned());
+    }
+    changes
 }
 
 impl std::error::Error for BacktestError {}
@@ -436,6 +670,53 @@ fn artifact_digest(artifact: &BacktestArtifact) -> String {
         hash.text(disclosure);
     }
     hash.finish("ART")
+}
+
+fn comparison_digest(comparison: &BacktestComparison) -> String {
+    let mut hash = Fnv64::new();
+    hash.u64(u64::from(comparison.schema_version));
+    for value in [
+        &comparison.instrument_id,
+        &comparison.symbol,
+        &comparison.source,
+        &comparison.quality,
+        &comparison.input_version,
+        &comparison.data_digest,
+        &comparison.baseline.run_digest,
+        &comparison.baseline.artifact_digest,
+        &comparison.baseline.config_digest,
+        &comparison.candidate.run_digest,
+        &comparison.candidate.artifact_digest,
+        &comparison.candidate.config_digest,
+        &comparison.methodology,
+        &comparison.disclosure,
+    ] {
+        hash.text(value);
+    }
+    hash.usize(comparison.bars);
+    hash.i64(comparison.first_timestamp);
+    hash.i64(comparison.last_timestamp);
+    hash.i64(comparison.initial_cash_micros);
+    for side in [&comparison.baseline, &comparison.candidate] {
+        hash.usize(side.fast_window);
+        hash.usize(side.slow_window);
+        hash.u64(u64::from(side.execution_cost_bps));
+        hash.i64(side.commission_micros);
+        hash.i64(side.final_equity_micros);
+        hash.i64(i64::from(side.total_return_bps));
+        hash.u64(u64::from(side.max_drawdown_bps));
+        hash.u64(u64::from(side.turnover_bps));
+        hash.usize(side.trades);
+    }
+    for parameter in &comparison.changed_parameters {
+        hash.text(parameter);
+    }
+    hash.bytes(&comparison.final_equity_delta_micros.to_le_bytes());
+    hash.i64(comparison.total_return_delta_bps);
+    hash.i64(comparison.max_drawdown_delta_bps);
+    hash.i64(comparison.turnover_delta_bps);
+    hash.i64(comparison.trade_count_delta);
+    hash.finish("CMP")
 }
 
 fn validate_config(config: &BacktestConfig) -> Result<(), BacktestError> {
@@ -699,6 +980,63 @@ mod tests {
         assert!(matches!(
             artifact.validate(),
             Err(BacktestError::InvalidBars(message)) if message.contains("integrity digest")
+        ));
+    }
+
+    #[test]
+    fn paired_comparison_requires_identical_versioned_inputs_and_reconciles_deltas() {
+        let input = bars(&[
+            10_000_000, 10_000_000, 11_000_000, 12_000_000, 9_000_000, 8_000_000, 10_000_000,
+        ]);
+        let baseline = run_backtest(&config(), &input, "FIXTURE", "REPLAY", "V1").unwrap();
+        let mut candidate_config = config();
+        candidate_config.execution_cost_bps = 25;
+        candidate_config.commission_micros = 5_000_000;
+        let candidate = run_backtest(&candidate_config, &input, "FIXTURE", "REPLAY", "V1").unwrap();
+
+        let comparison = compare_backtests(&baseline, &candidate).unwrap();
+        assert_eq!(comparison.changed_parameters, ["COST", "COMMISSION"]);
+        assert_eq!(
+            comparison.final_equity_delta_micros,
+            i128::from(candidate.final_equity_micros) - i128::from(baseline.final_equity_micros)
+        );
+        assert_eq!(
+            comparison.total_return_delta_bps,
+            i64::from(candidate.total_return_bps) - i64::from(baseline.total_return_bps)
+        );
+        assert!(comparison.comparison_digest.starts_with("CMP-FNV1A64-"));
+        assert!(comparison.validate().is_ok());
+    }
+
+    #[test]
+    fn comparison_fails_closed_for_same_run_mismatched_data_and_mutation() {
+        let input = bars(&[
+            10_000_000, 10_000_000, 11_000_000, 12_000_000, 9_000_000, 8_000_000, 10_000_000,
+        ]);
+        let baseline = run_backtest(&config(), &input, "FIXTURE", "REPLAY", "V1").unwrap();
+        assert!(matches!(
+            compare_backtests(&baseline, &baseline),
+            Err(BacktestError::Incomparable(_))
+        ));
+
+        let mut candidate_config = config();
+        candidate_config.execution_cost_bps = 25;
+        let mut changed_input = input.clone();
+        changed_input[6].close_micros += 1_000_000;
+        changed_input[6].high_micros += 1_000_000;
+        let candidate =
+            run_backtest(&candidate_config, &changed_input, "FIXTURE", "REPLAY", "V2").unwrap();
+        assert!(matches!(
+            compare_backtests(&baseline, &candidate),
+            Err(BacktestError::Incomparable(message)) if message.contains("must share")
+        ));
+
+        let candidate = run_backtest(&candidate_config, &input, "FIXTURE", "REPLAY", "V1").unwrap();
+        let mut comparison = compare_backtests(&baseline, &candidate).unwrap();
+        comparison.total_return_delta_bps += 1;
+        assert!(matches!(
+            comparison.validate(),
+            Err(BacktestError::Incomparable(message)) if message.contains("deltas")
         ));
     }
 

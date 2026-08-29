@@ -176,7 +176,12 @@ bootstrap ──▶ app kernel
   The local adapter uses crash-safe private feature documents. A separate file
   port emits deterministic verified JSON, refuses implicit overwrite, and uses
   atomic replacement only for the explicit overwrite command. Neither boundary
-  can fetch data, rerun a strategy, promote an order, or mutate a saved run. See
+  can fetch data, rerun a strategy, promote an order, or mutate a saved run.
+  Backtesting's pure paired-comparison contract consumes two verified artifacts
+  from that port and requires identical instrument, source/quality, input version,
+  data digest, dates, dimensions, and starting cash. It produces reconciled
+  descriptive deltas plus an independent evidence digest; comparison never
+  reaches Chart, providers, persistence infrastructure, or an execution path. See
   `docs/backtesting.md`.
   Options is a separate P5 bounded context with no provider dependency in its
   first slice. Its pure domain validates typed contract/model inputs, evaluates

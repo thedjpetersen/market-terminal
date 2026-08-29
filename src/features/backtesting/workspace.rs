@@ -26,14 +26,16 @@ use crate::{
 };
 
 use super::{
-    run_backtest, BacktestArtifact, BacktestArtifactFileStore, BacktestArtifactStore,
-    BacktestConfig, BacktestHistoryQuery, BacktestHistoryRequest, ID,
+    compare_backtests, run_backtest, BacktestArtifact, BacktestArtifactFileStore,
+    BacktestArtifactStore, BacktestComparison, BacktestConfig, BacktestHistoryQuery,
+    BacktestHistoryRequest, ID,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BacktestView {
     Summary,
     Trades,
+    Comparison,
 }
 
 impl BacktestView {
@@ -41,6 +43,7 @@ impl BacktestView {
         match self {
             Self::Summary => "SUMMARY",
             Self::Trades => "TRADES",
+            Self::Comparison => "COMPARE",
         }
     }
 }
@@ -69,6 +72,7 @@ pub struct BacktestWorkspace {
     selected_trade: usize,
     status: String,
     artifact: Option<BacktestArtifact>,
+    comparison: Option<BacktestComparison>,
     desired_generation: u64,
     pending_request: Option<RunRequest>,
     request_sender: SyncSender<RunRequest>,
@@ -149,6 +153,7 @@ impl BacktestWorkspace {
             selected_trade: 0,
             status: "RESEARCH REPLAY · NEXT-BAR EXECUTION · NO LIVE ORDER PATH".to_owned(),
             artifact: None,
+            comparison: None,
             desired_generation: 0,
             pending_request: None,
             request_sender,
@@ -212,6 +217,10 @@ impl BacktestWorkspace {
             Ok(artifact) => {
                 self.config = artifact.config.clone();
                 self.selected_trade = 0;
+                self.comparison = None;
+                if self.view == BacktestView::Comparison {
+                    self.view = BacktestView::Summary;
+                }
                 self.status = format!(
                     "OPENED VERIFIED RUN {} · {}",
                     artifact.run_digest, artifact.artifact_digest
@@ -219,6 +228,46 @@ impl BacktestWorkspace {
                 self.artifact = Some(artifact);
             }
             Err(error) => self.status = format!("BACKTEST OPEN FAILED · {error}"),
+        }
+    }
+
+    fn compare_artifacts(&mut self, baseline: Option<&String>, candidate: Option<&String>) {
+        let (Some(baseline), Some(candidate)) = (baseline, candidate) else {
+            self.status = "BACKTEST COMPARE REQUIRES BASELINE AND CANDIDATE RUN DIGESTS".to_owned();
+            return;
+        };
+        let Some(store) = &self.artifact_store else {
+            self.status = "BACKTEST ARTIFACT PERSISTENCE IS DISABLED".to_owned();
+            return;
+        };
+        let baseline_artifact = match store.load_artifact(baseline) {
+            Ok(artifact) => artifact,
+            Err(error) => {
+                self.status = format!("BACKTEST COMPARE BASELINE FAILED · {error}");
+                return;
+            }
+        };
+        let candidate_artifact = match store.load_artifact(candidate) {
+            Ok(artifact) => artifact,
+            Err(error) => {
+                self.status = format!("BACKTEST COMPARE CANDIDATE FAILED · {error}");
+                return;
+            }
+        };
+        match compare_backtests(&baseline_artifact, &candidate_artifact) {
+            Ok(comparison) => {
+                self.config = candidate_artifact.config.clone();
+                self.artifact = Some(candidate_artifact);
+                self.selected_trade = 0;
+                self.status = format!(
+                    "PAIRED VERIFIED COMPARISON · {} · {}",
+                    comparison.changed_parameters.join("+"),
+                    comparison.comparison_digest
+                );
+                self.comparison = Some(comparison);
+                self.view = BacktestView::Comparison;
+            }
+            Err(error) => self.status = format!("BACKTEST COMPARE FAILED · {error}"),
         }
     }
 
@@ -232,7 +281,21 @@ impl BacktestWorkspace {
             return;
         };
         self.status = match store.delete_artifact(run_digest) {
-            Ok(true) => format!("DELETED SAVED RUN {run_digest}"),
+            Ok(true) => {
+                let invalidates_comparison = self.comparison.as_ref().is_some_and(|comparison| {
+                    comparison.baseline.run_digest == *run_digest
+                        || comparison.candidate.run_digest == *run_digest
+                });
+                if invalidates_comparison {
+                    self.comparison = None;
+                    if self.view == BacktestView::Comparison {
+                        self.view = BacktestView::Summary;
+                    }
+                    format!("DELETED SAVED RUN {run_digest} · COMPARISON CLEARED")
+                } else {
+                    format!("DELETED SAVED RUN {run_digest}")
+                }
+            }
             Ok(false) => format!("SAVED RUN {run_digest} WAS NOT FOUND"),
             Err(error) => format!("BACKTEST DELETE FAILED · {error}"),
         };
@@ -268,6 +331,10 @@ impl BacktestWorkspace {
     }
 
     fn queue_run(&mut self) {
+        self.comparison = None;
+        if self.view == BacktestView::Comparison {
+            self.view = BacktestView::Summary;
+        }
         self.desired_generation = self.desired_generation.wrapping_add(1);
         self.pending_request = Some(RunRequest {
             generation: self.desired_generation,
@@ -443,6 +510,15 @@ impl Workspace for BacktestWorkspace {
                     self.open_artifact(invocation.args.get(1));
                     return true;
                 }
+                "COMPARE" => {
+                    if invocation.args.len() == 3 {
+                        self.compare_artifacts(invocation.args.get(1), invocation.args.get(2));
+                    } else {
+                        self.status =
+                            "BACKTEST COMPARE REQUIRES EXACTLY TWO RUN DIGESTS".to_owned();
+                    }
+                    return true;
+                }
                 "DELETE" | "DROP" => {
                     self.delete_artifact(invocation.args.get(1));
                     return true;
@@ -473,7 +549,8 @@ impl Workspace for BacktestWorkspace {
             KeyCode::Tab => {
                 self.view = match self.view {
                     BacktestView::Summary => BacktestView::Trades,
-                    BacktestView::Trades => BacktestView::Summary,
+                    BacktestView::Trades if self.comparison.is_some() => BacktestView::Comparison,
+                    BacktestView::Trades | BacktestView::Comparison => BacktestView::Summary,
                 };
                 true
             }
@@ -483,6 +560,10 @@ impl Workspace for BacktestWorkspace {
             }
             KeyCode::Char('2') => {
                 self.view = BacktestView::Trades;
+                true
+            }
+            KeyCode::Char('3') if self.comparison.is_some() => {
+                self.view = BacktestView::Comparison;
                 true
             }
             KeyCode::Up | KeyCode::Char('k') if self.view == BacktestView::Trades => {
@@ -509,10 +590,13 @@ impl Workspace for BacktestWorkspace {
             return true;
         }
         if is_primary_click(event, areas.tabs) {
-            self.view = if event.column < areas.tabs.x.saturating_add(18) {
-                BacktestView::Summary
-            } else {
-                BacktestView::Trades
+            let tab_count = if self.comparison.is_some() { 3 } else { 2 };
+            let width = areas.tabs.width.max(tab_count) / tab_count;
+            self.view = match event.column.saturating_sub(areas.tabs.x) / width.max(1) {
+                0 => BacktestView::Summary,
+                1 => BacktestView::Trades,
+                _ if self.comparison.is_some() => BacktestView::Comparison,
+                _ => BacktestView::Trades,
             };
             return true;
         }
@@ -531,39 +615,58 @@ impl Workspace for BacktestWorkspace {
 
     fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
         let areas = backtest_areas(area);
-        let tab_width = areas.tabs.width / 2;
-        let mut summary = WorkspaceAction::new(
+        let tab_count = if self.comparison.is_some() { 3 } else { 2 };
+        let tab_width = areas.tabs.width / tab_count;
+        let summary = WorkspaceAction::new(
             "view:summary",
             "Show backtest summary",
             Rect::new(areas.tabs.x, areas.tabs.y, tab_width, areas.tabs.height),
         );
-        let mut trades = WorkspaceAction::new(
+        let trades = WorkspaceAction::new(
             "view:trades",
             "Show backtest trades",
             Rect::new(
                 areas.tabs.x.saturating_add(tab_width),
                 areas.tabs.y,
-                areas.tabs.width.saturating_sub(tab_width),
+                tab_width,
                 areas.tabs.height,
             ),
         );
-        if self.view == BacktestView::Summary {
-            summary = summary.preferred();
-        } else {
-            trades = trades.preferred();
+        let mut actions = vec![summary, trades];
+        if self.comparison.is_some() {
+            actions.push(WorkspaceAction::new(
+                "view:comparison",
+                "Show paired run comparison",
+                Rect::new(
+                    areas.tabs.x.saturating_add(tab_width.saturating_mul(2)),
+                    areas.tabs.y,
+                    areas.tabs.width.saturating_sub(tab_width.saturating_mul(2)),
+                    areas.tabs.height,
+                ),
+            ));
         }
-        vec![
-            summary,
-            trades,
+        if let Some(action) = actions.iter_mut().find(|action| {
+            action.id
+                == match self.view {
+                    BacktestView::Summary => "view:summary",
+                    BacktestView::Trades => "view:trades",
+                    BacktestView::Comparison => "view:comparison",
+                }
+        }) {
+            action.preferred = true;
+        }
+        actions.extend([
             WorkspaceAction::new("run:refresh", "Rerun with identical inputs", areas.header),
             WorkspaceAction::new("open:chart", "Open input instrument chart", areas.footer),
-        ]
+        ]);
+        actions
     }
 
     fn activate_action(&mut self, id: &str) -> bool {
         match id {
             "view:summary" => self.view = BacktestView::Summary,
             "view:trades" => self.view = BacktestView::Trades,
+            "view:comparison" if self.comparison.is_some() => self.view = BacktestView::Comparison,
             "run:refresh" => self.queue_run(),
             "open:chart" => return self.open_chart(),
             _ => return false,
@@ -599,7 +702,18 @@ impl Workspace for BacktestWorkspace {
                 "commission_micros",
                 ViewValue::Unsigned(self.config.commission_micros.max(0) as u64),
             )
-            .with_field("view", ViewValue::Text(self.view.label().to_owned()))
+            .with_field(
+                "view",
+                ViewValue::Text(
+                    if self.view == BacktestView::Comparison {
+                        BacktestView::Summary
+                    } else {
+                        self.view
+                    }
+                    .label()
+                    .to_owned(),
+                ),
+            )
             .with_field(
                 "selected_trade",
                 ViewValue::Unsigned(self.selected_trade as u64),
@@ -711,11 +825,16 @@ impl Workspace for BacktestWorkspace {
             self.artifact.as_ref(),
             &self.status,
         );
-        render_tabs(frame, areas.tabs, self.view);
+        render_tabs(frame, areas.tabs, self.view, self.comparison.is_some());
         match (&self.artifact, self.view) {
             (Some(run), BacktestView::Summary) => render_summary(frame, areas.body, run),
             (Some(run), BacktestView::Trades) => {
                 render_trades(frame, areas.body, run, self.selected_trade)
+            }
+            (Some(_), BacktestView::Comparison) => {
+                if let Some(comparison) = &self.comparison {
+                    render_comparison(frame, areas.body, comparison);
+                }
             }
             (None, _) => frame.render_widget(
                 Paragraph::new(vec![
@@ -728,7 +847,7 @@ impl Workspace for BacktestWorkspace {
         }
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" 1/2/TAB VIEW  ", CYAN),
+                Span::styled(" 1/2/3/TAB VIEW  ", CYAN),
                 Span::styled("↑↓/JK TRADE  ", INK),
                 Span::styled("R/F9 RERUN  ", YELLOW),
                 Span::styled("C CHART  ", GREEN),
@@ -791,8 +910,12 @@ fn render_header(
     );
 }
 
-fn render_tabs(frame: &mut Frame, area: Rect, active: BacktestView) {
-    let line = [BacktestView::Summary, BacktestView::Trades]
+fn render_tabs(frame: &mut Frame, area: Rect, active: BacktestView, has_comparison: bool) {
+    let mut views = vec![BacktestView::Summary, BacktestView::Trades];
+    if has_comparison {
+        views.push(BacktestView::Comparison);
+    }
+    let line = views
         .into_iter()
         .flat_map(|view| {
             let style = if view == active {
@@ -869,6 +992,135 @@ fn render_summary(frame: &mut Frame, area: Rect, run: &BacktestArtifact) {
     }
 }
 
+fn render_comparison(frame: &mut Frame, area: Rect, comparison: &BacktestComparison) {
+    let rows = Layout::vertical([Constraint::Min(8), Constraint::Length(7)]).split(area);
+    let baseline = &comparison.baseline;
+    let candidate = &comparison.candidate;
+    let mut metrics = Vec::new();
+    if rows[0].height >= 12 {
+        metrics.extend([
+            Row::new(vec![
+                Cell::from("FAST / SLOW"),
+                Cell::from(format!(
+                    "{} / {}",
+                    baseline.fast_window, baseline.slow_window
+                )),
+                Cell::from(format!(
+                    "{} / {}",
+                    candidate.fast_window, candidate.slow_window
+                )),
+                Cell::from("—"),
+            ]),
+            Row::new(vec![
+                Cell::from("COST / COMM"),
+                Cell::from(format!(
+                    "{} / {:.2}",
+                    baseline.execution_cost_bps,
+                    baseline.commission_micros as f64 / 1_000_000.0
+                )),
+                Cell::from(format!(
+                    "{} / {:.2}",
+                    candidate.execution_cost_bps,
+                    candidate.commission_micros as f64 / 1_000_000.0
+                )),
+                Cell::from("—"),
+            ]),
+        ]);
+    }
+    metrics.extend([
+        comparison_row(
+            "FINAL EQUITY",
+            format_price(baseline.final_equity_micros),
+            format_price(candidate.final_equity_micros),
+            format_signed_micros(comparison.final_equity_delta_micros),
+        ),
+        comparison_row(
+            "TOTAL RETURN",
+            format_bps(baseline.total_return_bps),
+            format_bps(candidate.total_return_bps),
+            format_signed_bps(comparison.total_return_delta_bps),
+        ),
+        comparison_row(
+            "MAX DRAWDOWN",
+            format!("-{:.2}%", baseline.max_drawdown_bps as f64 / 100.0),
+            format!("-{:.2}%", candidate.max_drawdown_bps as f64 / 100.0),
+            format_signed_bps(comparison.max_drawdown_delta_bps),
+        ),
+        comparison_row(
+            "TURNOVER",
+            format!("{:.2}%", baseline.turnover_bps as f64 / 100.0),
+            format!("{:.2}%", candidate.turnover_bps as f64 / 100.0),
+            format_signed_bps(comparison.turnover_delta_bps),
+        ),
+        comparison_row(
+            "TRADES",
+            baseline.trades.to_string(),
+            candidate.trades.to_string(),
+            format!("{:+}", comparison.trade_count_delta),
+        ),
+    ]);
+    frame.render_widget(
+        Table::new(
+            metrics,
+            [
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+            ],
+        )
+        .header(
+            Row::new(["METRIC", "BASELINE", "CANDIDATE", "DELTA"])
+                .style(AMBER)
+                .bottom_margin(1),
+        )
+        .block(terminal_block("COMPARE", "PAIRED IMMUTABLE RUNS"))
+        .column_spacing(1),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                format!("CHANGED  {}", comparison.changed_parameters.join(" · ")),
+                CYAN,
+            ),
+            Line::styled(
+                format!(
+                    "RUNS     {} → {}",
+                    comparison.baseline.run_digest, comparison.candidate.run_digest
+                ),
+                MUTED,
+            ),
+            Line::styled(
+                format!(
+                    "INPUT    {} · {}",
+                    comparison.input_version, comparison.data_digest
+                ),
+                MUTED,
+            ),
+            Line::styled(format!("EVIDENCE {}", comparison.comparison_digest), GREEN),
+            Line::styled(comparison.disclosure.clone(), RED),
+        ])
+        .block(terminal_block("EVIDENCE", "SAME-DATA CONTRACT"))
+        .wrap(Wrap { trim: true }),
+        rows[1],
+    );
+}
+
+fn comparison_row(
+    label: &'static str,
+    baseline: String,
+    candidate: String,
+    delta: String,
+) -> Row<'static> {
+    Row::new(vec![
+        Cell::from(label),
+        Cell::from(baseline),
+        Cell::from(candidate),
+        Cell::from(delta),
+    ])
+}
+
 fn render_trades(frame: &mut Frame, area: Rect, run: &BacktestArtifact, selected: usize) {
     let rows = run.trades.iter().enumerate().map(|(index, trade)| {
         let style = if index == selected {
@@ -933,6 +1185,12 @@ fn format_price(micros: i64) -> String {
 }
 fn format_bps(bps: i32) -> String {
     format!("{:+.2}%", bps as f64 / 100.0)
+}
+fn format_signed_bps(bps: i64) -> String {
+    format!("{:+.2}%", bps as f64 / 100.0)
+}
+fn format_signed_micros(micros: i128) -> String {
+    format!("{:+.4}", micros as f64 / 1_000_000.0)
 }
 fn format_timestamp(timestamp: i64) -> String {
     DateTime::<Utc>::from_timestamp(timestamp, 0)
@@ -1164,6 +1422,81 @@ mod tests {
             args: vec!["DELETE".to_owned(), expected.run_digest.clone()],
         });
         assert!(artifacts.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn command_compares_two_saved_runs_only_over_identical_versioned_inputs() {
+        let artifacts = Arc::new(MemoryArtifacts::default());
+        let files = Arc::new(MemoryFiles::default());
+        let mut workspace = ready_persistent_workspace(artifacts.clone(), files);
+        workspace.save_artifact();
+        let baseline = workspace.artifact.as_ref().unwrap().run_digest.clone();
+
+        workspace.handle_command(&CommandInvocation {
+            function: "BACKTEST".to_owned(),
+            args: vec![
+                "AAPL".to_owned(),
+                "FAST".to_owned(),
+                "15".to_owned(),
+                "SLOW".to_owned(),
+                "80".to_owned(),
+                "COST".to_owned(),
+                "12".to_owned(),
+            ],
+        });
+        for _ in 0..100 {
+            workspace.poll_intents();
+            if workspace
+                .artifact
+                .as_ref()
+                .is_some_and(|artifact| artifact.run_digest != baseline)
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        workspace.save_artifact();
+        let candidate = workspace.artifact.as_ref().unwrap().run_digest.clone();
+
+        workspace.handle_command(&CommandInvocation {
+            function: "BACKTEST".to_owned(),
+            args: vec!["COMPARE".to_owned(), baseline.clone(), candidate.clone()],
+        });
+        let comparison = workspace.comparison.as_ref().unwrap();
+        assert_eq!(workspace.view, BacktestView::Comparison);
+        assert_eq!(comparison.baseline.run_digest, baseline);
+        assert_eq!(comparison.candidate.run_digest, candidate);
+        assert_eq!(comparison.changed_parameters, ["FAST", "SLOW", "COST"]);
+        assert!(workspace.status.contains("PAIRED VERIFIED COMPARISON"));
+
+        for (width, height) in [(80, 24), (120, 36), (160, 48)] {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| workspace.render(frame, frame.area()))
+                .unwrap();
+            let text = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(text.contains("PAIRED IMMUTABLE RUNS"));
+            assert!(text.contains("FINAL EQUITY"));
+            assert!(text.contains("MAX DRAWDOWN"));
+            assert!(text.contains("TURNOVER"));
+            assert!(text.contains("TRADES"));
+            assert!(text.contains("IN-SAMPLE COMPARISON"));
+        }
+
+        workspace.handle_command(&CommandInvocation {
+            function: "BACKTEST".to_owned(),
+            args: vec!["DELETE".to_owned(), baseline],
+        });
+        assert!(workspace.comparison.is_none());
+        assert_eq!(workspace.view, BacktestView::Summary);
+        assert!(workspace.status.contains("COMPARISON CLEARED"));
     }
 
     #[test]

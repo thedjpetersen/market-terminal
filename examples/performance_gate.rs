@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use market_terminal::{
     bootstrap,
     features::{
-        backtesting::{run_backtest, BacktestBar, BacktestConfig},
+        backtesting::{compare_backtests, run_backtest, BacktestBar, BacktestConfig},
         fixed_income::{analyze_bond, BondModelInput},
         news::analyze_news_sentiment,
         options::{price_option, OptionModelInput},
@@ -40,6 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         visible_action_routing_case()?,
         responsive_theme_render_case()?,
         backtest_replay_case()?,
+        backtest_paired_comparison_case()?,
         option_scenario_case()?,
         fixed_income_scenario_case()?,
         news_sentiment_enrichment_case()?,
@@ -159,6 +160,46 @@ fn backtest_replay_case() -> Result<CaseResult, Box<dyn Error>> {
         name: "backtest_replay",
         p95_ms,
         context: "bars=5000 next_open=true costs=true digest=verified".to_owned(),
+    })
+}
+
+fn backtest_paired_comparison_case() -> Result<CaseResult, Box<dyn Error>> {
+    let baseline_config = BacktestConfig::moving_average_cross("performance:instrument", "PERF");
+    let mut candidate_config = baseline_config.clone();
+    candidate_config.fast_window = 15;
+    candidate_config.slow_window = 80;
+    candidate_config.execution_cost_bps = 12;
+    let bars = (0..5_000)
+        .map(|index| {
+            let trend = 100_000_000_i64 + index as i64 * 2_500;
+            let cycle = ((index % 180) as i64 - 90).abs() * 20_000;
+            let close = trend + cycle;
+            BacktestBar {
+                timestamp: 1_600_000_000 + index as i64 * 86_400,
+                open_micros: close - 10_000,
+                high_micros: close + 100_000,
+                low_micros: close - 100_000,
+                close_micros: close,
+                volume: 10_000_000 + index as u64,
+            }
+        })
+        .collect::<Vec<_>>();
+    let baseline = run_backtest(&baseline_config, &bars, "PERFORMANCE", "REPLAY", "PERF-V1")?;
+    let candidate = run_backtest(&candidate_config, &bars, "PERFORMANCE", "REPLAY", "PERF-V1")?;
+    let expected = compare_backtests(&baseline, &candidate)?.comparison_digest;
+    let p95_ms = measure(|_| {
+        let comparison = compare_backtests(&baseline, &candidate)?;
+        if comparison.comparison_digest != expected
+            || comparison.changed_parameters != ["FAST", "SLOW", "COST"]
+        {
+            return Err("paired backtest comparison evidence changed".into());
+        }
+        Ok(())
+    })?;
+    Ok(CaseResult {
+        name: "backtest_paired_comparison",
+        p95_ms,
+        context: "bars=5000 same_data=true deltas=reconciled digest=verified".to_owned(),
     })
 }
 

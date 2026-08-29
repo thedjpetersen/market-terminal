@@ -3,8 +3,9 @@ mod port;
 mod workspace;
 
 pub use domain::{
-    run_backtest, BacktestArtifact, BacktestBar, BacktestConfig, BacktestDecision, BacktestError,
-    BacktestTrade, TradeSide, DEFAULT_INITIAL_CASH_MICROS,
+    compare_backtests, run_backtest, BacktestArtifact, BacktestBar, BacktestComparison,
+    BacktestComparisonSide, BacktestConfig, BacktestDecision, BacktestError, BacktestTrade,
+    TradeSide, DEFAULT_INITIAL_CASH_MICROS,
 };
 pub use port::{
     BacktestArtifactError, BacktestArtifactFileStore, BacktestArtifactStore,

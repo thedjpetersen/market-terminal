@@ -315,6 +315,11 @@ move to its own crate later without changing its public vocabulary.
   stale-generation rejection, last-valid-result behavior, typed saved-view
   recovery, spatial/follow actions, three-size rendering, adversarial
   no-look-ahead/cost/reproduction tests, and a 5,000-bar p95 gate lock the slice.
+  Explicit saves now produce immutable, integrity-checked artifacts with private
+  deterministic export. A paired comparison workflow loads two saved runs,
+  requires exact input/source/date/cash identity, exposes configuration and five
+  reconciled metric deltas, and hashes the complete comparison evidence. Its
+  terminal disclosure rejects significance, robustness, and performance claims.
   It remains explicitly research-only with no order path.
 - **Complete:** first bounded P5 Options slice. `OPTIONS` owns validated explicit
   spot/strike/expiry/volatility/rate/dividend/right/multiplier inputs, a versioned
@@ -333,8 +338,9 @@ move to its own crate later without changing its public vocabulary.
   cases, input digests, and a dedicated performance gate lock the slice. No live
   curve, calendar, market price, spread, or credit state is fabricated.
 - **Next:** continue P5-P7 with licensed fixed-income curve/calendar contracts,
-  richer immutable backtest artifacts and experiment tracking, and screen-aware
-  evidence-bound AI research; continue P2/P3 hotlists/breadth/heatmaps,
+  durable experiment grouping/states, sweeps and walk-forward/robustness, and
+  screen-aware evidence-bound AI research; continue P2/P3
+  hotlists/breadth/heatmaps,
   Screening arithmetic and whole-result promotion, factor research, and compound
   alert families, plus licensed/calibrated sentiment beyond the delivered
   deterministic lexical artifact. Provider availability
@@ -429,7 +435,7 @@ continues.
 | Portfolio accounting and attribution | Partial | Exact positions, cash/activity, valuations/TWR, lots, realized gains, fills, single/multi-period attribution | Add portfolio CRUD/transaction truth, allocation views, benchmark history, dividends, multi-portfolio comparison, and rebalance evidence. |
 | Risk, stress, and correlation | Partial | Concentration and explicit non-cash shock plus flow-adjusted historical/EWMA volatility, drawdown/recovery, historical/Gaussian VaR/CVaR, Sharpe/Sortino, beta, correlation, tracking error, and information ratio over versioned per-currency valuations | Add marginal/component risk, rolling correlation, PCA/factor exposure, scenario library, Monte Carlo, clustering, and cross-asset dependency views. |
 | Paper trading, journal, TCA, position sizing | Missing | Verified broker executions are strictly read-only | Add visibly simulated orders/fills, sizing, journal and behavior analytics, execution-cost models, TCA, approvals, and immutable paper audit state. Live routing remains excluded. |
-| Backtesting, Model Lab, robustness | Partial | Production `BACKTEST` workspace with close-to-next-open timing, immutable integer inputs, explicit costs, fill/equity/drawdown/turnover reconciliation, hashes, and typed recovery | Add calendars, corporate actions, universes, richer lifecycle/fills/costs, templates, persistence/export, benchmarks, walk-forward and parameter sweeps, robustness, experiment tracking, tear sheets, and governance. |
+| Backtesting, Model Lab, robustness | Partial | Production `BACKTEST` workspace with close-to-next-open timing, immutable integer inputs, explicit costs, fill/equity/drawdown/turnover reconciliation, hashes, typed recovery, immutable persistence/export, and same-input paired run comparison | Add calendars, corporate actions, universes, richer lifecycle/fills/costs, templates, benchmarks, walk-forward and parameter sweeps, robustness, durable experiment states, tear sheets, and governance. |
 | Portfolio Lab and optimizer | Missing | Performance/attribution calculators cover realized portfolios only | Add portfolio backtests, weighting/rebalancing, strategy blends, optimizer constraints, correlation, attribution, and reproducible run comparison. |
 | Cockpit and intelligence timeline | Partial | Overview composes positions and news | Add ranked portfolio risks, catalysts, alerts, movers and model signals plus a source-linked chronological event timeline. |
 | Cross-asset and macro workspaces | Partial | Dedicated Fixed Income context now owns explicit fixed-rate bullet schedules, price/yield analytics, accrued interest, duration/convexity/DV01, deterministic parallel shocks, typed recovery, and fail-closed provider separation | Add dated bond conventions, licensed curves/spreads/history, plus FX, commodities, crypto, ETF, mutual-fund, economics, and sector-rotation contexts through asset-specific adapters. |
@@ -1041,6 +1047,13 @@ Match the reference's research lifecycle with stronger reproducibility controls.
   seed, queued/running/cancelled/failed states, parameter sweeps, walk-forward and
   purged out-of-sample validation, run comparison, tags/notes, and reproducible
   promotion to paper only.
+  - **Delivered comparison slice:** `BACKTEST COMPARE` loads two immutable saved
+    runs and requires exact instrument, source/quality, input version, data digest,
+    dates, bars, and initial cash before producing paired configuration, equity,
+    return, drawdown, turnover, and trade-count evidence. The derived artifact has
+    its own integrity digest and an explicit in-sample/no-significance disclosure.
+    Durable experiment grouping/states, tags/notes, sweeps, walk-forward, and
+    promotion gates remain.
 - Add robustness statistics including bootstrap intervals, probabilistic/deflated
   Sharpe, minimum track record, multiple-testing correction, rolling stability,
   sensitivity and a plain-language verdict that can reject a result.

@@ -167,7 +167,13 @@ the bounded immutable run catalog. `BACKTEST EXPORT <PATH>` writes the exact
 verified artifact as private deterministic JSON and refuses overwrite;
 `EXPORT!` explicitly requests atomic replacement. A complete artifact digest
 detects mutations across configuration, metrics, decisions, fills, equity,
-methodology, and disclosures before a saved run is opened.
+methodology, and disclosures before a saved run is opened. `BACKTEST COMPARE
+<BASELINE-RUN> <CANDIDATE-RUN>` adds a third terminal view with paired return,
+drawdown, turnover, trade-count, and final-equity deltas. It fails closed unless
+both immutable artifacts share the exact instrument, provider labels, input
+version, data digest, dates, bar count, and initial cash, and it publishes its own
+complete evidence digest. The display is explicitly descriptive and in-sample;
+it makes no significance or robustness claim.
 This is research replay—not paper or live trading—and does not model corporate
 actions, calendars, borrow, leverage, partial fills, impact, dividends, or taxes.
 See [the Backtesting contract](docs/backtesting.md).

@@ -357,18 +357,18 @@
       "upstream_maturity": "substantive",
       "reference_files": ["backend/core/backtester.py", "backend/core/vectorized_backtest.py", "backend/core/execution_model.py", "backend/reports/tearsheet_routes.py", "frontend/tests/e2e/backtesting-tabs.spec.ts"],
       "acceptance_tests": ["BACKTEST-NO-LOOKAHEAD", "BACKTEST-COST-RECONCILIATION", "BACKTEST-REPRODUCE-HASH"],
-      "gap": "The bounded slice now provides immutable integer-price inputs, close-to-next-open timing, whole-share cash accounting, explicit costs, fill audit, equity/drawdown/turnover, reproducible hashes, typed recovery, a capped immutable run catalog, complete-content integrity validation, and deterministic private JSON export. Add calendars, corporate actions, universes, richer lifecycle/fills/costs, templates, benchmarks, offline input-bar replay, and complete terminal/CSV tear sheets."
+      "gap": "The bounded slice now provides immutable integer-price inputs, close-to-next-open timing, whole-share cash accounting, explicit costs, fill audit, equity/drawdown/turnover, reproducible hashes, typed recovery, a capped immutable run catalog, complete-content integrity validation, deterministic private JSON export, and same-input paired run comparison. Add calendars, corporate actions, universes, richer lifecycle/fills/costs, templates, benchmarks, offline input-bar replay, and complete terminal/CSV tear sheets."
     },
     {
       "id": "OTUI-032",
       "capability": "Model Lab, experiments, robustness, and governance",
       "owner": "Backtesting",
       "priority": "P6",
-      "market_status": "missing",
+      "market_status": "partial",
       "upstream_maturity": "substantive",
       "reference_files": ["backend/model_lab/service.py", "backend/experiments/service.py", "backend/robustness/scorecard.py", "frontend/src/pages/ModelLab.tsx", "frontend/src/pages/ModelGovernance.tsx", "frontend/tests/e2e/model-lab-flow.spec.ts"],
       "acceptance_tests": ["MODEL-IMMUTABLE-RUN", "MODEL-WALK-FORWARD", "MODEL-ROBUSTNESS-REJECT", "MODEL-PROMOTION-GATE"],
-      "gap": "Add immutable code/config/data hashes, seeds and states, sweeps, purged walk-forward, resampling, multiple-test controls, approvals, limitations, retirement, and paper-only promotion."
+      "gap": "Paired saved-run comparison now requires identical versioned inputs, reconciles parameter/metric deltas, publishes a complete evidence digest, and disclaims significance. Add durable experiment grouping, code/environment/seed evidence, queued states, sweeps, purged walk-forward, resampling, multiple-test controls, approvals, limitations, retirement, and paper-only promotion."
     },
     {
       "id": "OTUI-033",

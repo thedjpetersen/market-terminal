@@ -33,6 +33,10 @@ the input version but do not persist the provider bars themselves. Opening or
 exporting a saved run performs no provider call and first verifies a second
 digest over the complete configuration, result, audit, equity, methodology, and
 disclosure content.
+Paired Backtest comparison reads only two verified saved artifacts and requires
+their full data identity and source boundary to match. It neither retrieves nor
+persists provider data, and it cannot compare a current provider response against
+an older saved result.
 
 Options currently consumes no provider data. Its spot, strike, calendar days,
 annual volatility, continuously compounded rates/dividends, right, and multiplier
@@ -104,7 +108,8 @@ Saved views retain only typed inputs and presentation state.
   identities degrade independently.
   Backtest view fields include canonical instrument identity, symbol, bounded
   moving-average windows, execution-cost basis points, fixed commission, active
-  Summary/Trades subview, and selected trade row. Historical bars, signals,
+  Summary/Trades subview, and selected trade row. The derived Comparison subview
+  and its selected source runs are not saved. Historical bars, signals,
   fills, equity, metrics, and run hashes remain derived in memory and never enter
   the saved-view document.
   Spreadsheet view fields include the local workbook ID, worksheet name and
