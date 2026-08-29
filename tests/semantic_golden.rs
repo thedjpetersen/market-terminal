@@ -89,6 +89,11 @@ const GOLDENS: &[Golden] = &[
         hashes: [0x488c3c8a4a7e593d, 0x39076603416acd6f, 0xa50d790819644cf6],
     },
     Golden {
+        name: "portfolio-attribution",
+        prepare: prepare_portfolio_attribution,
+        hashes: [0x4aefc7210d59007b, 0xd1d5fb5b1abda10a, 0x9ef9fea62cc991ad],
+    },
+    Golden {
         name: "news",
         prepare: prepare_news,
         hashes: [0x805d8a9df1bfbe74, 0x6073aa4a27122aa3, 0x07d6fbebbf2c303e],
@@ -427,6 +432,11 @@ fn prepare_risk(app: &mut App) {
 
 fn prepare_risk_history(app: &mut App) {
     dispatch(app, "RISK HISTORY");
+}
+
+fn prepare_portfolio_attribution(app: &mut App) {
+    dispatch(app, "PORT ATTRIBUTION");
+    app.handle_key(key(KeyCode::Down));
 }
 
 fn prepare_news(app: &mut App) {

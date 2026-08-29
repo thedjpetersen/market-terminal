@@ -44,10 +44,19 @@ Alert documents are sampled at startup so rendering performs no filesystem I/O.
   bounded session traces, and rendered sparklines; those remain live market
   data. A restored watchlist is resolved through the Watchlist-owned catalog,
   and unavailable lists, columns, or instruments are reported as degraded.
+  Portfolio fields include the stable subview key plus optional selected-row and
+  top-visible-row identities. Positions and contribution/attribution rows use
+  account, provider-neutral instrument, and currency identity; activity, lots,
+  realized gains, and executions use stable feature record IDs; performance uses
+  currency identity. Portfolio snapshots, quantities, values, broker records,
+  returns, methodology, disclosures, and source status remain behind the
+  Portfolio-owned repository and never enter the saved-view document. Missing
+  or malformed row identities degrade independently without discarding the
+  valid subview or remaining anchor.
   Spreadsheet view fields include the local workbook ID, worksheet name and
   ordinal fallback, selected cell, and viewport origin; cell content remains in
   the separately versioned workbook document. Saved views do not persist
-  provider responses, chart bars, portfolio holdings, article text, formula
+  provider responses, chart bars, portfolio holdings, broker ledgers, article text, formula
   drafts, clipboard data, undo history, credentials, or terminal frames.
   Launchpad stores only user-authored labels, typed destination identities,
   exact routing metadata, stable local tile IDs, and a revision. Destination

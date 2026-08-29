@@ -175,7 +175,15 @@ selected canonical instrument, and top visible instrument. Selection stays on
 the same instrument when live quotes reorder the table; long lists scroll to
 keep it visible, and removed lists or instruments degrade explicitly. Quotes,
 session sparklines, subscription metrics, and provider status remain live data,
-not saved layout content. Spreadsheet views retain the durable workbook
+not saved layout content. Portfolio views retain the active Positions,
+Activity, Performance, Lots, Realized, Trades, Contribution, or Attribution
+subview plus stable selected-row and top-visible-row identities. Row identities
+use feature-owned account/instrument/currency composites or ledger, lot, and
+execution IDs, so provider reordering does not silently change selection. The
+bounded viewport is shared by rendering, mouse rows, arrows, spatial actions,
+and follow hints. Holdings, broker records, calculated returns, methodology,
+and provider status remain live Portfolio data, not layout content. Spreadsheet
+views retain the durable workbook
 identity, stable worksheet name with ordinal fallback, selected cell, and
 row/column viewport. Workbook cells, clipboard contents, and undo history remain
 in their owning document/session boundaries rather than being copied into a

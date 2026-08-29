@@ -72,6 +72,17 @@ bootstrap ──▶ app kernel
   instrument by identity and move the window only as needed to keep it visible;
   provider snapshots, trace samples, and stream status never cross into shell
   persistence.
+  Portfolio owns a parallel eight-subview table schema. Its envelope stores only
+  the active subview key plus stable selected-row and top-row anchors. Positions
+  and calculated contribution rows use account/instrument/currency composites;
+  activity, lot, realized-gain, and execution tables use feature-owned record
+  IDs; performance uses currency. Restore loads the current snapshot and
+  rematches both anchors by identity, degrading unavailable or malformed fields
+  independently. Rendering, pointer hit testing, arrows, spatial actions, and
+  follow hints consume one bounded viewport. Opaque row actions include an
+  identity digest and fail closed after asynchronous replacement. Portfolio
+  data, broker records, calculations, methodology, and source status remain
+  behind the feature repository rather than entering shell persistence.
   Unknown fields remain inert data, so a newer snapshot can degrade on an older
   binary without coupling migrations to the registry or panicking at startup.
   Session and saved-view documents remain independent failure domains.
@@ -401,9 +412,9 @@ The next structural steps are intentionally additive:
   decorators around feature ports;
 - move bounded contexts into workspace crates when build times or team
   ownership justify a Cargo workspace;
-- extend the typed saved-view contract from Desk and Chart into watchlists,
-  workbooks, research tabs, filters, sorting, columns, and scroll positions as
-  those feature-owned schemas stabilize.
+- finish the typed saved-view contract for Alerts rule selection and viewport,
+  then preserve the same feature-owned identity and transient-data boundaries as
+  future workspace schemas stabilize.
 
 The current boundary is deliberately a modular monolith. It gives strong
 ownership and test seams without paying the operational cost of services or a

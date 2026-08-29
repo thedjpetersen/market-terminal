@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{cell::Cell as StateCell, path::PathBuf, sync::Arc};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui::{
@@ -10,7 +10,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor},
+    app::{
+        AppIntent, CommandInvocation, ViewRestoreReport, ViewValue, Workspace, WorkspaceAction,
+        WorkspaceDescriptor, WorkspaceViewState,
+    },
     ui::{
         components::{render_table, terminal_block},
         is_primary_click, scroll_key, table_row_at,
@@ -91,6 +94,12 @@ impl PortfolioView {
         Self::ALL.into_iter().find(|view| view.action_id() == id)
     }
 
+    fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|view| view.action_key() == value)
+    }
+
     fn offset(self, delta: isize) -> Self {
         let index = Self::ALL
             .iter()
@@ -105,6 +114,8 @@ pub struct PortfolioWorkspace {
     query: Arc<dyn PortfolioRepository>,
     view: PortfolioView,
     selected: usize,
+    viewport_top: StateCell<usize>,
+    viewport_rows: StateCell<usize>,
     pending_intents: Vec<AppIntent>,
     status: String,
 }
@@ -116,6 +127,8 @@ impl PortfolioWorkspace {
             query,
             view: PortfolioView::Positions,
             selected: 0,
+            viewport_top: StateCell::new(0),
+            viewport_rows: StateCell::new(0),
             pending_intents: Vec::new(),
             status,
         }
@@ -123,6 +136,7 @@ impl PortfolioWorkspace {
 
     fn select_view(&mut self, view: PortfolioView) {
         self.view = view;
+        self.viewport_top.set(0);
         self.clamp_selection();
         self.status = match view {
             PortfolioView::Positions => self.query.load_portfolio().source,
@@ -154,6 +168,7 @@ impl PortfolioWorkspace {
             .selection_count()
             .checked_sub(1)
             .map_or(0, |last| self.selected.min(last));
+        self.reveal_selection();
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -163,6 +178,167 @@ impl PortfolioWorkspace {
         } else {
             self.selected.saturating_add_signed(delta).min(count - 1)
         };
+        self.reveal_selection();
+    }
+
+    fn reveal_selection(&self) {
+        let capacity = self.viewport_rows.get();
+        if capacity == 0 {
+            return;
+        }
+        let mut top = self.viewport_top.get();
+        if self.selected < top {
+            top = self.selected;
+        } else if self.selected >= top.saturating_add(capacity) {
+            top = self.selected.saturating_add(1).saturating_sub(capacity);
+        }
+        let maximum = self.selection_count().saturating_sub(capacity.max(1));
+        self.viewport_top.set(top.min(maximum));
+    }
+
+    fn update_viewport(&self, area: Rect) -> (usize, usize) {
+        let capacity = usize::from(area.height.saturating_sub(4));
+        self.viewport_rows.set(capacity);
+        self.reveal_selection();
+        (self.viewport_top.get(), capacity)
+    }
+
+    fn row_identity(&self, index: usize) -> Option<String> {
+        match self.view {
+            PortfolioView::Positions => {
+                self.query
+                    .load_portfolio()
+                    .positions
+                    .get(index)
+                    .map(|position| {
+                        format!(
+                            "position|{}|{}|{}",
+                            position.account_id.as_str(),
+                            position.instrument_id.as_str(),
+                            position.currency
+                        )
+                    })
+            }
+            PortfolioView::Activity => self
+                .query
+                .load_activity()
+                .entries
+                .get(index)
+                .map(|entry| format!("activity|{}", entry.activity_id)),
+            PortfolioView::Performance => self
+                .query
+                .load_performance()
+                .series
+                .get(index)
+                .map(|series| format!("performance|{}", series.currency)),
+            PortfolioView::TaxLots => self
+                .query
+                .load_tax_lots()
+                .lots
+                .get(index)
+                .map(|lot| format!("lot|{}", lot.lot_id)),
+            PortfolioView::RealizedGains => self
+                .query
+                .load_realized_gains()
+                .lots
+                .get(index)
+                .map(|lot| format!("realized|{}", lot.lot_id)),
+            PortfolioView::Trades => self
+                .query
+                .load_trades()
+                .executions
+                .get(index)
+                .map(|execution| format!("execution|{}", execution.execution_id)),
+            PortfolioView::Contribution => {
+                self.query.load_contribution().rows.get(index).map(|row| {
+                    format!(
+                        "contribution|{}|{}|{}",
+                        row.account_id.as_str(),
+                        row.instrument_id.as_str(),
+                        row.currency
+                    )
+                })
+            }
+            PortfolioView::Attribution => {
+                self.query.load_attribution().rows.get(index).map(|row| {
+                    format!(
+                        "attribution|{}|{}|{}",
+                        row.account_id.as_str(),
+                        row.instrument_id.as_str(),
+                        row.currency
+                    )
+                })
+            }
+        }
+    }
+
+    fn row_index(&self, identity: &str) -> Option<usize> {
+        match self.view {
+            PortfolioView::Positions => {
+                self.query
+                    .load_portfolio()
+                    .positions
+                    .iter()
+                    .position(|position| {
+                        format!(
+                            "position|{}|{}|{}",
+                            position.account_id.as_str(),
+                            position.instrument_id.as_str(),
+                            position.currency
+                        ) == identity
+                    })
+            }
+            PortfolioView::Activity => self
+                .query
+                .load_activity()
+                .entries
+                .iter()
+                .position(|entry| format!("activity|{}", entry.activity_id) == identity),
+            PortfolioView::Performance => self
+                .query
+                .load_performance()
+                .series
+                .iter()
+                .position(|series| format!("performance|{}", series.currency) == identity),
+            PortfolioView::TaxLots => self
+                .query
+                .load_tax_lots()
+                .lots
+                .iter()
+                .position(|lot| format!("lot|{}", lot.lot_id) == identity),
+            PortfolioView::RealizedGains => self
+                .query
+                .load_realized_gains()
+                .lots
+                .iter()
+                .position(|lot| format!("realized|{}", lot.lot_id) == identity),
+            PortfolioView::Trades => self
+                .query
+                .load_trades()
+                .executions
+                .iter()
+                .position(|execution| format!("execution|{}", execution.execution_id) == identity),
+            PortfolioView::Contribution => {
+                self.query.load_contribution().rows.iter().position(|row| {
+                    format!(
+                        "contribution|{}|{}|{}",
+                        row.account_id.as_str(),
+                        row.instrument_id.as_str(),
+                        row.currency
+                    ) == identity
+                })
+            }
+            PortfolioView::Attribution => {
+                self.query.load_attribution().rows.iter().position(|row| {
+                    format!(
+                        "attribution|{}|{}|{}",
+                        row.account_id.as_str(),
+                        row.instrument_id.as_str(),
+                        row.currency
+                    ) == identity
+                })
+            }
+        }
     }
 
     fn symbol_at(&self, index: usize) -> Option<String> {
@@ -214,6 +390,122 @@ impl PortfolioWorkspace {
         symbol
     }
 
+    fn action_rows(&self, start: usize, len: usize) -> Vec<(usize, String, String)> {
+        match self.view {
+            PortfolioView::Positions => self
+                .query
+                .load_portfolio()
+                .positions
+                .into_iter()
+                .enumerate()
+                .skip(start)
+                .take(len)
+                .filter_map(|(index, position)| {
+                    (!position.cash).then(|| {
+                        let identity = format!(
+                            "position|{}|{}|{}",
+                            position.account_id.as_str(),
+                            position.instrument_id.as_str(),
+                            position.currency
+                        );
+                        (index, position.symbol, identity)
+                    })
+                })
+                .collect(),
+            PortfolioView::Activity => self
+                .query
+                .load_activity()
+                .entries
+                .into_iter()
+                .enumerate()
+                .skip(start)
+                .take(len)
+                .filter_map(|(index, entry)| {
+                    entry.symbol.map(|symbol| {
+                        let identity = format!("activity|{}", entry.activity_id);
+                        (index, symbol, identity)
+                    })
+                })
+                .collect(),
+            PortfolioView::Performance => Vec::new(),
+            PortfolioView::TaxLots => self
+                .query
+                .load_tax_lots()
+                .lots
+                .into_iter()
+                .enumerate()
+                .skip(start)
+                .take(len)
+                .map(|(index, lot)| {
+                    let identity = format!("lot|{}", lot.lot_id);
+                    (index, lot.symbol, identity)
+                })
+                .collect(),
+            PortfolioView::RealizedGains => self
+                .query
+                .load_realized_gains()
+                .lots
+                .into_iter()
+                .enumerate()
+                .skip(start)
+                .take(len)
+                .map(|(index, lot)| {
+                    let identity = format!("realized|{}", lot.lot_id);
+                    (index, lot.symbol, identity)
+                })
+                .collect(),
+            PortfolioView::Trades => self
+                .query
+                .load_trades()
+                .executions
+                .into_iter()
+                .enumerate()
+                .skip(start)
+                .take(len)
+                .map(|(index, execution)| {
+                    let identity = format!("execution|{}", execution.execution_id);
+                    (index, execution.symbol, identity)
+                })
+                .collect(),
+            PortfolioView::Contribution => self
+                .query
+                .load_contribution()
+                .rows
+                .into_iter()
+                .enumerate()
+                .skip(start)
+                .take(len)
+                .map(|(index, row)| {
+                    let identity = format!(
+                        "contribution|{}|{}|{}",
+                        row.account_id.as_str(),
+                        row.instrument_id.as_str(),
+                        row.currency
+                    );
+                    (index, row.symbol, identity)
+                })
+                .collect(),
+            PortfolioView::Attribution => self
+                .query
+                .load_attribution()
+                .rows
+                .into_iter()
+                .enumerate()
+                .skip(start)
+                .take(len)
+                .map(|(index, row)| {
+                    let identity = format!(
+                        "attribution|{}|{}|{}",
+                        row.account_id.as_str(),
+                        row.instrument_id.as_str(),
+                        row.currency
+                    );
+                    (index, row.symbol, identity)
+                })
+                .collect(),
+        }
+    }
+
     fn open_selected(&mut self) -> bool {
         let symbol = self.symbol_at(self.selected);
         let Some(symbol) = symbol else {
@@ -226,6 +518,30 @@ impl PortfolioWorkspace {
         });
         self.status = format!("OPENING {symbol} SECURITY RESEARCH");
         true
+    }
+
+    fn refresh_anchors(&self, view: PortfolioView) -> Option<(Option<String>, Option<String>)> {
+        (self.view == view).then(|| {
+            (
+                self.row_identity(self.selected),
+                self.row_identity(self.viewport_top.get()),
+            )
+        })
+    }
+
+    fn restore_refresh_anchors(&mut self, anchors: Option<(Option<String>, Option<String>)>) {
+        if let Some((selected, top)) = anchors {
+            self.selected = selected
+                .as_deref()
+                .and_then(|identity| self.row_index(identity))
+                .unwrap_or_default();
+            self.viewport_top.set(
+                top.as_deref()
+                    .and_then(|identity| self.row_index(identity))
+                    .unwrap_or_default(),
+            );
+        }
+        self.clamp_selection();
     }
 
     fn import_positions(&mut self, args: &[String]) {
@@ -243,6 +559,7 @@ impl PortfolioWorkspace {
             Err(error) => format!("IMPORT ERROR · {error}"),
         };
         self.view = PortfolioView::Positions;
+        self.viewport_top.set(0);
         self.clamp_selection();
     }
 
@@ -262,6 +579,7 @@ impl PortfolioWorkspace {
             Err(error) => format!("ACTIVITY IMPORT ERROR · {error}"),
         };
         self.view = PortfolioView::Activity;
+        self.viewport_top.set(0);
         self.clamp_selection();
     }
 
@@ -282,6 +600,7 @@ impl PortfolioWorkspace {
             Err(error) => format!("PERFORMANCE IMPORT ERROR · {error}"),
         };
         self.view = PortfolioView::Performance;
+        self.viewport_top.set(0);
         self.clamp_selection();
     }
 
@@ -301,6 +620,7 @@ impl PortfolioWorkspace {
             Err(error) => format!("TAX-LOT IMPORT ERROR · {error}"),
         };
         self.view = PortfolioView::TaxLots;
+        self.viewport_top.set(0);
         self.clamp_selection();
     }
 
@@ -323,6 +643,7 @@ impl PortfolioWorkspace {
             Err(error) => format!("CLOSED-LOT IMPORT ERROR · {error}"),
         };
         self.view = PortfolioView::RealizedGains;
+        self.viewport_top.set(0);
         self.clamp_selection();
     }
 
@@ -342,6 +663,7 @@ impl PortfolioWorkspace {
             Err(error) => format!("TRADE IMPORT ERROR · {error}"),
         };
         self.view = PortfolioView::Trades;
+        self.viewport_top.set(0);
         self.clamp_selection();
     }
 
@@ -362,6 +684,7 @@ impl PortfolioWorkspace {
             Err(error) => format!("CONTRIBUTION IMPORT ERROR · {error}"),
         };
         self.view = PortfolioView::Contribution;
+        self.viewport_top.set(0);
         self.clamp_selection();
     }
 
@@ -382,10 +705,12 @@ impl PortfolioWorkspace {
             Err(error) => format!("ATTRIBUTION IMPORT ERROR · {error}"),
         };
         self.view = PortfolioView::Attribution;
+        self.viewport_top.set(0);
         self.clamp_selection();
     }
 
     fn reload_positions(&mut self) {
+        let anchors = self.refresh_anchors(PortfolioView::Positions);
         self.status = match self.query.reload() {
             Ok(snapshot) => format!(
                 "RELOADED {} POSITIONS · {}",
@@ -394,10 +719,11 @@ impl PortfolioWorkspace {
             ),
             Err(error) => format!("RELOAD ERROR · {error}"),
         };
-        self.clamp_selection();
+        self.restore_refresh_anchors(anchors);
     }
 
     fn reload_activity(&mut self) {
+        let anchors = self.refresh_anchors(PortfolioView::Activity);
         self.status = match self.query.reload_activity() {
             Ok(activity) => format!(
                 "RELOADED {} ACTIVITY ROWS · {}",
@@ -406,10 +732,11 @@ impl PortfolioWorkspace {
             ),
             Err(error) => format!("ACTIVITY RELOAD ERROR · {error}"),
         };
-        self.clamp_selection();
+        self.restore_refresh_anchors(anchors);
     }
 
     fn reload_performance(&mut self) {
+        let anchors = self.refresh_anchors(PortfolioView::Performance);
         self.status = match self.query.reload_performance() {
             Ok(performance) => format!(
                 "RELOADED {} VALUATION POINTS · {}",
@@ -418,10 +745,11 @@ impl PortfolioWorkspace {
             ),
             Err(error) => format!("PERFORMANCE RELOAD ERROR · {error}"),
         };
-        self.clamp_selection();
+        self.restore_refresh_anchors(anchors);
     }
 
     fn reload_tax_lots(&mut self) {
+        let anchors = self.refresh_anchors(PortfolioView::TaxLots);
         self.status = match self.query.reload_tax_lots() {
             Ok(snapshot) => format!(
                 "RELOADED {} OPEN TAX LOTS · {}",
@@ -430,10 +758,11 @@ impl PortfolioWorkspace {
             ),
             Err(error) => format!("TAX-LOT RELOAD ERROR · {error}"),
         };
-        self.clamp_selection();
+        self.restore_refresh_anchors(anchors);
     }
 
     fn reload_realized_gains(&mut self) {
+        let anchors = self.refresh_anchors(PortfolioView::RealizedGains);
         self.status = match self.query.reload_realized_gains() {
             Ok(snapshot) => format!(
                 "RELOADED {} CLOSED LOTS · {}",
@@ -442,10 +771,11 @@ impl PortfolioWorkspace {
             ),
             Err(error) => format!("CLOSED-LOT RELOAD ERROR · {error}"),
         };
-        self.clamp_selection();
+        self.restore_refresh_anchors(anchors);
     }
 
     fn reload_trades(&mut self) {
+        let anchors = self.refresh_anchors(PortfolioView::Trades);
         self.status = match self.query.reload_trades() {
             Ok(ledger) => format!(
                 "RELOADED {} EXECUTIONS · {}",
@@ -454,10 +784,11 @@ impl PortfolioWorkspace {
             ),
             Err(error) => format!("TRADE RELOAD ERROR · {error}"),
         };
-        self.clamp_selection();
+        self.restore_refresh_anchors(anchors);
     }
 
     fn reload_contribution(&mut self) {
+        let anchors = self.refresh_anchors(PortfolioView::Contribution);
         self.status = match self.query.reload_contribution() {
             Ok(snapshot) => format!(
                 "RELOADED {} CONTRIBUTION ROWS · {}",
@@ -466,10 +797,11 @@ impl PortfolioWorkspace {
             ),
             Err(error) => format!("CONTRIBUTION RELOAD ERROR · {error}"),
         };
-        self.clamp_selection();
+        self.restore_refresh_anchors(anchors);
     }
 
     fn reload_attribution(&mut self) {
+        let anchors = self.refresh_anchors(PortfolioView::Attribution);
         self.status = match self.query.reload_attribution() {
             Ok(snapshot) => format!(
                 "RELOADED {} LINKED ATTRIBUTION ROWS · {}",
@@ -478,7 +810,7 @@ impl PortfolioWorkspace {
             ),
             Err(error) => format!("ATTRIBUTION RELOAD ERROR · {error}"),
         };
-        self.clamp_selection();
+        self.restore_refresh_anchors(anchors);
     }
 
     fn reload_current(&mut self) {
@@ -703,10 +1035,12 @@ impl Workspace for PortfolioWorkspace {
     fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
         let areas = portfolio_layout(area);
         let mut actions = Vec::new();
-        let visible_rows =
-            usize::from(areas.main.height.saturating_sub(4)).min(self.selection_count());
-        let selected_row_is_actionable =
-            self.selected < visible_rows && self.symbol_at(self.selected).is_some();
+        let (viewport_top, viewport_rows) = self.update_viewport(areas.main);
+        let visible_rows = viewport_rows.min(self.selection_count().saturating_sub(viewport_top));
+        let action_rows = self.action_rows(viewport_top, visible_rows);
+        let selected_row_is_actionable = action_rows
+            .iter()
+            .any(|(index, _, _)| *index == self.selected);
         let mut x = areas.tabs.x;
         for (index, view) in PortfolioView::ALL.into_iter().enumerate() {
             let width = format!(" {} {} ", index + 1, view.label()).chars().count() as u16;
@@ -730,16 +1064,21 @@ impl Workspace for PortfolioWorkspace {
             x = x.saturating_add(width);
         }
 
-        for index in 0..visible_rows {
-            let Some(symbol) = self.symbol_at(index) else {
-                continue;
-            };
+        for (index, symbol, identity) in action_rows {
+            let ordinal = index.saturating_sub(viewport_top);
             let mut action = WorkspaceAction::new(
-                format!("row:{}:{index}:{symbol}", self.view.action_key()),
+                format!(
+                    "row:{}:{index}:{:016x}",
+                    self.view.action_key(),
+                    portfolio_identity_hash(&identity)
+                ),
                 format!("Open {symbol} security research"),
                 Rect::new(
                     areas.main.x.saturating_add(1),
-                    areas.main.y.saturating_add(3 + index as u16),
+                    areas
+                        .main
+                        .y
+                        .saturating_add(3 + u16::try_from(ordinal).unwrap_or(u16::MAX)),
                     areas.main.width.saturating_sub(2),
                     1,
                 ),
@@ -773,7 +1112,7 @@ impl Workspace for PortfolioWorkspace {
             return true;
         }
         let mut parts = id.splitn(4, ':');
-        let (Some("row"), Some(view), Some(index), Some(expected_symbol)) =
+        let (Some("row"), Some(view), Some(index), Some(expected_identity)) =
             (parts.next(), parts.next(), parts.next(), parts.next())
         else {
             return false;
@@ -782,7 +1121,9 @@ impl Workspace for PortfolioWorkspace {
             return false;
         };
         if view != self.view.action_key()
-            || self.symbol_at(index).as_deref() != Some(expected_symbol)
+            || !self.row_identity(index).is_some_and(|identity| {
+                format!("{:016x}", portfolio_identity_hash(&identity)) == expected_identity
+            })
         {
             return false;
         }
@@ -792,6 +1133,7 @@ impl Workspace for PortfolioWorkspace {
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
         let areas = portfolio_layout(area);
+        let (viewport_top, viewport_rows) = self.update_viewport(areas.main);
         if is_primary_click(event, areas.header) {
             self.reload_current();
             return true;
@@ -808,7 +1150,12 @@ impl Workspace for PortfolioWorkspace {
             }
             return true;
         }
-        if let Some(index) = table_row_at(event, areas.main, self.selection_count()) {
+        if let Some(index) = table_row_at(
+            event,
+            areas.main,
+            viewport_rows.min(self.selection_count().saturating_sub(viewport_top)),
+        ) {
+            let index = viewport_top.saturating_add(index);
             self.selected = index;
             return self.open_selected();
         }
@@ -888,6 +1235,7 @@ impl Workspace for PortfolioWorkspace {
         let contribution = self.query.load_contribution();
         let attribution = self.query.load_attribution();
         let areas = portfolio_layout(area);
+        let (viewport_top, viewport_rows) = self.update_viewport(areas.main);
         render_header(
             frame,
             areas.header,
@@ -906,40 +1254,230 @@ impl Workspace for PortfolioWorkspace {
         render_tabs(frame, areas.tabs, self.view);
         match self.view {
             PortfolioView::Positions => {
-                render_positions(frame, areas.main, &positions, self.selected);
+                render_positions(
+                    frame,
+                    areas.main,
+                    &positions,
+                    self.selected,
+                    viewport_top,
+                    viewport_rows,
+                );
                 render_position_source(frame, areas.side, &positions, &self.status);
             }
             PortfolioView::Activity => {
-                render_activity(frame, areas.main, &activity, self.selected);
+                render_activity(
+                    frame,
+                    areas.main,
+                    &activity,
+                    self.selected,
+                    viewport_top,
+                    viewport_rows,
+                );
                 render_activity_source(frame, areas.side, &activity, &self.status);
             }
             PortfolioView::Performance => {
-                render_performance(frame, areas.main, &performance, self.selected);
+                render_performance(
+                    frame,
+                    areas.main,
+                    &performance,
+                    self.selected,
+                    viewport_top,
+                    viewport_rows,
+                );
                 render_performance_inputs(frame, areas.side, &performance, &self.status);
             }
             PortfolioView::TaxLots => {
-                render_tax_lots(frame, areas.main, &tax_lots, self.selected);
+                render_tax_lots(
+                    frame,
+                    areas.main,
+                    &tax_lots,
+                    self.selected,
+                    viewport_top,
+                    viewport_rows,
+                );
                 render_tax_lot_source(frame, areas.side, &tax_lots, &self.status);
             }
             PortfolioView::RealizedGains => {
-                render_realized_gains(frame, areas.main, &realized_gains, self.selected);
+                render_realized_gains(
+                    frame,
+                    areas.main,
+                    &realized_gains,
+                    self.selected,
+                    viewport_top,
+                    viewport_rows,
+                );
                 render_realized_gain_source(frame, areas.side, &realized_gains, &self.status);
             }
             PortfolioView::Trades => {
-                render_trades(frame, areas.main, &trades, self.selected);
+                render_trades(
+                    frame,
+                    areas.main,
+                    &trades,
+                    self.selected,
+                    viewport_top,
+                    viewport_rows,
+                );
                 render_trade_source(frame, areas.side, &trades, &self.status);
             }
             PortfolioView::Contribution => {
-                render_contribution(frame, areas.main, &contribution, self.selected);
+                render_contribution(
+                    frame,
+                    areas.main,
+                    &contribution,
+                    self.selected,
+                    viewport_top,
+                    viewport_rows,
+                );
                 render_contribution_source(frame, areas.side, &contribution, &self.status);
             }
             PortfolioView::Attribution => {
-                render_attribution(frame, areas.main, &attribution, self.selected);
+                render_attribution(
+                    frame,
+                    areas.main,
+                    &attribution,
+                    self.selected,
+                    viewport_top,
+                    viewport_rows,
+                );
                 render_attribution_source(frame, areas.side, &attribution, &self.status);
             }
         }
         render_footer(frame, areas.footer, self.view);
     }
+
+    fn capture_view(&self) -> WorkspaceViewState {
+        let mut state = WorkspaceViewState::new(ID.as_str())
+            .with_field("view", ViewValue::Text(self.view.action_key().to_owned()));
+        if let Some(identity) = self.row_identity(self.selected) {
+            state = state.with_field("selected_row_id", ViewValue::Text(identity));
+        }
+        if let Some(identity) = self.row_identity(self.viewport_top.get()) {
+            state = state.with_field("top_row_id", ViewValue::Text(identity));
+        }
+        state
+    }
+
+    fn restore_view(&mut self, state: &WorkspaceViewState) -> ViewRestoreReport {
+        if !state.workspace.eq_ignore_ascii_case(ID.as_str()) {
+            return ViewRestoreReport::warning(format!(
+                "saved state belongs to {}, not portfolio",
+                state.workspace
+            ));
+        }
+
+        let mut report = ViewRestoreReport::default();
+        if let Some(value) = state.fields.get("view") {
+            match value.as_text().and_then(PortfolioView::parse) {
+                Some(view) => {
+                    self.select_view(view);
+                    report.restored_fields += 1;
+                }
+                None => {
+                    report.skipped_fields += 1;
+                    report
+                        .warnings
+                        .push("saved portfolio view is unavailable".to_owned());
+                }
+            }
+        }
+
+        self.selected = 0;
+        self.viewport_top.set(0);
+        restore_portfolio_row(
+            self,
+            state,
+            "selected_row_id",
+            "selected row",
+            true,
+            &mut report,
+        );
+        restore_portfolio_row(
+            self,
+            state,
+            "top_row_id",
+            "viewport anchor",
+            false,
+            &mut report,
+        );
+        self.clamp_selection();
+
+        const KNOWN_FIELDS: [&str; 3] = ["view", "selected_row_id", "top_row_id"];
+        let unknown = state
+            .fields
+            .keys()
+            .filter(|field| !KNOWN_FIELDS.contains(&field.as_str()))
+            .count();
+        if unknown > 0 {
+            report.skipped_fields += unknown;
+            report
+                .warnings
+                .push(format!("ignored {unknown} future portfolio field(s)"));
+        }
+        if !state.children.is_empty() {
+            report.skipped_fields += state.children.len();
+            report.warnings.push(format!(
+                "ignored {} future portfolio child state(s)",
+                state.children.len()
+            ));
+        }
+        report
+    }
+}
+
+fn restore_portfolio_row(
+    workspace: &mut PortfolioWorkspace,
+    state: &WorkspaceViewState,
+    field: &str,
+    label: &str,
+    selected: bool,
+    report: &mut ViewRestoreReport,
+) {
+    let Some(value) = state.fields.get(field) else {
+        return;
+    };
+    match value
+        .as_text()
+        .filter(|value| valid_portfolio_row_id(value))
+    {
+        Some(identity) => match workspace.row_index(identity) {
+            Some(index) => {
+                if selected {
+                    workspace.selected = index;
+                } else {
+                    workspace.viewport_top.set(index);
+                }
+                report.restored_fields += 1;
+            }
+            None => {
+                report.skipped_fields += 1;
+                report
+                    .warnings
+                    .push(format!("saved portfolio {label} is no longer available"));
+            }
+        },
+        None => {
+            report.skipped_fields += 1;
+            report
+                .warnings
+                .push(format!("saved portfolio {label} identity is invalid"));
+        }
+    }
+}
+
+fn valid_portfolio_row_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 512
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
+}
+
+fn portfolio_identity_hash(value: &str) -> u64 {
+    value
+        .as_bytes()
+        .iter()
+        .fold(0xcbf29ce484222325, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1082,11 +1620,20 @@ fn render_tabs(frame: &mut Frame, area: Rect, active: PortfolioView) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn render_positions(frame: &mut Frame, area: Rect, snapshot: &PortfolioSnapshot, selected: usize) {
+fn render_positions(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &PortfolioSnapshot,
+    selected: usize,
+    viewport_top: usize,
+    viewport_rows: usize,
+) {
     let rows = snapshot
         .positions
         .iter()
         .enumerate()
+        .skip(viewport_top)
+        .take(viewport_rows)
         .map(|(index, position)| {
             styled_data_row(
                 [
@@ -1137,11 +1684,15 @@ fn render_activity(
     area: Rect,
     activity: &PortfolioActivityLedger,
     selected: usize,
+    viewport_top: usize,
+    viewport_rows: usize,
 ) {
     let rows = activity
         .entries
         .iter()
         .enumerate()
+        .skip(viewport_top)
+        .take(viewport_rows)
         .map(|(index, entry)| {
             styled_data_row(
                 [
@@ -1297,11 +1848,15 @@ fn render_tax_lots(
     area: Rect,
     snapshot: &PortfolioTaxLotSnapshot,
     selected: usize,
+    viewport_top: usize,
+    viewport_rows: usize,
 ) {
     let rows = snapshot
         .lots
         .iter()
         .enumerate()
+        .skip(viewport_top)
+        .take(viewport_rows)
         .map(|(index, lot)| {
             styled_data_row(
                 [
@@ -1406,11 +1961,15 @@ fn render_realized_gains(
     area: Rect,
     snapshot: &PortfolioRealizedGainSnapshot,
     selected: usize,
+    viewport_top: usize,
+    viewport_rows: usize,
 ) {
     let rows = snapshot
         .lots
         .iter()
         .enumerate()
+        .skip(viewport_top)
+        .take(viewport_rows)
         .map(|(index, lot)| {
             styled_data_row(
                 [
@@ -1521,11 +2080,20 @@ fn render_realized_gain_source(
     render_side(frame, area, "GAIN", "CLOSED-LOT RECONCILIATION", lines);
 }
 
-fn render_trades(frame: &mut Frame, area: Rect, ledger: &PortfolioTradeLedger, selected: usize) {
+fn render_trades(
+    frame: &mut Frame,
+    area: Rect,
+    ledger: &PortfolioTradeLedger,
+    selected: usize,
+    viewport_top: usize,
+    viewport_rows: usize,
+) {
     let rows = ledger
         .executions
         .iter()
         .enumerate()
+        .skip(viewport_top)
+        .take(viewport_rows)
         .map(|(index, execution)| {
             styled_data_row(
                 [
@@ -1633,11 +2201,15 @@ fn render_contribution(
     area: Rect,
     snapshot: &PortfolioContributionSnapshot,
     selected: usize,
+    viewport_top: usize,
+    viewport_rows: usize,
 ) {
     let rows = snapshot
         .rows
         .iter()
         .enumerate()
+        .skip(viewport_top)
+        .take(viewport_rows)
         .map(|(index, row)| {
             styled_data_row(
                 [
@@ -1762,11 +2334,15 @@ fn render_attribution(
     area: Rect,
     snapshot: &PortfolioAttributionSnapshot,
     selected: usize,
+    viewport_top: usize,
+    viewport_rows: usize,
 ) {
     let rows = snapshot
         .rows
         .iter()
         .enumerate()
+        .skip(viewport_top)
+        .take(viewport_rows)
         .map(|(index, row)| {
             styled_data_row(
                 [
@@ -1889,11 +2465,15 @@ fn render_performance(
     area: Rect,
     performance: &PortfolioPerformanceSnapshot,
     selected: usize,
+    viewport_top: usize,
+    viewport_rows: usize,
 ) {
     let rows = performance
         .series
         .iter()
         .enumerate()
+        .skip(viewport_top)
+        .take(viewport_rows)
         .map(|(index, series)| {
             let opening = series
                 .points
@@ -2019,6 +2599,7 @@ mod tests {
     use crate::{bootstrap, runtime};
     use crossterm::event::{MouseButton, MouseEventKind};
     use ratatui::{backend::TestBackend, Terminal};
+    use std::sync::Mutex;
 
     fn click(x: u16, y: u16) -> MouseEvent {
         MouseEvent {
@@ -2123,6 +2704,143 @@ mod tests {
                 .count()
                 <= 11
         );
+    }
+
+    #[test]
+    fn typed_view_round_trips_every_subview_and_stable_row_anchor() {
+        for view in PortfolioView::ALL {
+            let mut source = PortfolioWorkspace::new(Arc::new(crate::infrastructure::DemoData));
+            source.select_view(view);
+            source.selected = source.selection_count().saturating_sub(1);
+            source.viewport_top.set(source.selected.saturating_sub(1));
+            let state = source.capture_view();
+
+            let mut restored = PortfolioWorkspace::new(Arc::new(crate::infrastructure::DemoData));
+            let report = restored.restore_view(&state);
+
+            assert_eq!(report.restored_fields, state.fields.len(), "{view:?}");
+            assert_eq!(report.skipped_fields, 0, "{view:?}");
+            assert!(
+                report.warnings.is_empty(),
+                "{view:?}: {:?}",
+                report.warnings
+            );
+            assert_eq!(restored.capture_view(), state, "{view:?}");
+        }
+    }
+
+    struct ReversedPortfolio;
+
+    impl PortfolioRepository for ReversedPortfolio {
+        fn load_portfolio(&self) -> PortfolioSnapshot {
+            let mut snapshot = crate::infrastructure::DemoData.load_portfolio();
+            snapshot.positions.reverse();
+            snapshot
+        }
+    }
+
+    #[test]
+    fn typed_view_follows_position_identity_after_provider_reordering() {
+        let mut source = PortfolioWorkspace::new(Arc::new(crate::infrastructure::DemoData));
+        source.selected = 1;
+        source.viewport_top.set(1);
+        let state = source.capture_view();
+        let selected_identity = state.fields.get("selected_row_id").cloned();
+
+        let mut restored = PortfolioWorkspace::new(Arc::new(ReversedPortfolio));
+        let report = restored.restore_view(&state);
+
+        assert_eq!(report.restored_fields, 3);
+        assert_eq!(report.skipped_fields, 0);
+        assert_eq!(restored.selected, restored.selection_count() - 2);
+        assert_eq!(
+            restored.capture_view().fields.get("selected_row_id"),
+            selected_identity.as_ref()
+        );
+    }
+
+    struct RefreshingPortfolio {
+        snapshot: Mutex<PortfolioSnapshot>,
+    }
+
+    impl PortfolioRepository for RefreshingPortfolio {
+        fn load_portfolio(&self) -> PortfolioSnapshot {
+            self.snapshot.lock().expect("portfolio snapshot").clone()
+        }
+
+        fn reload(&self) -> Result<PortfolioSnapshot, super::super::PortfolioError> {
+            let mut snapshot = self.snapshot.lock().expect("portfolio snapshot");
+            snapshot.positions.reverse();
+            Ok(snapshot.clone())
+        }
+    }
+
+    #[test]
+    fn live_reload_preserves_selected_and_top_position_identities() {
+        let query = Arc::new(RefreshingPortfolio {
+            snapshot: Mutex::new(crate::infrastructure::DemoData.load_portfolio()),
+        });
+        let mut workspace = PortfolioWorkspace::new(query);
+        workspace.selected = 1;
+        workspace.viewport_top.set(0);
+        let selected = workspace.row_identity(1).unwrap();
+        let top = workspace.row_identity(0).unwrap();
+
+        workspace.reload_positions();
+
+        assert_eq!(workspace.row_identity(workspace.selected), Some(selected));
+        assert_eq!(
+            workspace.row_identity(workspace.viewport_top.get()),
+            Some(top)
+        );
+    }
+
+    #[test]
+    fn viewport_scrolls_long_tables_and_actions_track_rendered_rows() {
+        let mut workspace = PortfolioWorkspace::new(Arc::new(crate::infrastructure::DemoData));
+        workspace.selected = workspace.selection_count() - 1;
+        let area = Rect::new(0, 0, 80, 16);
+        let actions = workspace.actions(area);
+        let top = workspace.viewport_top.get();
+
+        assert!(top > 0);
+        assert!(workspace.selected >= top);
+        assert!(workspace.selected < top + workspace.viewport_rows.get());
+        assert!(actions.iter().any(|action| {
+            action
+                .id
+                .starts_with(&format!("row:positions:{}:", workspace.selected))
+        }));
+        assert_eq!(
+            workspace.capture_view().fields.get("top_row_id"),
+            workspace.row_identity(top).map(ViewValue::Text).as_ref()
+        );
+    }
+
+    #[test]
+    fn typed_view_degrades_invalid_missing_and_future_state_independently() {
+        let state = WorkspaceViewState::new(ID.as_str())
+            .with_field("view", ViewValue::Text("future".to_owned()))
+            .with_field(
+                "selected_row_id",
+                ViewValue::Text("position|missing|instrument|USD".to_owned()),
+            )
+            .with_field(
+                "top_row_id",
+                ViewValue::Text("position|bad\nidentity|USD".to_owned()),
+            )
+            .with_field("future_field", ViewValue::Boolean(true))
+            .with_child(WorkspaceViewState::new("future-portfolio-child"));
+        let mut restored = PortfolioWorkspace::new(Arc::new(crate::infrastructure::DemoData));
+
+        let report = restored.restore_view(&state);
+
+        assert_eq!(report.restored_fields, 0);
+        assert_eq!(report.skipped_fields, 5);
+        assert_eq!(report.warnings.len(), 5);
+        assert_eq!(restored.view, PortfolioView::Positions);
+        assert_eq!(restored.selected, 0);
+        assert_eq!(restored.viewport_top.get(), 0);
     }
 
     #[test]

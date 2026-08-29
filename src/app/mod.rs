@@ -4296,6 +4296,49 @@ mod tests {
     }
 
     #[test]
+    fn typed_portfolio_view_survives_restart_with_table_identity() {
+        let session = Arc::new(MemorySessionRepository::default());
+        let documents = Arc::new(MemoryFeatureRepository::default());
+        let mut app = bootstrap::demo_app()
+            .with_saved_view_repository(documents.clone())
+            .with_session_repository(session.clone());
+        app.settings_visible = false;
+        app.settings_first_run = false;
+
+        app.command = "PORT ATTRIBUTION".to_owned();
+        app.execute_command();
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.command = "VIEW SAVE Portfolio Attribution".to_owned();
+        app.execute_command();
+
+        let expected = app.saved_views.views[0].workspace_state.clone();
+        assert_eq!(expected.workspace, PORTFOLIO.as_str());
+        assert_eq!(
+            expected.fields.get("view"),
+            Some(&ViewValue::Text("attribution".to_owned()))
+        );
+        assert!(expected.fields.contains_key("selected_row_id"));
+        assert!(expected.fields.contains_key("top_row_id"));
+
+        let mut restarted = bootstrap::demo_app()
+            .with_saved_view_repository(documents)
+            .with_session_repository(session);
+        restarted.settings_visible = false;
+        restarted.settings_first_run = false;
+        restarted.command = "VIEW RESTORE Portfolio Attribution".to_owned();
+        restarted.execute_command();
+
+        assert_eq!(restarted.active_workspace(), PORTFOLIO);
+        assert_eq!(
+            restarted.workspaces.capture_view(PORTFOLIO).unwrap(),
+            expected
+        );
+        assert!(restarted
+            .command_feedback()
+            .is_some_and(|message| message.contains("VIEW RESTORED") && message.contains("EXACT")));
+    }
+
+    #[test]
     fn feature_intent_can_restore_a_saved_layout_through_the_shell_router() {
         let documents = Arc::new(MemoryFeatureRepository::default());
         let mut app = bootstrap::demo_app().with_saved_view_repository(documents);
