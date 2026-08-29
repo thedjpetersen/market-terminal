@@ -30,9 +30,7 @@ use market_terminal_engine::options::OptionModelInput;
 let response = execute(EngineRequest {
     schema_version: 1,
     request_id: "web:options:42".to_owned(),
-    operation: EngineOperation::PriceOption {
-        input: OptionModelInput::default(),
-    },
+    operation: EngineOperation::PriceOption(OptionModelInput::default()),
 });
 ```
 
@@ -77,10 +75,13 @@ schema rejection, bounded identities/provenance, and fail-closed domain errors.
 
 ## Web expansion sequence
 
-1. Add a small HTTP host that depends directly on `market-terminal-engine` and
-   maps authenticated routes to the closed operation enum.
-2. Put body limits, per-operation authorization, deadlines, rate limits, and
-   structured tracing at that host boundary.
+1. **Delivered:** `market-terminal-api` depends directly on the engine and maps
+   authenticated routes to the closed operation enum.
+2. **Partially delivered:** bearer authentication, pre-deserialization body
+   limits, per-operation deployment policy, typed status mapping, structured
+   logging, safe response headers, loopback defaults, and graceful shutdown live
+   at the host boundary. Add tenant-aware authorization, deadlines, rate limits,
+   metrics, and distributed traces before multi-user deployment.
 3. Expose provider and persistence capabilities through application services,
    never by teaching the engine to perform I/O.
 4. Generate or hand-maintain TypeScript request/response types from the versioned

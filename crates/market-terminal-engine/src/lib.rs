@@ -11,6 +11,7 @@ pub mod fixed_income;
 pub mod options;
 
 pub use api::{
-    execute, EngineError, EngineErrorCode, EngineOperation, EngineOutcome, EngineRequest,
-    EngineResponse, EngineResult, ENGINE_API_SCHEMA_VERSION,
+    execute, BacktestComparisonRequest, BacktestRunRequest, EngineError, EngineErrorCode,
+    EngineOperation, EngineOutcome, EngineRequest, EngineResponse, EngineResult,
+    ENGINE_API_SCHEMA_VERSION,
 };

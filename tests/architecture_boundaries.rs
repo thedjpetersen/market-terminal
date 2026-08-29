@@ -128,6 +128,47 @@ fn extracted_engine_is_host_neutral_and_terminal_facades_are_thin() {
 }
 
 #[test]
+fn web_api_depends_on_the_engine_without_importing_the_native_product() {
+    let root = manifest_root();
+    let api = root.join("crates/market-terminal-api");
+    let manifest = fs::read_to_string(api.join("Cargo.toml")).expect("API manifest");
+    assert!(
+        manifest.contains("market-terminal-engine"),
+        "the web host must execute the shared analytical engine"
+    );
+    for dependency in ["market-terminal =", "ratatui", "crossterm", "reqwest"] {
+        assert_absent(
+            &api.join("Cargo.toml"),
+            &manifest,
+            dependency,
+            "the API host cannot depend on the native product, terminal, or provider clients",
+        );
+    }
+
+    for path in rust_sources(&api.join("src")) {
+        let source = production_source(&path);
+        for (needle, reason) in [
+            (
+                "market_terminal::",
+                "the API must depend directly on the engine, not the native product",
+            ),
+            (
+                "crate::features",
+                "the API cannot bypass the engine through native feature modules",
+            ),
+            (
+                "crate::infrastructure",
+                "the API cannot bypass feature ports through native adapters",
+            ),
+            ("ratatui", "the API cannot depend on terminal rendering"),
+            ("crossterm", "the API cannot depend on terminal input"),
+        ] {
+            assert_absent(&path, &source, needle, reason);
+        }
+    }
+}
+
+#[test]
 fn bounded_contexts_do_not_import_adapters_or_each_other() {
     let features = manifest_root().join("src/features");
     let mut contexts = fs::read_dir(&features)

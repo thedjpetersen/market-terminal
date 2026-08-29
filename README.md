@@ -1128,8 +1128,9 @@ the composition root.
 
 ```text
 crates/
-└── market-terminal-engine/ host-neutral Backtesting, Options, Fixed Income,
-                            and a versioned request/response API
+├── market-terminal-engine/ host-neutral Backtesting, Options, Fixed Income,
+│                           and a versioned request/response API
+└── market-terminal-api/    authenticated HTTP host over the engine
 src/
 ├── app/             lifecycle, input modes, workspace contract and registry
 ├── features/        bounded contexts packaged by feature
@@ -1158,6 +1159,24 @@ src/
 See [`docs/architecture.md`](docs/architecture.md) for dependency rules,
 [`docs/engine.md`](docs/engine.md) for the reusable host contract, and the recipe
 for adding a new terminal or web function.
+
+### Headless analytical API
+
+The optional `market-terminal-api` binary exposes the deterministic engine
+without starting the terminal or importing its adapters. It binds to loopback by
+default and requires a bearer token:
+
+```bash
+MARKET_TERMINAL_API_TOKEN="replace-with-a-random-token-at-least-32-characters" \
+  cargo run -p market-terminal-api
+```
+
+`GET /healthz` is public and contains only version/health state. Authenticated
+`GET /v1/capabilities` discloses the deployment allowlist and body limit;
+`POST /v1/engine` accepts the versioned engine envelope. There is no CORS,
+provider, persistence, arbitrary-command, or mutation surface in this slice.
+See [`docs/web-api.md`](docs/web-api.md) for request examples, status contracts,
+configuration, and deployment constraints.
 
 ## License
 

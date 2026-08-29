@@ -26,23 +26,25 @@ pub struct EngineRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "operation", content = "input", rename_all = "snake_case")]
 pub enum EngineOperation {
-    RunBacktest {
-        config: BacktestConfig,
-        bars: Vec<BacktestBar>,
-        source: String,
-        quality: String,
-        input_version: String,
-    },
-    CompareBacktests {
-        baseline: Box<BacktestArtifact>,
-        candidate: Box<BacktestArtifact>,
-    },
-    PriceOption {
-        input: OptionModelInput,
-    },
-    AnalyzeBond {
-        input: BondModelInput,
-    },
+    RunBacktest(BacktestRunRequest),
+    CompareBacktests(BacktestComparisonRequest),
+    PriceOption(OptionModelInput),
+    AnalyzeBond(BondModelInput),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BacktestRunRequest {
+    pub config: BacktestConfig,
+    pub bars: Vec<BacktestBar>,
+    pub source: String,
+    pub quality: String,
+    pub input_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BacktestComparisonRequest {
+    pub baseline: Box<BacktestArtifact>,
+    pub candidate: Box<BacktestArtifact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -56,8 +58,13 @@ pub struct EngineResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum EngineOutcome {
-    Ok { result: Box<EngineResult> },
-    Error { error: EngineError },
+    Ok {
+        #[serde(flatten)]
+        result: Box<EngineResult>,
+    },
+    Error {
+        error: EngineError,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -135,28 +142,28 @@ fn validate_envelope(schema_version: u16, request_id: &str) -> Result<(), Engine
 
 fn execute_operation(operation: EngineOperation) -> Result<EngineResult, EngineError> {
     match operation {
-        EngineOperation::RunBacktest {
+        EngineOperation::RunBacktest(BacktestRunRequest {
             config,
             bars,
             source,
             quality,
             input_version,
-        } => {
+        }) => {
             validate_provenance(&source, &quality, &input_version)?;
             run_backtest(&config, &bars, source, quality, input_version)
                 .map(EngineResult::Backtest)
                 .map_err(backtest_error)
         }
-        EngineOperation::CompareBacktests {
+        EngineOperation::CompareBacktests(BacktestComparisonRequest {
             baseline,
             candidate,
-        } => compare_backtests(&baseline, &candidate)
+        }) => compare_backtests(&baseline, &candidate)
             .map(EngineResult::BacktestComparison)
             .map_err(comparison_error),
-        EngineOperation::PriceOption { input } => price_option(&input)
+        EngineOperation::PriceOption(input) => price_option(&input)
             .map(EngineResult::OptionAnalytics)
             .map_err(option_error),
-        EngineOperation::AnalyzeBond { input } => analyze_bond(&input)
+        EngineOperation::AnalyzeBond(input) => analyze_bond(&input)
             .map(EngineResult::BondAnalytics)
             .map_err(bond_error),
     }
@@ -214,19 +221,17 @@ mod tests {
         let request = EngineRequest {
             schema_version: ENGINE_API_SCHEMA_VERSION,
             request_id: "web:option:42".to_owned(),
-            operation: EngineOperation::PriceOption {
-                input: OptionModelInput {
-                    symbol: "AAPL".to_owned(),
-                    right: OptionRight::Call,
-                    spot_micros: 190_000_000,
-                    strike_micros: 200_000_000,
-                    days_to_expiry: 30,
-                    volatility_bps: 2_500,
-                    risk_free_rate_bps: 500,
-                    dividend_yield_bps: 0,
-                    contract_multiplier: 100,
-                },
-            },
+            operation: EngineOperation::PriceOption(OptionModelInput {
+                symbol: "AAPL".to_owned(),
+                right: OptionRight::Call,
+                spot_micros: 190_000_000,
+                strike_micros: 200_000_000,
+                days_to_expiry: 30,
+                volatility_bps: 2_500,
+                risk_free_rate_bps: 500,
+                dividend_yield_bps: 0,
+                contract_multiplier: 100,
+            }),
         };
         let encoded = serde_json::to_string(&request).expect("serialize request");
         let decoded = serde_json::from_str(&encoded).expect("deserialize request");
@@ -244,9 +249,7 @@ mod tests {
         let response = execute(EngineRequest {
             schema_version: ENGINE_API_SCHEMA_VERSION + 1,
             request_id: "web:bond:1".to_owned(),
-            operation: EngineOperation::AnalyzeBond {
-                input: BondModelInput::default(),
-            },
+            operation: EngineOperation::AnalyzeBond(BondModelInput::default()),
         });
         assert!(matches!(
             response.outcome,
@@ -261,9 +264,7 @@ mod tests {
         let response = execute(EngineRequest {
             schema_version: ENGINE_API_SCHEMA_VERSION,
             request_id: "not allowed/identity".to_owned(),
-            operation: EngineOperation::PriceOption {
-                input: OptionModelInput::default(),
-            },
+            operation: EngineOperation::PriceOption(OptionModelInput::default()),
         });
         assert!(matches!(
             response.outcome,
@@ -281,13 +282,11 @@ mod tests {
         let response = execute(EngineRequest {
             schema_version: ENGINE_API_SCHEMA_VERSION,
             request_id: "web:bond:invalid".to_owned(),
-            operation: EngineOperation::AnalyzeBond {
-                input: BondModelInput {
-                    frequency: CouponFrequency::SemiAnnual,
-                    face_micros: 0,
-                    ..BondModelInput::default()
-                },
-            },
+            operation: EngineOperation::AnalyzeBond(BondModelInput {
+                frequency: CouponFrequency::SemiAnnual,
+                face_micros: 0,
+                ..BondModelInput::default()
+            }),
         });
         assert!(matches!(
             response.outcome,
@@ -305,13 +304,13 @@ mod tests {
         let response = execute(EngineRequest {
             schema_version: ENGINE_API_SCHEMA_VERSION,
             request_id: "web:backtest:1".to_owned(),
-            operation: EngineOperation::RunBacktest {
+            operation: EngineOperation::RunBacktest(BacktestRunRequest {
                 config: BacktestConfig::moving_average_cross("us:xnas:aapl", "AAPL"),
                 bars: Vec::new(),
                 source: " ".to_owned(),
                 quality: "delayed".to_owned(),
                 input_version: "v1".to_owned(),
-            },
+            }),
         });
         assert!(matches!(
             response.outcome,
@@ -350,13 +349,13 @@ mod tests {
             execute(EngineRequest {
                 schema_version: ENGINE_API_SCHEMA_VERSION,
                 request_id: request_id.to_owned(),
-                operation: EngineOperation::RunBacktest {
+                operation: EngineOperation::RunBacktest(BacktestRunRequest {
                     config,
                     bars: bars.clone(),
                     source: "fixture".to_owned(),
                     quality: "replay".to_owned(),
                     input_version: "v1".to_owned(),
-                },
+                }),
             })
         };
         let artifact = |response: EngineResponse| match response.outcome {
@@ -372,10 +371,10 @@ mod tests {
         let response = execute(EngineRequest {
             schema_version: ENGINE_API_SCHEMA_VERSION,
             request_id: "web:backtest:compare".to_owned(),
-            operation: EngineOperation::CompareBacktests {
+            operation: EngineOperation::CompareBacktests(BacktestComparisonRequest {
                 baseline: Box::new(baseline),
                 candidate: Box::new(candidate),
-            },
+            }),
         });
         assert!(matches!(
             response.outcome,

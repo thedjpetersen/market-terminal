@@ -258,6 +258,16 @@ move to its own crate later without changing its public vocabulary.
   feature modules remain compatibility facades over the same types. Architecture
   tests reject host dependencies, I/O, or reacquired domain behavior. This is a
   reusable engine boundary, not an HTTP service or a second implementation.
+- **Complete:** first authenticated web host slice. The independent
+  `market-terminal-api` crate depends directly on the engine and exposes public
+  health plus authenticated capability and execution endpoints. It applies a
+  configurable 1 KiB-8 MiB limit before JSON deserialization, constant-work
+  equal-length bearer comparison, per-operation deployment policy, typed 400/401/403/413/
+  415/422 mapping, no-store/nosniff/referrer headers, request correlation,
+  structured logging, loopback-safe startup, and graceful shutdown. CI rejects
+  native-product, feature, infrastructure, provider-client, or terminal imports.
+  It is deliberately calculation-only: no tenant store, provider query, artifact
+  repository, arbitrary command, CORS surface, or mutation endpoint exists.
 - **Complete:** P1 saved workspace experience. Five versioned Trader, Quant,
   PM, Risk, and Ops seeds now project through the live registry, disclose
   missing destinations, and require an explicit modal confirmation. The first
@@ -449,7 +459,7 @@ continues.
 | Cross-asset and macro workspaces | Partial | Dedicated Fixed Income context now owns explicit fixed-rate bullet schedules, price/yield analytics, accrued interest, duration/convexity/DV01, deterministic parallel shocks, typed recovery, and fail-closed provider separation | Add dated bond conventions, licensed curves/spreads/history, plus FX, commodities, crypto, ETF, mutual-fund, economics, and sector-rotation contexts through asset-specific adapters. |
 | Compound alerts and delivery | Partial | Restart-safe price/move rules, debounce, acknowledgement, audit, local simulation | Add compound technical/news/portfolio/calendar/sheet rules, cooldown/expiry/limits, breakout scans, and opt-in external channels with delivery audit. |
 | Operations, data quality, and governance | Partial | Structured tracing, lag/drop metrics, provider quality in feature views | Add consolidated health, cache/feed status, data-quality incidents, kill switches, restricted-list policy, model registry/approval, and operator audit views. |
-| Plug-ins, scripting, and external tool API | Missing | Feature-owned Rust modules only | Add capability-scoped plug-in manifest, sandboxed calculations, budgets, signing, versioned scripting, and read-only MCP tools. |
+| Plug-ins, scripting, and external tool API | Partial | Versioned authenticated HTTP execution for the extracted deterministic engine, with bounded input, operation policy, and no native/provider bypass | Add tenant-scoped application services, read-only research/MCP tools, capability-scoped plug-in manifests, sandboxed calculations, budgets, signing, and versioned scripting. |
 | Spreadsheet composition | Covered beyond reference | Native durable workbook, 27 pure functions and four financial functions | Preserve as a differentiator and make every new parity result promotable to a typed sheet range. |
 | Terminal chat | Covered beyond reference | TLS IRC rooms, presence, reconnect, bounded queues | Preserve independently; it is not a prerequisite for OpenTerminalUI parity. |
 

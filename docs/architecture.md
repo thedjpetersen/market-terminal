@@ -16,7 +16,7 @@ native bootstrap ──▶ app kernel
        │                 ▲  │
        └────▶ infrastructure │
                              ▼
-                    market-terminal-engine ◀── future web/API host
+                    market-terminal-engine ◀── market-terminal-api
 ```
 
 - `crates/market-terminal-engine` owns host-neutral analytical contracts. Its
@@ -27,6 +27,13 @@ native bootstrap ──▶ app kernel
   results. Native feature modules retain thin compatibility facades, so the
   extraction does not fork public types or terminal behavior. See
   `docs/engine.md`.
+- `crates/market-terminal-api` is an HTTP host adapter over the engine crate. It
+  does not depend on the native product, feature modules, infrastructure, or
+  terminal libraries. It owns bearer authentication, per-operation deployment
+  policy, body limits applied before JSON deserialization, transport-safe error
+  mapping, request correlation, security headers, loopback-safe binding, and
+  graceful shutdown. It exposes no provider or persistence path. See
+  `docs/web-api.md`.
 
 - `app` owns lifecycle, input modes, keyboard/mouse routing, and the stable
   `Workspace` plug-in contract. It has no market or portfolio business rules.
