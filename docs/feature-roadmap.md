@@ -334,7 +334,7 @@ continues.
 | Reference capability | Status | Market Terminal evidence | Gap required for parity |
 | --- | --- | --- | --- |
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
-| Mission Control, launchpad, ticker tape | Partial | Live pulse, imported portfolio, provider events, source health, saved work, inspectable priority ranking, persistent editable Launchpad, typed Desk/Chart/Spreadsheet saved views, and versioned role presets | Add typed launch objects, Launchpad import/export, and recoverable state for the remaining workspaces. |
+| Mission Control, launchpad, ticker tape | Partial | Live pulse, imported portfolio, provider events, source health, saved work, inspectable priority ranking, persistent editable typed Launchpad with portable import/export, typed Desk/Chart/Spreadsheet saved views, and versioned role presets | Add recoverable state for the remaining workspaces and a denser configurable ticker/pulse surface. |
 | Keyboard navigation and icon rail | Covered | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, Chart periods/studies/comparisons/inspection/modes/promotion/refresh, modal-safe News filters/headlines/story/calendar/reader actions, Overview periods/cards/live holdings/headlines/context controls, Alerts rows/mutations/Security/refresh controls, and Spreadsheet cells/rows/formula/tabs/workflow controls | Preserve the action and modal-trapping contracts as new controls and overlays are added. |
 | Saved views and workspace presets | Partial | Workspace order, active workspace, role presets, and schema-v2 nested Desk/Chart plus workbook/sheet/cell/viewport Spreadsheet state persist with migration and degraded recovery | Extend typed capture to research tabs, filters, sort, columns, remaining tables, and configurable pane geometry. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
@@ -536,12 +536,22 @@ and labels each unavailable card rather than substituting fixture data.
 are implemented. `PRESET <ROLE>` is modal, cancelable, and non-mutating until
 confirmation; `PRESET RETURN` survives restart and restores the pre-preset
 workspace. Launchpad is now an independent bounded context with 24-tile limits,
-validated labels/commands, stable IDs, monotonic revisions, responsive tile
+validated labels/targets, stable IDs, monotonic revisions, responsive tile
 geometry, stale-action rejection, keyboard reordering, guarded deletion,
 versioned seeds, and a capacity-one durable writer. Tests lock pure edit
 semantics, command editing, action revalidation, `F`-hint dispatch, private local
-storage, and a full workspace restart. Three-size semantic frames cover both
-the preset preview and Launchpad. Mission Control is now an Overview-owned read
+storage, and a full workspace restart. Its schema-v2 domain supports command,
+canonical instrument, saved-screen, portfolio, workbook, and saved-layout
+destinations with exact validated route generation. Saved layouts cross the
+shell-owned view service; other targets remain registry-routed to their owning
+feature. Schema-v1 command tiles migrate without identity or revision loss.
+Portable schema-v1 JSON deliberately omits local IDs and revisions; 64 KiB
+atomic merge is duplicate-skipping and idempotent, replacement is explicit,
+matching definitions retain local identity, and export refuses overwrite unless
+`EXPORT!` is used. Private file, bounded/atomic import, migration, all-target
+routing, stale-target, restart, and shell-layout restoration tests lock these
+rules. Three-size semantic frames and the screenshot gallery cover the typed
+grid. Mission Control is now an Overview-owned read
 model over translated Markets, Portfolio, News, Alerts, and Launchpad snapshots.
 Its responsive live surface includes exact pulse provenance, portfolio KPIs and
 positions, provider-backed events, source health, startup-sampled saved work,
@@ -561,9 +571,8 @@ name with ordinal fallback, selected cell, and row/column viewport without
 duplicating workbook data, clipboard contents, or undo history. Exact restart,
 renamed-sheet fallback, missing-workbook, and unknown-future-field tests lock its
 recovery semantics. A keyboard-only restart test locks the multi-pane round
-trip. P1 exit still requires Launchpad import/export, typed
-screen/portfolio/sheet/layout tiles, capture adoption for the remaining research
-and table workspaces, configurable split geometry, and unified discovery.
+trip. P1 exit still requires capture adoption for the remaining research and
+table workspaces, configurable split geometry, and unified discovery.
 
 ### P2 — Market-data fabric, microstructure, and chart workstation
 

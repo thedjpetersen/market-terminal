@@ -2057,6 +2057,21 @@ impl App {
                 }
             }
             AppIntent::DispatchCommand { command, origin } => {
+                if let Some(invocation) = CommandInvocation::parse(&command).filter(|invocation| {
+                    invocation.function == "VIEW"
+                        && invocation.args.len() >= 2
+                        && matches!(
+                            invocation.args[0].to_ascii_uppercase().as_str(),
+                            "RESTORE" | "OPEN"
+                        )
+                }) {
+                    self.apply_saved_view_command(&invocation);
+                    self.events.publish(CommandDispatched {
+                        command,
+                        target: Some(self.active_workspace),
+                    });
+                    return;
+                }
                 let destination = self.workspaces.resolve_command(&command);
                 if destination == Some(origin) {
                     return;
@@ -4093,6 +4108,53 @@ mod tests {
         assert!(restarted
             .command_feedback()
             .is_some_and(|message| message.contains("VIEW RESTORED")));
+    }
+
+    #[test]
+    fn feature_intent_can_restore_a_saved_layout_through_the_shell_router() {
+        let documents = Arc::new(MemoryFeatureRepository::default());
+        let mut app = bootstrap::demo_app().with_saved_view_repository(documents);
+        app.settings_visible = false;
+        app.settings_first_run = false;
+
+        app.command = "VIEW SAVE Opening Layout".to_owned();
+        app.execute_command();
+        app.command = "PORT".to_owned();
+        app.execute_command();
+        assert_eq!(app.active_workspace(), PORTFOLIO);
+
+        app.apply_intent(AppIntent::DispatchCommand {
+            command: "VIEW RESTORE \"Opening Layout\"".to_owned(),
+            origin: LAUNCHPAD,
+        });
+
+        assert_eq!(app.active_workspace(), OVERVIEW);
+        assert!(app
+            .command_feedback()
+            .is_some_and(|message| message.contains("VIEW RESTORED")));
+    }
+
+    #[test]
+    fn feature_intent_cannot_mutate_the_saved_view_catalog() {
+        let mut app = bootstrap::demo_app();
+        app.saved_views
+            .save(
+                "Protected Layout",
+                OVERVIEW.as_str(),
+                vec![OVERVIEW.as_str().to_owned()],
+                WorkspaceViewState::new(OVERVIEW.as_str()),
+            )
+            .unwrap();
+
+        app.apply_intent(AppIntent::DispatchCommand {
+            command: "VIEW DELETE \"Protected Layout\"".to_owned(),
+            origin: LAUNCHPAD,
+        });
+
+        assert!(app.saved_views.find("Protected Layout").is_some());
+        assert!(app
+            .command_feedback()
+            .is_some_and(|message| message.contains("REQUESTED COMMAND UNAVAILABLE")));
     }
 
     #[test]

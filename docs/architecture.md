@@ -44,10 +44,17 @@ bootstrap ──▶ app kernel
 - `features/<name>` is a bounded context. It owns its domain types, outbound
   query port, local UI state, and terminal workspace adapter.
   Launchpad follows this rule: its bounded tile aggregate owns validation,
-  stable identity, revisioning, and edit semantics; its workspace maps tiles to
-  opaque stale-safe actions and validated shell intents; and its narrow state
-  port is implemented by the local persistence adapter. A capacity-one worker
-  coalesces edits so disk I/O never runs in the input or rendering path.
+  stable identity, revisioning, typed destination semantics, portable document
+  merge/replace rules, and edit semantics. Its workspace maps tiles to opaque
+  stale-safe actions and validated shell intents; its narrow state and portable
+  file ports are implemented by separate local adapters. A capacity-one worker
+  coalesces state edits so disk I/O never runs in the input or rendering path.
+  Portable files deliberately omit machine-local identity and revision state.
+  The shell accepts saved-layout intents through its saved-view service, while
+  instrument, screen, portfolio, and sheet commands continue through the owning
+  workspace registry. This preserves the feature boundary without making saved
+  views a Launchpad dependency. See `docs/launchpad.md` for the routing and
+  migration contract.
   Mission Control is an Overview-owned read model rather than a cross-feature
   domain import. The live infrastructure composer translates Markets,
   Portfolio, News, Alerts, and Launchpad snapshots into Overview DTOs with

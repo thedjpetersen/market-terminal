@@ -25,9 +25,9 @@ use crate::{
         DemoAlertsReplay, DemoChartHistory, DemoChatGateway, DemoData, DemoInstrumentSearch,
         DemoMarketDataReplay, DemoSpreadsheetMarketData, DemoWatchlistCatalog, FinnhubMarketData,
         IrcChatGateway, LiveAlertsQuery, LiveMarketsQuery, LiveNewsFeed, LiveOverviewQuery,
-        LiveSecurityQuery, LiveSpreadsheetMarketData, LocalPersistence, LocalSpreadsheetFiles,
-        OpenRouterConfig, OpenRouterGateway, PortfolioAssistantContextQuery, PortfolioRiskQuery,
-        SecInstrumentSearch, SystemNewsArticleOpener, YahooMarketData,
+        LiveSecurityQuery, LiveSpreadsheetMarketData, LocalLaunchpadFiles, LocalPersistence,
+        LocalSpreadsheetFiles, OpenRouterConfig, OpenRouterGateway, PortfolioAssistantContextQuery,
+        PortfolioRiskQuery, SecInstrumentSearch, SystemNewsArticleOpener, YahooMarketData,
     },
 };
 
@@ -157,7 +157,9 @@ fn build_app(providers: AppProviders) -> App {
     let workspaces = WorkspaceRegistry::new(vec![
         Box::new(OverviewWorkspace::new(overview_query)),
         Box::new(match launchpad_state_store {
-            Some(store) => LaunchpadWorkspace::persistent(store),
+            Some(store) => {
+                LaunchpadWorkspace::persistent_with_files(store, Arc::new(LocalLaunchpadFiles))
+            }
             None => LaunchpadWorkspace::new(),
         }),
         Box::new(desk_workspace),

@@ -12,7 +12,10 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use super::alert_state::{decode_alert_rules, encode_alert_rules};
 use crate::features::alerts::{AlertRulesState, AlertStateError, AlertStateStore};
-use crate::features::launchpad::{LaunchpadState, LaunchpadStateError, LaunchpadStateStore};
+use crate::features::launchpad::{
+    LaunchpadState, LaunchpadStateError, LaunchpadStateStore, LaunchpadTile,
+    LAUNCHPAD_SCHEMA_VERSION,
+};
 use crate::features::persistence::{
     DocumentId, FeatureDocument, FeatureDocumentRepository, FeatureKey, PersistenceError,
     SessionState, SessionStateRepository, MAX_DOCUMENT_BYTES,
@@ -522,8 +525,7 @@ impl LaunchpadStateStore for LocalPersistence {
         FeatureDocumentRepository::load(self, &feature, &id)
             .map_err(launchpad_persistence_error)?
             .map(|document| {
-                let state: LaunchpadState = serde_json::from_value(document.payload().clone())
-                    .map_err(|error| LaunchpadStateError::Corrupt(error.to_string()))?;
+                let state = decode_launchpad_state(document.payload().clone())?;
                 state
                     .validate()
                     .map_err(|error| LaunchpadStateError::Corrupt(error.to_string()))?;
@@ -551,6 +553,60 @@ impl LaunchpadStateStore for LocalPersistence {
         )
         .map_err(|error| LaunchpadStateError::Corrupt(error.to_string()))?;
         FeatureDocumentRepository::save(self, &document).map_err(launchpad_persistence_error)
+    }
+}
+
+#[derive(Deserialize)]
+struct LegacyLaunchpadState {
+    schema_version: u16,
+    revision: u64,
+    next_id: u64,
+    tiles: Vec<LegacyLaunchpadTile>,
+}
+
+#[derive(Deserialize)]
+struct LegacyLaunchpadTile {
+    id: u64,
+    label: String,
+    command: String,
+}
+
+fn decode_launchpad_state(
+    payload: serde_json::Value,
+) -> Result<LaunchpadState, LaunchpadStateError> {
+    let version = payload
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            LaunchpadStateError::Corrupt("missing launchpad schema version".to_owned())
+        })?;
+    match version {
+        1 => {
+            let legacy: LegacyLaunchpadState = serde_json::from_value(payload)
+                .map_err(|error| LaunchpadStateError::Corrupt(error.to_string()))?;
+            debug_assert_eq!(legacy.schema_version, 1);
+            let tiles = legacy
+                .tiles
+                .into_iter()
+                .map(|tile| {
+                    LaunchpadTile::new_command(tile.id, tile.label, tile.command)
+                        .map_err(|error| LaunchpadStateError::Corrupt(error.to_string()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(LaunchpadState {
+                schema_version: LAUNCHPAD_SCHEMA_VERSION,
+                revision: legacy.revision,
+                next_id: legacy.next_id,
+                tiles,
+            })
+        }
+        version if version == u64::from(LAUNCHPAD_SCHEMA_VERSION) => {
+            serde_json::from_value(payload)
+                .map_err(|error| LaunchpadStateError::Corrupt(error.to_string()))
+        }
+        version => Err(LaunchpadStateError::Unsupported(format!(
+            "launchpad schema version {version}"
+        ))),
     }
 }
 
@@ -1049,6 +1105,28 @@ mod tests {
                 &DocumentId::new("tiles").unwrap()
             )
             .exists());
+    }
+
+    #[test]
+    fn migrates_command_only_launchpad_state_to_typed_targets() {
+        let legacy = serde_json::json!({
+            "schema_version": 1,
+            "revision": 7,
+            "next_id": 3,
+            "tiles": [
+                {"id": 1, "label": "Home", "command": "HOME"},
+                {"id": 2, "label": "Apple", "command": "SEC AAPL US"}
+            ]
+        });
+        let migrated = decode_launchpad_state(legacy).unwrap();
+        assert_eq!(migrated.schema_version, LAUNCHPAD_SCHEMA_VERSION);
+        assert_eq!(migrated.revision, 7);
+        assert_eq!(migrated.tiles[1].command(), "SEC AAPL US");
+        assert!(migrated.tiles.iter().all(|tile| matches!(
+            tile.target,
+            crate::features::launchpad::LaunchpadTarget::Command { .. }
+        )));
+        migrated.validate().unwrap();
     }
 
     #[test]

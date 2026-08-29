@@ -25,7 +25,10 @@ use crate::{
     },
 };
 
-use super::{LaunchpadState, LaunchpadStateError, LaunchpadStateStore, ID, MAX_LAUNCHPAD_TILES};
+use super::{
+    LaunchpadFileStore, LaunchpadImportMode, LaunchpadState, LaunchpadStateError,
+    LaunchpadStateStore, LaunchpadTarget, ID, MAX_LAUNCHPAD_TILES,
+};
 
 struct PersistResult {
     revision: u64,
@@ -34,6 +37,7 @@ struct PersistResult {
 
 pub struct LaunchpadWorkspace {
     state: LaunchpadState,
+    file_store: Option<Arc<dyn LaunchpadFileStore>>,
     selected: usize,
     status: String,
     persistence_status: String,
@@ -49,14 +53,24 @@ pub struct LaunchpadWorkspace {
 
 impl LaunchpadWorkspace {
     pub fn new() -> Self {
-        Self::configured(None)
+        Self::configured(None, None)
     }
 
     pub fn persistent(store: Arc<dyn LaunchpadStateStore>) -> Self {
-        Self::configured(Some(store))
+        Self::configured(Some(store), None)
     }
 
-    fn configured(store: Option<Arc<dyn LaunchpadStateStore>>) -> Self {
+    pub fn persistent_with_files(
+        store: Arc<dyn LaunchpadStateStore>,
+        file_store: Arc<dyn LaunchpadFileStore>,
+    ) -> Self {
+        Self::configured(Some(store), Some(file_store))
+    }
+
+    fn configured(
+        store: Option<Arc<dyn LaunchpadStateStore>>,
+        file_store: Option<Arc<dyn LaunchpadFileStore>>,
+    ) -> Self {
         let (state, persistence_status) = match store.as_ref().map(|store| store.load_launchpad()) {
             None => (LaunchpadState::seeded(), "PROCESS-LOCAL TILES".to_owned()),
             Some(Ok(Some(state))) => {
@@ -104,6 +118,7 @@ impl LaunchpadWorkspace {
         };
         Self {
             state,
+            file_store,
             selected: 0,
             status: "SELECT A TILE · ENTER TO OPEN".to_owned(),
             persistence_status,
@@ -132,6 +147,22 @@ impl LaunchpadWorkspace {
             return;
         };
         match operation.as_str() {
+            "IMPORT" | "IMPORT!" if invocation.args.len() == 2 => {
+                self.import_document(
+                    &invocation.args[1],
+                    if operation == "IMPORT!" {
+                        LaunchpadImportMode::Replace
+                    } else {
+                        LaunchpadImportMode::Merge
+                    },
+                );
+            }
+            "EXPORT" | "EXPORT!" if invocation.args.len() == 2 => {
+                self.export_document(&invocation.args[1], operation == "EXPORT!");
+            }
+            "ADD" if invocation.args.len() >= 4 && is_target_kind(&invocation.args[1]) => {
+                self.add_typed_tile(&invocation.args[1..]);
+            }
             "ADD" if invocation.args.len() >= 3 => {
                 let label = invocation.args[1].clone();
                 let command = invocation.args[2..].join(" ");
@@ -202,20 +233,116 @@ impl LaunchpadWorkspace {
                 self.status = "RESET REQUIRES: LAUNCH RESET CONFIRM".to_owned();
             }
             _ => {
-                self.status = "USAGE · LAUNCH ADD <LABEL> <COMMAND> · RENAME <N> <LABEL> · MOVE <N> <N> · REMOVE <N> · RESET CONFIRM".to_owned();
+                self.status = "USAGE · LAUNCH ADD <TYPE?> <LABEL> <TARGET> · IMPORT[!] <JSON> · EXPORT[!] <JSON> · RENAME/MOVE/REMOVE/RESET".to_owned();
             }
         }
+    }
+
+    fn add_typed_tile(&mut self, args: &[String]) {
+        let kind = args[0].to_ascii_uppercase();
+        let label = args[1].clone();
+        let target = match kind.as_str() {
+            "COMMAND" if args.len() >= 3 => Some(LaunchpadTarget::Command {
+                command: args[2..].join(" "),
+            }),
+            "INSTRUMENT" if args.len() == 5 => Some(LaunchpadTarget::Instrument {
+                canonical_id: args[2].clone(),
+                symbol: args[3].clone(),
+                workspace: args[4].to_ascii_uppercase(),
+            }),
+            "SCREEN" if args.len() >= 4 => Some(LaunchpadTarget::Screen {
+                screen_id: args[2].clone(),
+                command: args[3..].join(" "),
+            }),
+            "PORTFOLIO" if matches!(args.len(), 3 | 4) => Some(LaunchpadTarget::Portfolio {
+                portfolio_id: args[2].clone(),
+                view: args.get(3).map(|view| view.to_ascii_uppercase()),
+            }),
+            "SHEET" if args.len() == 3 => Some(LaunchpadTarget::Sheet {
+                workbook_id: args[2].clone(),
+            }),
+            "LAYOUT" if args.len() == 3 => Some(LaunchpadTarget::Layout {
+                saved_view: args[2].clone(),
+            }),
+            _ => None,
+        };
+        let Some(target) = target else {
+            self.status = format!("INVALID {kind} TILE ARGUMENTS · SEE HELP");
+            return;
+        };
+        match self.state.add_target(label, target) {
+            Ok(_) => {
+                self.selected = self.state.tiles.len().saturating_sub(1);
+                self.status = format!("{kind} TILE ADDED · DURABLE SAVE QUEUED");
+                self.queue_persist();
+            }
+            Err(error) => self.status = format!("TILE NOT ADDED · {error}"),
+        }
+    }
+
+    fn import_document(&mut self, location: &str, mode: LaunchpadImportMode) {
+        let Some(files) = self.file_store.clone() else {
+            self.status = "LAUNCHPAD FILE ACCESS IS DISABLED".to_owned();
+            return;
+        };
+        let document = match files.read_document(location) {
+            Ok(document) => document,
+            Err(error) => {
+                self.status = format!("IMPORT ERROR · {error}");
+                return;
+            }
+        };
+        match self.state.import_document(&document, mode) {
+            Ok(report) => {
+                self.selected = self.selected.min(self.state.tiles.len().saturating_sub(1));
+                self.delete_armed = None;
+                self.status = format!(
+                    "IMPORTED {} TILE(S) · SKIPPED {} DUPLICATE(S) · {}",
+                    report.imported,
+                    report.skipped_duplicates,
+                    if report.replaced {
+                        "REPLACED"
+                    } else {
+                        "MERGED"
+                    }
+                );
+                self.queue_persist();
+            }
+            Err(error) => self.status = format!("IMPORT ERROR · {error}"),
+        }
+    }
+
+    fn export_document(&mut self, location: &str, overwrite: bool) {
+        let Some(files) = self.file_store.clone() else {
+            self.status = "LAUNCHPAD FILE ACCESS IS DISABLED".to_owned();
+            return;
+        };
+        let document = match self.state.export_document() {
+            Ok(document) => document,
+            Err(error) => {
+                self.status = format!("EXPORT ERROR · {error}");
+                return;
+            }
+        };
+        self.status = match files.write_document(location, &document, overwrite) {
+            Ok(()) => format!(
+                "EXPORTED {} TYPED TILE(S) · {location}",
+                self.state.tiles.len()
+            ),
+            Err(error) => format!("EXPORT ERROR · {error}"),
+        };
     }
 
     fn activate_selected(&mut self) -> bool {
         let Some(tile) = self.state.tiles.get(self.selected) else {
             return false;
         };
+        let command = tile.command();
         self.pending_intents.push(AppIntent::DispatchCommand {
-            command: tile.command.clone(),
+            command: command.clone(),
             origin: ID,
         });
-        self.status = format!("ROUTING · {}", tile.command);
+        self.status = format!("ROUTING {} · {command}", tile.target.kind());
         self.delete_armed = None;
         true
     }
@@ -392,8 +519,13 @@ impl Workspace for LaunchpadWorkspace {
             .enumerate()
             .map(|(index, (tile, area))| {
                 let mut action = WorkspaceAction::new(
-                    tile_action_id(tile.id, &tile.label, &tile.command),
-                    format!("Open {} with {}", tile.label, tile.command),
+                    tile_action_id(tile.id, &tile.label, &tile.target),
+                    format!(
+                        "Open {} {} with {}",
+                        tile.target.kind().to_ascii_lowercase(),
+                        tile.label,
+                        tile.command()
+                    ),
                     area,
                 );
                 if index == self.selected {
@@ -416,7 +548,7 @@ impl Workspace for LaunchpadWorkspace {
         };
         let Some(index) = self.state.tiles.iter().position(|tile| {
             tile.id == tile_id
-                && format!("{:016x}", tile_digest(&tile.label, &tile.command)) == expected_digest
+                && format!("{:016x}", tile_digest(&tile.label, &tile.target)) == expected_digest
         }) else {
             return false;
         };
@@ -492,7 +624,7 @@ impl Workspace for LaunchpadWorkspace {
                     Paragraph::new(vec![
                         Line::styled(tile.label.to_ascii_uppercase(), style),
                         Line::styled(
-                            tile.command.clone(),
+                            format!("{} · {}", tile.target.kind(), tile.command()),
                             if selected {
                                 style
                             } else {
@@ -606,13 +738,21 @@ fn launchpad_tile_areas(area: Rect, tile_count: usize) -> (usize, Vec<Rect>) {
     (columns, areas)
 }
 
-fn tile_action_id(id: u64, label: &str, command: &str) -> String {
-    format!("tile:{id}:{:016x}", tile_digest(label, command))
+fn is_target_kind(value: &str) -> bool {
+    matches!(
+        value.to_ascii_uppercase().as_str(),
+        "COMMAND" | "INSTRUMENT" | "SCREEN" | "PORTFOLIO" | "SHEET" | "LAYOUT"
+    )
 }
 
-fn tile_digest(label: &str, command: &str) -> u64 {
+fn tile_action_id(id: u64, label: &str, target: &LaunchpadTarget) -> String {
+    format!("tile:{id}:{:016x}", tile_digest(label, target))
+}
+
+fn tile_digest(label: &str, target: &LaunchpadTarget) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
-    for byte in label.bytes().chain([0]).chain(command.bytes()) {
+    let target = serde_json::to_string(target).expect("validated launch target must serialize");
+    for byte in label.bytes().chain([0]).chain(target.bytes()) {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
@@ -639,6 +779,38 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct MemoryFiles(Mutex<Option<String>>);
+
+    impl LaunchpadFileStore for MemoryFiles {
+        fn read_document(
+            &self,
+            _location: &str,
+        ) -> Result<String, super::super::LaunchpadFileError> {
+            self.0
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| super::super::LaunchpadFileError::Io("NOT FOUND".to_owned()))
+        }
+
+        fn write_document(
+            &self,
+            _location: &str,
+            document: &str,
+            overwrite: bool,
+        ) -> Result<(), super::super::LaunchpadFileError> {
+            let mut saved = self.0.lock().unwrap();
+            if saved.is_some() && !overwrite {
+                return Err(super::super::LaunchpadFileError::AlreadyExists(
+                    "launchpad.json".to_owned(),
+                ));
+            }
+            *saved = Some(document.to_owned());
+            Ok(())
+        }
+    }
+
     fn command(function: &str, args: &[&str]) -> CommandInvocation {
         CommandInvocation {
             function: function.to_owned(),
@@ -650,7 +822,10 @@ mod tests {
     fn commands_edit_reorder_and_remove_tiles() {
         let mut workspace = LaunchpadWorkspace::new();
         workspace.handle_command(&command("LAUNCH", &["ADD", "Apple", "SEC", "AAPL", "US"]));
-        assert_eq!(workspace.state.tiles.last().unwrap().command, "SEC AAPL US");
+        assert_eq!(
+            workspace.state.tiles.last().unwrap().command(),
+            "SEC AAPL US"
+        );
         workspace.handle_command(&command("LAUNCH", &["RENAME", "9", "Apple", "Research"]));
         assert_eq!(workspace.state.tiles[8].label, "Apple Research");
         workspace.handle_command(&command("LAUNCH", &["MOVE", "9", "1"]));
@@ -664,7 +839,9 @@ mod tests {
         let mut workspace = LaunchpadWorkspace::new();
         let area = Rect::new(0, 0, 120, 30);
         let action = workspace.actions(area)[0].id.clone();
-        workspace.state.tiles[0].command = "NEWS".to_owned();
+        workspace.state.tiles[0].target = LaunchpadTarget::Command {
+            command: "NEWS".to_owned(),
+        };
         assert!(!workspace.activate_action(&action));
         let fresh = workspace.actions(area)[0].id.clone();
         assert!(workspace.activate_action(&fresh));
@@ -683,6 +860,93 @@ mod tests {
         }
         let restored = LaunchpadWorkspace::persistent(store);
         assert_eq!(restored.state.tiles.last().unwrap().label, "Apple");
-        assert_eq!(restored.state.tiles.last().unwrap().command, "SEC AAPL US");
+        assert_eq!(
+            restored.state.tiles.last().unwrap().command(),
+            "SEC AAPL US"
+        );
+    }
+
+    #[test]
+    fn typed_commands_create_every_portable_destination_and_route_exactly() {
+        let mut workspace = LaunchpadWorkspace::new();
+        workspace.state.tiles.clear();
+        workspace.state.next_id = 9;
+        let commands = [
+            command(
+                "LAUNCH",
+                &[
+                    "ADD",
+                    "INSTRUMENT",
+                    "Apple",
+                    "equity:us:AAPL",
+                    "AAPL US",
+                    "SEC",
+                ],
+            ),
+            command(
+                "LAUNCH",
+                &["ADD", "SCREEN", "US Movers", "us-movers", "FIND", "US"],
+            ),
+            command(
+                "LAUNCH",
+                &["ADD", "PORTFOLIO", "Tax Lots", "default", "LOTS"],
+            ),
+            command("LAUNCH", &["ADD", "SHEET", "Valuation", "valuation model"]),
+            command("LAUNCH", &["ADD", "LAYOUT", "Morning", "Morning Research"]),
+        ];
+        for invocation in &commands {
+            workspace.handle_command(invocation);
+        }
+        assert_eq!(
+            workspace
+                .state
+                .tiles
+                .iter()
+                .map(|tile| tile.command())
+                .collect::<Vec<_>>(),
+            vec![
+                "SEC AAPL US",
+                "FIND US",
+                "PORT LOTS",
+                "SHEET LOAD \"valuation model\"",
+                "VIEW RESTORE \"Morning Research\"",
+            ]
+        );
+        for index in 0..workspace.state.tiles.len() {
+            workspace.selected = index;
+            assert!(workspace.activate_selected());
+        }
+        assert_eq!(workspace.poll_intents().len(), 5);
+    }
+
+    #[test]
+    fn portable_export_merge_and_replace_are_file_backed_and_durable() {
+        let store = Arc::new(MemoryStore::default());
+        let files = Arc::new(MemoryFiles::default());
+        let mut source = LaunchpadWorkspace::persistent_with_files(store.clone(), files.clone());
+        source.handle_command(&command(
+            "LAUNCH",
+            &["ADD", "LAYOUT", "Closing", "Closing Layout"],
+        ));
+        source.handle_command(&command("LAUNCH", &["EXPORT", "launchpad.json"]));
+        assert!(source.status.starts_with("EXPORTED 9 TYPED TILE(S)"));
+
+        source.handle_command(&command("LAUNCH", &["REMOVE", "9"]));
+        source.handle_command(&command("LAUNCH", &["IMPORT", "launchpad.json"]));
+        assert!(source.status.contains("IMPORTED 1 TILE(S)"));
+        assert!(matches!(
+            source.state.tiles.last().map(|tile| &tile.target),
+            Some(LaunchpadTarget::Layout { saved_view }) if saved_view == "Closing Layout"
+        ));
+
+        source.handle_command(&command("LAUNCH", &["IMPORT!", "launchpad.json"]));
+        assert!(source.status.contains("REPLACED"));
+        drop(source);
+        let restored = LaunchpadWorkspace::persistent_with_files(store, files);
+        assert_eq!(restored.state.tiles.len(), 9);
+        assert!(matches!(
+            restored.state.tiles.last().map(|tile| &tile.target),
+            Some(LaunchpadTarget::Layout { saved_view }) if saved_view == "Closing Layout"
+        ));
     }
 }

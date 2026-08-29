@@ -157,11 +157,15 @@ fn local_mission_snapshot(
                     .tiles
                     .into_iter()
                     .take(8)
-                    .map(|tile| OverviewSavedWork {
-                        id: tile.id,
-                        label: tile.label,
-                        command: tile.command,
-                        kind: "COMMAND TILE".to_owned(),
+                    .map(|tile| {
+                        let command = tile.command();
+                        let kind = format!("{} TILE", tile.target.kind());
+                        OverviewSavedWork {
+                            id: tile.id,
+                            label: tile.label,
+                            command,
+                            kind,
+                        }
                     })
                     .collect::<Vec<_>>();
                 let detail = format!("{} SAVED TILE(S) · REV {revision}", work.len());

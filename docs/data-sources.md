@@ -35,9 +35,15 @@ Alert documents are sampled at startup so rendering performs no filesystem I/O.
   the separately versioned workbook document. Saved views do not persist
   provider responses, chart bars, portfolio holdings, article text, formula
   drafts, clipboard data, undo history, credentials, or terminal frames.
-  Launchpad stores only user-authored labels, exact terminal commands, stable
-  local tile IDs, and a revision. Visible-action rectangles, selections, delete
-  confirmation, and follow labels are derived in process and never persisted.
+  Launchpad stores only user-authored labels, typed destination identities,
+  exact routing metadata, stable local tile IDs, and a revision. Destination
+  identities can include canonical instrument IDs, stable screen/portfolio/
+  workbook identifiers, and saved-view references; they do not include the
+  underlying portfolio, sheet, screen, or layout contents. Portable Launchpad
+  JSON omits local IDs and revisions, is limited to 64 KiB, and is read or
+  written only after an explicit `LAUNCH IMPORT[!]` or `EXPORT[!]` command.
+  Visible-action rectangles, selections, delete confirmation, and follow labels
+  are derived in process and never persisted.
 - **Quality and privacy:** command, action, theme, Launchpad, and Mission Control
   routing behavior is deterministic under the checked-in fixtures. No command
   text, focus history, terminal frame, ranking result, or user interaction is

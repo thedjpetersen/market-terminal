@@ -48,7 +48,7 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "launchpad",
         prepare: prepare_launchpad,
-        hashes: [0xf22729a28219ae46, 0x2f3225c2ae81b973, 0xc2bc68d6ca7ded7a],
+        hashes: [0x759a01e13135056b, 0x2ebeefd55789d13e, 0x0947fe47f37b361f],
     },
     Golden {
         name: "spreadsheet-error",

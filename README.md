@@ -147,22 +147,39 @@ unsupported field, or future capability produces an explicit `DEGRADED` result
 while the remaining valid layout is recovered.
 
 Run `LAUNCH` (or press `L`) for the persistent Launchpad. Arrow keys or HJKL
-select tiles, `Enter` opens the selected command, `<`/`>` reorders it, and `X`
+select tiles, `Enter` opens the selected destination, `<`/`>` reorders it, and `X`
 twice removes it. Tiles also participate in spatial focus, mouse routing, and
-`F` follow hints. Edit through the bounded command API:
+`F` follow hints. Tiles are typed as commands, canonical instruments, saved
+screens, portfolios, workbooks, or saved layouts; the type and exact route are
+visible before activation. Edit through the bounded command API:
 
 ```text
 LAUNCH ADD "Apple Research" SEC AAPL US
+LAUNCH ADD INSTRUMENT "Apple Security" equity:US:XNAS:AAPL "AAPL US" SEC
+LAUNCH ADD SCREEN "US Finder" find-us FIND US
+LAUNCH ADD PORTFOLIO "Tax Lots" default LOTS
+LAUNCH ADD SHEET "Valuation Model" valuation-model
+LAUNCH ADD LAYOUT "Opening Layout" "Morning Research"
 LAUNCH RENAME 9 "Apple Deep Dive"
 LAUNCH MOVE 9 1
 LAUNCH REMOVE 9
+LAUNCH EXPORT ~/launchpad.json
+LAUNCH IMPORT ~/team-launchpad.json
 LAUNCH RESET CONFIRM
 ```
 
-Labels and commands are validated, tile identities remain stable across moves,
-and edits are coalesced onto a background crash-safe writer. A failed or corrupt
-load is disclosed and falls back to the versioned seeds instead of blocking the
-terminal.
+The original command-tile syntax remains compatible; `LAUNCH ADD COMMAND` is
+its explicit equivalent. `IMPORT` merges atomically and skips exact duplicates,
+while `IMPORT!` performs an explicit replacement. `EXPORT` refuses to overwrite
+an existing file; `EXPORT!` makes that destructive choice explicit. Portable
+documents are bounded to 64 KiB, contain typed labels and targets but no local
+tile IDs or revisions, and are written privately. Labels, target identities, and
+generated commands are validated, local tile identities remain stable across
+moves and matching replacements, and edits are coalesced onto a background
+crash-safe writer. Schema-v1 command tiles migrate to typed command targets. A
+failed or corrupt load is disclosed and falls back to the versioned seeds
+instead of blocking the terminal. See [the Launchpad contract](docs/launchpad.md)
+for the complete schema, merge, migration, and routing rules.
 
 Tmux-style panel switching is also available. Press `Ctrl+B`, release it, then
 use `Left`/`Right` or `N`/`P` for the next or previous workspace. Use `1`–`9`
@@ -752,6 +769,10 @@ locked state matrix in
 These captures are generated from the native Ratatui render buffer at a
 consistent 160 × 48 terminal size. They are application output, not design
 mockups.
+
+### Typed Launchpad
+
+![Persistent typed Launchpad for commands, instruments, screens, portfolios, workbooks, and saved layouts](docs/screenshots/launchpad.png)
 
 | Research overview | Live-style market monitor |
 | --- | --- |
