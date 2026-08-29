@@ -67,6 +67,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     })?;
     capture(&output, &font, "find", |app| command(app, "FIND US"))?;
     capture(&output, &font, "security", |app| command(app, "AAPL US"))?;
+    capture(&output, &font, "news", |app| command(app, "NEWS"))?;
+    capture(&output, &font, "news-reader", |app| {
+        command(app, "NEWS");
+        app.handle_key(key(KeyCode::Enter));
+    })?;
     Ok(())
 }
 

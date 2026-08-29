@@ -30,6 +30,47 @@ pub struct NewsStory {
     pub related_symbols: Vec<String>,
     pub instruments: Vec<InstrumentId>,
     pub url: Option<String>,
+    pub provenance: NewsProvenance,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewsFreshness {
+    Fresh,
+    StaleSource,
+}
+
+impl NewsFreshness {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Fresh => "FRESH",
+            Self::StaleSource => "STALE SOURCE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewsProvenance {
+    pub sources: Vec<String>,
+    pub feed_urls: Vec<String>,
+    pub published_at: Option<String>,
+    pub retrieved_at: String,
+    pub categories: Vec<String>,
+    pub language: Option<String>,
+    pub freshness: NewsFreshness,
+}
+
+impl NewsProvenance {
+    pub fn deterministic(topic: &str) -> Self {
+        Self {
+            sources: vec!["DETERMINISTIC REPLAY".to_owned()],
+            feed_urls: Vec::new(),
+            published_at: None,
+            retrieved_at: "REPLAY".to_owned(),
+            categories: vec![topic.to_owned()],
+            language: None,
+            freshness: NewsFreshness::Fresh,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -179,6 +220,7 @@ impl NewsWorkbench {
             }).collect();
             NewsStory {
                 id: headline.story_id(),
+                provenance: NewsProvenance::deterministic(&headline.topic),
                 headline,
                 byline: byline.to_owned(),
                 summary: summary.to_owned(),

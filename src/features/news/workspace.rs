@@ -1251,15 +1251,18 @@ fn story_expand_area(area: Rect) -> Rect {
 
 fn render_story(frame: &mut Frame, area: Rect, story: &NewsStory, article_status: &str) {
     let rows = Layout::vertical([Constraint::Min(6), Constraint::Length(4)]).split(area);
-    let mut lines = vec![
-        Line::styled(
-            format!(
-                "{} · {} · LIVE FEED",
-                story.headline.topic, story.headline.time
-            ),
-            AMBER,
+    let mut lines = vec![Line::styled(
+        format!(
+            "{} · {} · {}",
+            story.headline.topic,
+            story.headline.time,
+            story.provenance.freshness.label()
         ),
-        Line::styled(story.byline.as_str(), MUTED),
+        AMBER,
+    )];
+    lines.extend(story_provenance_lines(story));
+    lines.extend([
+        Line::styled(format!("BY {}", story.byline), MUTED),
         Line::raw(""),
         Line::styled(
             story.headline.title.as_str(),
@@ -1268,7 +1271,7 @@ fn render_story(frame: &mut Frame, area: Rect, story: &NewsStory, article_status
         Line::raw(""),
         Line::styled(story.summary.as_str(), YELLOW),
         Line::raw(""),
-    ];
+    ]);
     for paragraph in &story.body {
         lines.push(Line::raw(paragraph.as_str()));
         lines.push(Line::raw(""));
@@ -1426,13 +1429,20 @@ fn story_detail_lines(story: &NewsStory) -> Vec<Line<'_>> {
         Line::styled(
             format!(
                 "{} · {} · {} · {}",
-                story.headline.topic, story.headline.region, story.headline.time, story.byline
+                story.headline.topic,
+                story.headline.region,
+                story.headline.time,
+                story.provenance.freshness.label()
             ),
             MUTED,
         ),
+    ];
+    lines.extend(story_provenance_lines(story));
+    lines.extend([
+        Line::styled(format!("BY {}", story.byline), MUTED),
         Line::raw(""),
         Line::styled(story.summary.as_str(), YELLOW),
-    ];
+    ]);
     for paragraph in &story.body {
         lines.push(Line::raw(""));
         lines.push(Line::raw(paragraph.as_str()));
@@ -1453,6 +1463,45 @@ fn story_detail_lines(story: &NewsStory) -> Vec<Line<'_>> {
         Line::raw(""),
         Line::styled(article_body_status(story), MUTED),
     ]);
+    lines
+}
+
+fn story_provenance_lines(story: &NewsStory) -> Vec<Line<'static>> {
+    let sources = if story.provenance.sources.is_empty() {
+        "UNAVAILABLE".to_owned()
+    } else {
+        story.provenance.sources.join(" + ")
+    };
+    let published = story
+        .provenance
+        .published_at
+        .as_deref()
+        .unwrap_or("PUBLICATION TIME UNAVAILABLE");
+    let retrieved = if story.provenance.retrieved_at.is_empty() {
+        "RETRIEVAL TIME UNAVAILABLE"
+    } else {
+        story.provenance.retrieved_at.as_str()
+    };
+    let language = story
+        .provenance
+        .language
+        .as_deref()
+        .unwrap_or("UNAVAILABLE");
+    let categories = story
+        .provenance
+        .categories
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let mut lines = vec![
+        Line::styled(format!("SOURCE  {sources}"), MUTED),
+        Line::styled(format!("PUB     {published}"), MUTED),
+        Line::styled(format!("FETCH   {retrieved} · LANG {language}"), MUTED),
+    ];
+    if !categories.is_empty() {
+        lines.push(Line::styled(format!("TAGS    {categories}"), MUTED));
+    }
     lines
 }
 

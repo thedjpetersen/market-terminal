@@ -76,7 +76,7 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "desk-layout",
         prepare: prepare_desk_layout,
-        hashes: [0x25721fb84a222df1, 0x2086e600fe23b906, 0x22aba07c701e79e0],
+        hashes: [0x25721fb84a222df1, 0xad0a1688feb43dde, 0xb8a1d04e5eb8cedc],
     },
     Golden {
         name: "security-filings",
@@ -111,12 +111,12 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "news",
         prepare: prepare_news,
-        hashes: [0x805d8a9df1bfbe74, 0x6073aa4a27122aa3, 0x07d6fbebbf2c303e],
+        hashes: [0x805d8a9df1bfbe74, 0x0cefd4486b60eda1, 0x0e1fcc7df2b034b9],
     },
     Golden {
         name: "news-reader",
         prepare: prepare_news_reader,
-        hashes: [0x2d1dffcf21e05e74, 0x2d48d33b39bcca9a, 0x293ec73e84efe14e],
+        hashes: [0x6650e9f729a16d2f, 0xe04944b2d7d8f1f9, 0x1c722e75288cb335],
     },
     Golden {
         name: "alerts",

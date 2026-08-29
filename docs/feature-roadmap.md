@@ -857,6 +857,15 @@ loop before adding more asset classes.
 - Add licensed ticker-scoped and market news sentiment with lexical/model source,
   confidence/calibration, observation time, and fallback disclosure. AI emotion
   is optional and may not replace missing articles or claim objective truth.
+  - **Retrieval and enrichment foundation delivered:** bounded concurrent RSS/Atom
+    retrieval prevents per-source timeouts from accumulating; refresh flooding is
+    coalesced; canonical URL and title/date identities merge syndicated stories;
+    failed sources retain explicitly stale last-known rows while healthy sources
+    advance. Provider-neutral stories now carry source/feed identities, full
+    publication and retrieval times, categories, language, and freshness. Article
+    readability enriches missing attribution metadata, while deterministic
+    topic/region/symbol inference remains labeled separately from still-missing
+    licensed sentiment and model calibration.
 - Generalize Alerts to typed AND/OR expression trees over price, move, volume,
   indicators, news/topic, portfolio thresholds, calendar events, and spreadsheet
   expressions. Add preview, cooldown, expiry, maximum triggers, schedules,

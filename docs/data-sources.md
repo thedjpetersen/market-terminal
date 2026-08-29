@@ -295,12 +295,21 @@ endorsed by, or sponsored by Yahoo.
   `MARKET_TERMINAL_NEWS_FEEDS`.
 - **Content boundary:** the feed-provided headline, summary/byline metadata,
   timestamp, attribution, publisher URL, and any feed-provided body are
-  displayed. On explicit reader activation, the background worker may fetch the
-  publisher page and apply readability extraction. It does not bypass access
-  controls; unavailable full text stays visibly excerpt-only. Opening the web
-  source passes a validated `http(s)` URL to the system browser.
+  displayed. Canonicalized URLs, all contributing source/feed identities, full
+  publication/retrieval timestamps, categories, language, and source freshness
+  remain attached as explicit provenance. Deterministic topic, region, and
+  related-symbol labels are derived from bounded publisher text/category inputs;
+  they are not provider sentiment. On explicit reader activation, the background
+  worker may fetch the publisher page and apply readability extraction. It does
+  not bypass access controls; unavailable full text stays visibly excerpt-only.
+  Opening the web source passes a validated `http(s)` URL to the system browser.
 - **Caching:** bounded in-memory snapshots and article bodies only; no feed or
   extracted article content is persisted or committed to the repository.
+- **Retrieval/failure contract:** up to 24 validated feeds run concurrently under
+  independent 3–30 second timeouts. Canonical URL plus normalized title/date
+  identities merge syndicated copies and preserve source evidence. A failed
+  source retains its last successful bounded rows as `STALE SOURCE`; successful
+  sources continue advancing, and a complete absence remains visibly unavailable.
 
 ## User portfolio CSV
 

@@ -378,18 +378,33 @@ remain fixed escape routes.
 
 ## Live news
 
-The interactive app fetches real RSS/Atom feeds on a background thread; network
-latency never blocks terminal input or rendering. The defaults are Seeking
-Alpha news and investment ideas, Bloomberg Markets, MarketWatch Top Stories,
-Financial Times Markets, SEC press releases, and Federal Reserve press
-releases. Press `F9` in News to refresh immediately. Failed sources are shown as
-unavailable or degraded—the interactive app does not replace them with
-fabricated headlines or calendar events.
+The interactive app fetches real RSS/Atom feeds concurrently on a background
+worker; total refresh latency is bounded by the slowest source timeout rather
+than the sum of every timeout, and network latency never blocks terminal input
+or rendering. Refresh requests use a bounded, coalescing queue. The defaults are
+Seeking Alpha news and investment ideas, Bloomberg Markets, MarketWatch Top
+Stories, Financial Times Markets, SEC press releases, and Federal Reserve press
+releases. Press `F9` in News to refresh immediately. If one source fails, the
+last successful stories from that source remain visible as `STALE SOURCE` while
+successful sources continue updating. A total failure is shown as unavailable;
+the interactive app does not replace missing data with fabricated headlines or
+calendar events.
+
+Feed links are normalized to validated `http(s)` URLs with tracking parameters
+and fragments removed. Syndicated copies are merged by canonical URL and a
+bounded title/date identity, preserving every source and category instead of
+showing duplicate rows. Story details expose publisher source, full publication
+timestamp, retrieval time, categories, language, and freshness. Topic, region,
+and related-symbol labels are deterministic enrichments over publisher title,
+summary, categories, cashtags, and a bounded company-name map; they are not
+provider sentiment or undisclosed model output.
 
 Select a story and press Enter or `V`—or click `READ HERE`—to open the
 full-workspace reader. MarketTerm first displays publisher-provided feed content
 and, when the feed contains only an excerpt, downloads and extracts the readable
-article text on the existing background worker. Use `J`/`K`, arrow keys,
+article text on the existing background worker. Readability metadata can enrich
+the byline, publisher, language, excerpt, and publication timestamp when the feed
+omits them. Use `J`/`K`, arrow keys,
 PgUp/PgDn, Space, or the mouse wheel to scroll; use `V`, Esc, or the close button
 to return. Press `O` or click `OPEN WEB` at any time to open the original page
 in your system browser. Paywalls, sign-in requirements, robots restrictions,
@@ -408,7 +423,11 @@ Override the defaults with comma-separated feeds:
 ```dotenv
 MARKET_TERMINAL_NEWS_FEEDS="https://example.com/markets.xml,https://example.com/company-news.xml"
 MARKET_TERMINAL_NEWS_REFRESH_SECS=300
+MARKET_TERMINAL_NEWS_TIMEOUT_SECS=12
 ```
+
+At most 24 distinct validated feeds are accepted. Refresh intervals are bounded
+to 60–3,600 seconds and per-source timeouts to 3–30 seconds.
 
 ## Live market data
 
@@ -947,6 +966,8 @@ mockups.
 | ![Debounced local alert rules with lifecycle and audit state](docs/screenshots/alerts.png) | ![Single-security quote, chart, fundamentals, estimates, and news](docs/screenshots/security.png) |
 | **Instrument discovery** | **Portfolio risk** |
 | ![Ranked canonical instrument search results](docs/screenshots/find.png) | ![Versioned per-currency portfolio concentration and non-cash shock analysis](docs/screenshots/risk.png) |
+| **Provenance-rich news** | **In-terminal article reader** |
+| ![Canonicalized News feed with explicit freshness and source evidence](docs/screenshots/news.png) | ![News reader with publisher and retrieval evidence](docs/screenshots/news-reader.png) |
 
 ## Run locally
 
