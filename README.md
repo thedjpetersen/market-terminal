@@ -1127,6 +1127,9 @@ and registry; infrastructure implements feature-owned ports and is wired at
 the composition root.
 
 ```text
+crates/
+└── market-terminal-engine/ host-neutral Backtesting, Options, Fixed Income,
+                            and a versioned request/response API
 src/
 ├── app/             lifecycle, input modes, workspace contract and registry
 ├── features/        bounded contexts packaged by feature
@@ -1140,9 +1143,9 @@ src/
 │   ├── persistence/ versioned session + opaque feature-document ports
 │   ├── watchlist/   monitor model + catalog port + workspace
 │   ├── charting/    chart specification + history port + workspace
-│   ├── backtesting/ immutable replay inputs + engine + audit workspace
-│   ├── options/     European reference model + Greeks + scenario workspace
-│   ├── fixed_income/ fixed-rate schedule + price/yield risk reference workspace
+│   ├── backtesting/ engine compatibility facade + ports + audit workspace
+│   ├── options/     engine compatibility facade + scenario workspace
+│   ├── fixed_income/ engine compatibility facade + price/yield risk workspace
 │   ├── chat/        IRC domain + gateway port + workspace
 │   ├── spreadsheet/ workbook domain + application + presentation
 │   └── assistant/   AI conversation domain + provider port + workspace
@@ -1152,8 +1155,9 @@ src/
 └── bootstrap.rs     dependency injection and feature registration
 ```
 
-See [`docs/architecture.md`](docs/architecture.md) for dependency rules and
-the recipe for adding a new terminal function.
+See [`docs/architecture.md`](docs/architecture.md) for dependency rules,
+[`docs/engine.md`](docs/engine.md) for the reusable host contract, and the recipe
+for adding a new terminal or web function.
 
 ## License
 

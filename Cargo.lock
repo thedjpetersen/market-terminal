@@ -1239,6 +1239,7 @@ dependencies = [
  "html-escape",
  "image",
  "irc",
+ "market-terminal-engine",
  "quick-xml 0.42.0",
  "ratatui",
  "reqwest",
@@ -1247,6 +1248,14 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "market-terminal-engine"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

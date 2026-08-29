@@ -250,6 +250,14 @@ move to its own crate later without changing its public vocabulary.
   Portfolio domain types or repository access. Watchlist also consumes the
   foundation-owned canonical `InstrumentId` directly rather than Market Data's
   compatibility alias.
+- **Complete:** first web-ready engine extraction. Backtesting, Options, and
+  Fixed Income now compile in the dependency-light `market-terminal-engine`
+  crate without Ratatui, Crossterm, Tokio, HTTP, environment, filesystem, clock,
+  or concrete provider access. A versioned serde envelope executes a closed set
+  of deterministic operations with stable error codes and typed results; native
+  feature modules remain compatibility facades over the same types. Architecture
+  tests reject host dependencies, I/O, or reacquired domain behavior. This is a
+  reusable engine boundary, not an HTTP service or a second implementation.
 - **Complete:** P1 saved workspace experience. Five versioned Trader, Quant,
   PM, Risk, and Ops seeds now project through the live registry, disclose
   missing destinations, and require an explicit modal confirmation. The first

@@ -52,6 +52,82 @@ fn manifest_root() -> PathBuf {
 }
 
 #[test]
+fn extracted_engine_is_host_neutral_and_terminal_facades_are_thin() {
+    let root = manifest_root();
+    let engine = root.join("crates/market-terminal-engine");
+    let manifest = fs::read_to_string(engine.join("Cargo.toml")).expect("engine manifest");
+    for dependency in [
+        "crossterm",
+        "ratatui",
+        "tokio",
+        "reqwest",
+        "chrono",
+        "csv",
+        "dotenvy",
+    ] {
+        assert_absent(
+            &engine.join("Cargo.toml"),
+            &manifest,
+            dependency,
+            "the reusable engine may depend only on host-neutral libraries",
+        );
+    }
+
+    for path in rust_sources(&engine.join("src")) {
+        let source = production_source(&path);
+        let compact = source
+            .chars()
+            .filter(|value| !value.is_whitespace())
+            .collect::<String>();
+        for (needle, reason) in [
+            (
+                "market_terminal::",
+                "engine code cannot depend on the native host",
+            ),
+            (
+                "crate::app",
+                "engine code cannot depend on application-shell state",
+            ),
+            ("std::fs", "engine code cannot perform filesystem I/O"),
+            ("fs::", "engine code cannot perform filesystem I/O"),
+            ("std::net", "engine code cannot perform network I/O"),
+            ("net::", "engine code cannot perform network I/O"),
+            ("std::env", "engine code cannot read process configuration"),
+            ("env::", "engine code cannot read process configuration"),
+            ("std::time", "engine code cannot consult a host clock"),
+            ("SystemTime", "engine code cannot consult a host clock"),
+            ("Instant", "engine code cannot consult a host clock"),
+            ("std::process", "engine code cannot launch host processes"),
+            ("process::", "engine code cannot launch host processes"),
+            ("std::thread", "engine code cannot launch host threads"),
+            ("thread::", "engine code cannot launch host threads"),
+        ] {
+            assert!(
+                !compact.contains(needle),
+                "{} violates the architecture boundary: {reason} (found `{needle}`)",
+                path.display()
+            );
+        }
+    }
+
+    for feature in ["backtesting", "options", "fixed_income"] {
+        let facade = root.join(format!("src/features/{feature}/domain.rs"));
+        let source = production_source(&facade);
+        assert!(
+            source.contains("pub use market_terminal_engine::"),
+            "{} must remain a compatibility facade over the extracted engine",
+            facade.display()
+        );
+        assert_eq!(
+            source.matches("pub use market_terminal_engine::").count(),
+            1,
+            "{} should not reacquire domain behavior",
+            facade.display()
+        );
+    }
+}
+
+#[test]
 fn bounded_contexts_do_not_import_adapters_or_each_other() {
     let features = manifest_root().join("src/features");
     let mut contexts = fs::read_dir(&features)

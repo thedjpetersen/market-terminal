@@ -1,0 +1,13 @@
+[package]
+name = "market-terminal-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Host-neutral analytical engines and versioned API contracts for Market Terminal"
+license = "MIT"
+repository = "https://github.com/thedjpetersen/market-terminal"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

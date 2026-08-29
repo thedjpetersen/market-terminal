@@ -1,19 +1,32 @@
 # Architecture
 
 Market Terminal uses domain-driven design with package-by-feature boundaries.
-The goal is to let many teams add terminal functions without coordinating
-changes through a central screen enum, global data service, or monolithic
-renderer.
+The goal is to let many teams add terminal and web functions without
+coordinating changes through a central screen enum, global data service, or
+monolithic renderer. Mature deterministic analytics are extracted into the
+dependency-light `market-terminal-engine` crate so every host executes the same
+validated model instead of reproducing business logic at an API boundary.
 
 ## Dependency direction
 
 ```text
-bootstrap ──▶ app kernel
-    │            ▲
-    ├────────▶ features ──▶ foundation + shared UI primitives
-    │              ▲
-    └────▶ infrastructure adapters
+native bootstrap ──▶ app kernel
+       │                 ▲
+       ├────────────▶ features ──▶ foundation + shared UI primitives
+       │                 ▲  │
+       └────▶ infrastructure │
+                             ▼
+                    market-terminal-engine ◀── future web/API host
 ```
+
+- `crates/market-terminal-engine` owns host-neutral analytical contracts. Its
+  first extracted modules are Backtesting, Options, and Fixed Income. It has no
+  terminal, async-runtime, HTTP, clock, environment, filesystem, or concrete
+  provider dependency. A versioned serde request/response envelope exposes a
+  closed operation set, stable error codes, bounded request identity, and typed
+  results. Native feature modules retain thin compatibility facades, so the
+  extraction does not fork public types or terminal behavior. See
+  `docs/engine.md`.
 
 - `app` owns lifecycle, input modes, keyboard/mouse routing, and the stable
   `Workspace` plug-in contract. It has no market or portfolio business rules.
@@ -508,15 +521,17 @@ The next structural steps are intentionally additive:
   tracing where delivery guarantees require it;
 - add caching, retries, entitlements, and observability as infrastructure
   decorators around feature ports;
-- move bounded contexts into workspace crates when build times or team
-  ownership justify a Cargo workspace;
+- move additional mature pure domains into the existing Cargo workspace engine
+  crate when they have stable host-neutral contracts; split further only when
+  build times or team ownership justify another package;
 - preserve the completed typed saved-view identity and transient-data boundaries
   as future workspace schemas stabilize, and integrate saved objects into the
   unified discovery surface.
 
-The current boundary is deliberately a modular monolith. It gives strong
-ownership and test seams without paying the operational cost of services or a
-large multi-crate graph before those costs are warranted.
+The current boundary is deliberately a modular monolith with one extracted
+engine leaf crate. It gives strong ownership, web reuse, and test seams without
+paying the operational cost of services or a large multi-crate graph before
+those costs are warranted.
 
 These boundaries are executable, not solely diagrammed.
 `tests/architecture_boundaries.rs` scans production Rust source (excluding
@@ -526,4 +541,6 @@ them only through a feature-owned port wired in `bootstrap.rs`. Cross-context
 reads require a consumer-owned DTO and an infrastructure translator, as shown
 by Portfolio-to-Risk and Portfolio-to-Assistant. This gives a growing modular
 monolith a cheap extraction test: a context should remain movable without
-bringing another context's repository or domain graph with it.
+bringing another context's repository or domain graph with it. CI additionally
+rejects host dependencies or I/O access in the extracted engine and requires the
+three native feature domains to remain thin facades over that crate.
