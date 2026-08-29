@@ -30,9 +30,9 @@ use crate::{
 
 use super::{
     builtin_screen_definitions, evaluate_screen, Comparison, ScreenCatalogState, ScreenClause,
-    ScreenDefinition, ScreenEvaluation, ScreenField, ScreenSortDirection, ScreenStateError,
-    ScreenStateStore, ScreeningUniverseQuery, UniverseHistoryManifest, UniverseHistoryStore, ID,
-    MAX_SAVED_SCREENS,
+    ScreenDefinition, ScreenDimension, ScreenEvaluation, ScreenExpression, ScreenField,
+    ScreenSortDirection, ScreenStateError, ScreenStateStore, ScreeningUniverseQuery,
+    UniverseHistoryManifest, UniverseHistoryStore, ID, MAX_SAVED_SCREENS,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +60,7 @@ enum ScreenControl {
     Previous,
     Next,
     Security,
+    Chart,
     Spreadsheet,
     Monitor,
     History,
@@ -73,6 +74,7 @@ impl ScreenControl {
             Self::Previous => "control:previous",
             Self::Next => "control:next",
             Self::Security => "control:security",
+            Self::Chart => "control:chart",
             Self::Spreadsheet => "control:spreadsheet",
             Self::Monitor => "control:monitor",
             Self::History => "control:history",
@@ -86,6 +88,7 @@ impl ScreenControl {
             "control:previous" => Some(Self::Previous),
             "control:next" => Some(Self::Next),
             "control:security" => Some(Self::Security),
+            "control:chart" => Some(Self::Chart),
             "control:spreadsheet" => Some(Self::Spreadsheet),
             "control:monitor" => Some(Self::Monitor),
             "control:history" => Some(Self::History),
@@ -708,6 +711,22 @@ impl ScreeningWorkspace {
         true
     }
 
+    fn open_selected_chart(&mut self) -> bool {
+        let Some(symbol) = self
+            .evaluation
+            .as_ref()
+            .and_then(|evaluation| evaluation.rows.get(self.selected))
+            .map(|row| row.member.symbol.clone())
+        else {
+            return false;
+        };
+        self.pending_intents.push(AppIntent::DispatchCommand {
+            command: format!("CHART {symbol}"),
+            origin: ID,
+        });
+        true
+    }
+
     fn open_universe_monitor(&mut self) -> bool {
         let universe = self.active_definition().universe_id.clone();
         self.pending_intents.push(AppIntent::DispatchCommand {
@@ -722,6 +741,7 @@ impl ScreeningWorkspace {
             ScreenControl::Previous => self.cycle_screen(-1),
             ScreenControl::Next => self.cycle_screen(1),
             ScreenControl::Security => return self.open_selected(),
+            ScreenControl::Chart => return self.open_selected_chart(),
             ScreenControl::Spreadsheet => return self.send_selected_to_sheet(),
             ScreenControl::Monitor => return self.open_universe_monitor(),
             ScreenControl::History => self.history_summary(None),
@@ -736,6 +756,7 @@ impl ScreeningWorkspace {
             Constraint::Length(9),
             Constraint::Length(9),
             Constraint::Length(12),
+            Constraint::Length(10),
             Constraint::Length(12),
             Constraint::Length(11),
             Constraint::Length(11),
@@ -747,6 +768,7 @@ impl ScreeningWorkspace {
             ScreenControl::Previous,
             ScreenControl::Next,
             ScreenControl::Security,
+            ScreenControl::Chart,
             ScreenControl::Spreadsheet,
             ScreenControl::Monitor,
             ScreenControl::History,
@@ -761,7 +783,7 @@ impl ScreeningWorkspace {
 
     fn control_enabled(&self, control: ScreenControl) -> bool {
         match control {
-            ScreenControl::Security | ScreenControl::Spreadsheet => self
+            ScreenControl::Security | ScreenControl::Chart | ScreenControl::Spreadsheet => self
                 .evaluation
                 .as_ref()
                 .is_some_and(|evaluation| !evaluation.rows.is_empty()),
@@ -851,6 +873,7 @@ impl Workspace for ScreeningWorkspace {
             KeyCode::Enter | KeyCode::Char('s') => {
                 return self.open_selected();
             }
+            KeyCode::Char('c') => return self.open_selected_chart(),
             KeyCode::Char('a') => return self.send_selected_to_sheet(),
             KeyCode::Char('m') => return self.open_universe_monitor(),
             KeyCode::Char('h') => self.history_summary(None),
@@ -931,6 +954,7 @@ impl Workspace for ScreeningWorkspace {
                         ScreenControl::Previous => "Run previous saved screen",
                         ScreenControl::Next => "Run next saved screen",
                         ScreenControl::Security => "Open selected result in Security",
+                        ScreenControl::Chart => "Open selected result in Chart",
                         ScreenControl::Spreadsheet => "Insert selected symbol into Spreadsheet",
                         ScreenControl::Monitor => "Open source universe in Monitor",
                         ScreenControl::History => "List retained point-in-time universe versions",
@@ -1153,6 +1177,7 @@ impl Workspace for ScreeningWorkspace {
                 ScreenControl::Previous => " [ PREV ",
                 ScreenControl::Next => " ] NEXT ",
                 ScreenControl::Security => " ENTER SEC ",
+                ScreenControl::Chart => " C CHART ",
                 ScreenControl::Spreadsheet => " A SHEET ",
                 ScreenControl::Monitor => " M MONITOR ",
                 ScreenControl::History => " H HISTORY ",
@@ -1261,58 +1286,188 @@ impl Drop for ScreeningWorkspace {
 
 fn parse_saved_definition(args: &[String]) -> Result<ScreenDefinition, String> {
     if args.len() < 5 {
-        return Err("usage: SCREEN SAVE <id> <universe> <field> <op> <value> [AND ...] [SORT <field> <ASC|DESC>] [LIMIT <n>]".to_owned());
+        return Err(
+            "usage: SCREEN SAVE <id> <universe> <expression> [SORT <field> <ASC|DESC>] [LIMIT <n>]"
+                .to_owned(),
+        );
     }
     let id = args[0].to_ascii_lowercase();
     let universe = args[1].to_ascii_lowercase();
+    let tokens = expand_expression_tokens(&args[2..]);
+    let mut parser = ScreenExpressionParser::new(&tokens);
+    let expression = parser.parse()?;
+    let mut index = parser.index;
     let mut clauses = Vec::new();
-    let mut index = 2;
-    let first = parse_clause(args, &mut index)?;
-    let mut sort_field = first.field;
-    clauses.push(first);
+    collect_expression_clauses(&expression, &mut clauses);
+    let mut sort_field = clauses
+        .first()
+        .expect("validated expressions have at least one predicate")
+        .field;
     let mut sort_direction = ScreenSortDirection::Descending;
     let mut limit = 50;
-    while index < args.len() {
-        match args[index].to_ascii_uppercase().as_str() {
-            "AND" => {
-                index += 1;
-                clauses.push(parse_clause(args, &mut index)?);
-            }
+    let mut saw_sort = false;
+    let mut saw_limit = false;
+    while index < tokens.len() {
+        match tokens[index].to_ascii_uppercase().as_str() {
             "SORT" => {
-                let field = args
+                if saw_sort {
+                    return Err("SORT may appear only once".to_owned());
+                }
+                let field = tokens
                     .get(index + 1)
                     .and_then(|value| ScreenField::parse(value))
                     .ok_or_else(|| "SORT requires a known field".to_owned())?;
-                let direction = args
+                let direction = tokens
                     .get(index + 2)
                     .and_then(|value| ScreenSortDirection::parse(value))
                     .ok_or_else(|| "SORT requires ASC or DESC".to_owned())?;
                 sort_field = field;
                 sort_direction = direction;
+                saw_sort = true;
                 index += 3;
             }
             "LIMIT" => {
-                limit = args
+                if saw_limit {
+                    return Err("LIMIT may appear only once".to_owned());
+                }
+                limit = tokens
                     .get(index + 1)
                     .and_then(|value| value.parse::<usize>().ok())
                     .ok_or_else(|| "LIMIT requires an integer".to_owned())?;
+                saw_limit = true;
                 index += 2;
             }
             token => return Err(format!("unexpected screen token {token}")),
         }
     }
     let label = id.replace(['-', '_'], " ").to_ascii_uppercase();
-    ScreenDefinition::new(
+    ScreenDefinition::new_expression(
         id,
         label,
         universe,
-        clauses,
+        expression,
         sort_field,
         sort_direction,
         limit,
         false,
     )
     .map_err(|error| error.to_string())
+}
+
+fn expand_expression_tokens(args: &[String]) -> Vec<String> {
+    let mut tokens = Vec::new();
+    for argument in args {
+        let mut current = String::new();
+        for character in argument.chars() {
+            if matches!(character, '(' | ')') {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+                tokens.push(character.to_string());
+            } else {
+                current.push(character);
+            }
+        }
+        if !current.is_empty() {
+            tokens.push(current);
+        }
+    }
+    tokens
+}
+
+struct ScreenExpressionParser<'a> {
+    tokens: &'a [String],
+    index: usize,
+}
+
+impl<'a> ScreenExpressionParser<'a> {
+    fn new(tokens: &'a [String]) -> Self {
+        Self { tokens, index: 0 }
+    }
+
+    fn parse(&mut self) -> Result<ScreenExpression, String> {
+        let expression = self.parse_or()?;
+        if self
+            .tokens
+            .get(self.index)
+            .is_some_and(|token| !matches!(token.to_ascii_uppercase().as_str(), "SORT" | "LIMIT"))
+        {
+            return Err(format!(
+                "unexpected expression token {}",
+                self.tokens[self.index]
+            ));
+        }
+        expression.validate().map_err(|error| error.to_string())?;
+        Ok(expression)
+    }
+
+    fn parse_or(&mut self) -> Result<ScreenExpression, String> {
+        let mut items = vec![self.parse_and()?];
+        while self.consume("OR") {
+            items.push(self.parse_and()?);
+        }
+        Ok(if items.len() == 1 {
+            items.remove(0)
+        } else {
+            ScreenExpression::Any(items)
+        })
+    }
+
+    fn parse_and(&mut self) -> Result<ScreenExpression, String> {
+        let mut items = vec![self.parse_not()?];
+        while self.consume("AND") {
+            items.push(self.parse_not()?);
+        }
+        Ok(if items.len() == 1 {
+            items.remove(0)
+        } else {
+            ScreenExpression::All(items)
+        })
+    }
+
+    fn parse_not(&mut self) -> Result<ScreenExpression, String> {
+        if self.consume("NOT") {
+            return Ok(ScreenExpression::Not(Box::new(self.parse_not()?)));
+        }
+        self.parse_primary()
+    }
+
+    fn parse_primary(&mut self) -> Result<ScreenExpression, String> {
+        if self.consume("(") {
+            let expression = self.parse_or()?;
+            if !self.consume(")") {
+                return Err("screen expression has an unclosed group".to_owned());
+            }
+            return Ok(expression);
+        }
+        let clause = parse_clause(self.tokens, &mut self.index)?;
+        Ok(ScreenExpression::Predicate(clause))
+    }
+
+    fn consume(&mut self, expected: &str) -> bool {
+        if self
+            .tokens
+            .get(self.index)
+            .is_some_and(|token| token.eq_ignore_ascii_case(expected))
+        {
+            self.index += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn collect_expression_clauses(expression: &ScreenExpression, target: &mut Vec<ScreenClause>) {
+    match expression {
+        ScreenExpression::Predicate(clause) => target.push(clause.clone()),
+        ScreenExpression::All(items) | ScreenExpression::Any(items) => {
+            for item in items {
+                collect_expression_clauses(item, target);
+            }
+        }
+        ScreenExpression::Not(item) => collect_expression_clauses(item, target),
+    }
 }
 
 fn parse_version(value: &str) -> Option<u64> {
@@ -1343,10 +1498,42 @@ fn parse_clause(args: &[String], index: &mut usize) -> Result<ScreenClause, Stri
         .ok_or_else(|| "clause requires >, >=, <, <=, or =".to_owned())?;
     let value = args
         .get(*index + 2)
-        .and_then(|value| value.parse::<f64>().ok())
-        .ok_or_else(|| "clause requires a numeric threshold".to_owned())?;
+        .ok_or_else(|| "clause requires a numeric threshold".to_owned())
+        .and_then(|value| parse_threshold(field, value))?;
     *index += 3;
     ScreenClause::new(field, comparison, value).map_err(|error| error.to_string())
+}
+
+fn parse_threshold(field: ScreenField, input: &str) -> Result<f64, String> {
+    let normalized = input.trim().to_ascii_lowercase().replace('_', "");
+    let suffixes = ["bps", "bp", "pct", "%", "k", "m", "b"];
+    let suffix = suffixes
+        .into_iter()
+        .find(|suffix| normalized.ends_with(suffix));
+    let number = suffix.map_or(normalized.as_str(), |suffix| {
+        &normalized[..normalized.len().saturating_sub(suffix.len())]
+    });
+    let value = number
+        .parse::<f64>()
+        .map_err(|_| "clause requires a numeric threshold".to_owned())?;
+    let multiplier = match (field.dimension(), suffix) {
+        (_, None) | (ScreenDimension::Percent, Some("%" | "pct")) => 1.0,
+        (ScreenDimension::BasisPoints, Some("bp" | "bps")) => 1.0,
+        (ScreenDimension::Quantity, Some("k")) => 1_000.0,
+        (ScreenDimension::Quantity, Some("m")) => 1_000_000.0,
+        (ScreenDimension::Quantity, Some("b")) => 1_000_000_000.0,
+        (dimension, Some(unit)) => {
+            return Err(format!(
+                "unit {unit} is incompatible with {} ({dimension:?})",
+                field.key()
+            ));
+        }
+    };
+    let value = value * multiplier;
+    if !value.is_finite() {
+        return Err("screen threshold must be finite".to_owned());
+    }
+    Ok(value)
 }
 
 fn restore_identity_field(
@@ -1652,6 +1839,76 @@ mod tests {
         assert_eq!(parse_version("42"), Some(42));
         assert_eq!(parse_version("0x42"), Some(66));
         assert_eq!(parse_version("V0000000000000042"), Some(66));
+    }
+
+    #[test]
+    fn custom_parser_supports_nested_logic_precedence_and_typed_units() {
+        let args = [
+            "quality-move",
+            "core",
+            "(",
+            "change_pct",
+            ">=",
+            "1%",
+            "OR",
+            "volume",
+            ">=",
+            "20m",
+            ")",
+            "AND",
+            "NOT",
+            "spread_bps",
+            ">",
+            "5bps",
+            "SORT",
+            "change_pct",
+            "DESC",
+            "LIMIT",
+            "25",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+        let definition = parse_saved_definition(&args).unwrap();
+        assert!(definition.expression_tree.is_some());
+        assert_eq!(definition.clauses.len(), 3);
+        assert_eq!(definition.clauses[1].value, 20_000_000.0);
+        assert_eq!(
+            definition.expression(),
+            "(% CHG >= 1.00% OR VOLUME >= 20.00M) AND NOT SPREAD BP > 5.00BP"
+        );
+
+        let mut incompatible = args;
+        incompatible[5] = "1bps".to_owned();
+        assert!(parse_saved_definition(&incompatible)
+            .unwrap_err()
+            .contains("incompatible"));
+
+        let attached = [
+            "attached",
+            "core",
+            "(change_pct",
+            ">=",
+            "1%",
+            "OR",
+            "volume",
+            ">=",
+            "20m)",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+        assert!(parse_saved_definition(&attached).is_ok());
+    }
+
+    #[test]
+    fn selected_result_routes_directly_to_chart() {
+        let mut workspace = ScreeningWorkspace::new(Arc::new(FixtureQuery));
+        settle(&mut workspace);
+        assert!(workspace.handle_key(KeyEvent::from(KeyCode::Char('c'))));
+        assert!(
+            matches!(workspace.poll_intents().as_slice(), [AppIntent::DispatchCommand { command, origin }] if command.starts_with("CHART ") && *origin == ID)
+        );
     }
 
     #[test]

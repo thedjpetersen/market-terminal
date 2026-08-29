@@ -131,11 +131,16 @@ bootstrap ──▶ app kernel
   only memory. The News port exposes provider-backed events separately so the
   deterministic gallery calendar cannot appear in the live daily surface.
   Screening follows the same consumer-owned projection rule. Its domain owns
-  universe snapshots, typed clauses, null policy, deterministic ranking,
+  universe snapshots, typed predicates, a bounded recursive boolean AST, unit
+  dimensions, tri-state null policy, deterministic ranking,
   evidence, and saved-definition validation. A composition-root
   `MarketScreeningUniverseQuery` translates Watchlist membership plus one
   Market Data quote batch into Screening DTOs; Screening never imports either
-  peer feature's types. The translation emits one immutable input version,
+  peer feature's types. Legacy flat definitions migrate as an implicit `AND`;
+  new definitions persist an explicit tagged tree and matching leaf catalog.
+  Validation bounds depth and leaf count, rejects incompatible threshold units,
+  and keeps unknown predicate values unknown through `NOT` so missing data can
+  never become a match by negation. The translation emits one immutable input version,
   provider set, as-of, field availability, and canonical identities without
   blending observations. Evaluation and definition persistence each use a
   separate capacity-one worker, so provider and disk I/O never enter input or

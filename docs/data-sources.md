@@ -102,8 +102,8 @@ persist provider data.
 
 ## Screening universe projection
 
-- **Surface:** `SCREEN` built-ins and saved definitions, explainable result rows,
-  Security/Spreadsheet row routing, and Monitor universe routing.
+- **Surface:** `SCREEN` built-ins and saved nested definitions, explainable result
+  rows, Security/Chart/Spreadsheet row routing, and Monitor universe routing.
 - **Membership:** the requested Watchlist definition supplies at most 2,000
   unique canonical instrument IDs. `core` and `default` resolve to the configured
   default Watchlist when no exact named definition exists.
@@ -115,7 +115,13 @@ persist provider data.
   observation time, provider set, canonical identity, field availability,
   values, and quality. Displayed results retain this version, as-of, source,
   coverage, exclusions, and clause-level actual values.
-- **Null/failure policy:** missing predicate or sort fields fail closed. Provider
+- **Expression policy:** one to eight leaves and eight levels are permitted with
+  `NOT` > `AND` > `OR` precedence. Percent, basis-point, and scaled-volume
+  suffixes are accepted only for compatible dimensions. Legacy flat definitions
+  remain an implicit `AND`.
+- **Null/failure policy:** missing predicate or sort fields fail closed. Boolean
+  evaluation is tri-state, so negating a missing value remains unknown rather
+  than becoming true. Provider
   denial, unavailable data, unknown universes, duplicate members, and oversized
   inputs remain typed failures. A refresh failure keeps the last valid result
   with a visible failure label rather than substituting gallery data.

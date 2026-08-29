@@ -9,6 +9,7 @@ use crate::foundation::InstrumentId;
 
 pub const MAX_UNIVERSE_MEMBERS: usize = 2_000;
 pub const MAX_SCREEN_CLAUSES: usize = 8;
+pub const MAX_SCREEN_EXPRESSION_DEPTH: usize = 8;
 pub const MAX_SCREEN_RESULTS: usize = 200;
 pub const MAX_SAVED_SCREENS: usize = 64;
 pub const MAX_UNIVERSE_HISTORY: usize = 32;
@@ -68,6 +69,23 @@ impl ScreenField {
             Self::DayRangePercent => member.day_range_percent,
         }
     }
+
+    pub const fn dimension(self) -> ScreenDimension {
+        match self {
+            Self::Last => ScreenDimension::Price,
+            Self::ChangePercent | Self::DayRangePercent => ScreenDimension::Percent,
+            Self::Volume => ScreenDimension::Quantity,
+            Self::SpreadBps => ScreenDimension::BasisPoints,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenDimension {
+    Price,
+    Percent,
+    Quantity,
+    BasisPoints,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,6 +164,146 @@ impl ScreenClause {
     }
 }
 
+/// Bounded boolean predicate tree owned by Screening. The tagged representation
+/// is deliberately explicit so saved definitions remain inspectable and future
+/// migrations never have to reverse-engineer a command string.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "items", rename_all = "snake_case")]
+pub enum ScreenExpression {
+    Predicate(ScreenClause),
+    All(Vec<ScreenExpression>),
+    Any(Vec<ScreenExpression>),
+    Not(Box<ScreenExpression>),
+}
+
+impl ScreenExpression {
+    pub fn validate(&self) -> Result<(), ScreenError> {
+        let mut predicates = 0;
+        self.validate_at_depth(1, &mut predicates)?;
+        if !(1..=MAX_SCREEN_CLAUSES).contains(&predicates) {
+            return Err(ScreenError::InvalidClauseCount);
+        }
+        Ok(())
+    }
+
+    fn validate_at_depth(&self, depth: usize, predicates: &mut usize) -> Result<(), ScreenError> {
+        if depth > MAX_SCREEN_EXPRESSION_DEPTH {
+            return Err(ScreenError::ExpressionTooDeep);
+        }
+        match self {
+            Self::Predicate(clause) => {
+                if !clause.value.is_finite() {
+                    return Err(ScreenError::InvalidThreshold);
+                }
+                *predicates = predicates.saturating_add(1);
+            }
+            Self::All(items) | Self::Any(items) => {
+                if items.len() < 2 {
+                    return Err(ScreenError::InvalidExpression);
+                }
+                for item in items {
+                    item.validate_at_depth(depth.saturating_add(1), predicates)?;
+                }
+            }
+            Self::Not(item) => item.validate_at_depth(depth.saturating_add(1), predicates)?,
+        }
+        Ok(())
+    }
+
+    pub fn label(&self) -> String {
+        self.label_with_precedence(0)
+    }
+
+    fn label_with_precedence(&self, parent_precedence: u8) -> String {
+        let (precedence, rendered) = match self {
+            Self::Predicate(clause) => (4, clause.label()),
+            Self::Not(item) => (3, format!("NOT {}", item.label_with_precedence(3))),
+            Self::All(items) => (
+                2,
+                items
+                    .iter()
+                    .map(|item| item.label_with_precedence(2))
+                    .collect::<Vec<_>>()
+                    .join(" AND "),
+            ),
+            Self::Any(items) => (
+                1,
+                items
+                    .iter()
+                    .map(|item| item.label_with_precedence(1))
+                    .collect::<Vec<_>>()
+                    .join(" OR "),
+            ),
+        };
+        if precedence < parent_precedence {
+            format!("({rendered})")
+        } else {
+            rendered
+        }
+    }
+
+    fn clauses(&self, target: &mut Vec<ScreenClause>) {
+        match self {
+            Self::Predicate(clause) => target.push(clause.clone()),
+            Self::All(items) | Self::Any(items) => {
+                for item in items {
+                    item.clauses(target);
+                }
+            }
+            Self::Not(item) => item.clauses(target),
+        }
+    }
+
+    fn evaluate(
+        &self,
+        member: &UniverseMember,
+        evidence: &mut Vec<ClauseEvidence>,
+    ) -> Option<bool> {
+        match self {
+            Self::Predicate(clause) => {
+                let actual = clause.field.value(member);
+                let passed =
+                    actual.is_some_and(|actual| clause.comparison.matches(actual, clause.value));
+                evidence.push(ClauseEvidence {
+                    clause: clause.clone(),
+                    actual,
+                    passed,
+                });
+                actual.map(|_| passed)
+            }
+            // Evaluate every branch rather than short-circuiting so missing-data
+            // coverage and per-predicate evidence remain complete.
+            Self::All(items) => {
+                let results = items
+                    .iter()
+                    .map(|item| item.evaluate(member, evidence))
+                    .collect::<Vec<_>>();
+                if results.contains(&Some(false)) {
+                    Some(false)
+                } else if results.iter().all(|result| *result == Some(true)) {
+                    Some(true)
+                } else {
+                    None
+                }
+            }
+            Self::Any(items) => {
+                let results = items
+                    .iter()
+                    .map(|item| item.evaluate(member, evidence))
+                    .collect::<Vec<_>>();
+                if results.contains(&Some(true)) {
+                    Some(true)
+                } else if results.iter().all(|result| *result == Some(false)) {
+                    Some(false)
+                } else {
+                    None
+                }
+            }
+            Self::Not(item) => item.evaluate(member, evidence).map(|passed| !passed),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScreenSortDirection {
@@ -176,6 +334,10 @@ pub struct ScreenDefinition {
     pub label: String,
     pub universe_id: String,
     pub clauses: Vec<ScreenClause>,
+    /// New definitions store their exact boolean tree. `None` is the schema-v1
+    /// migration path and means the legacy `clauses` vector joined by `AND`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression_tree: Option<ScreenExpression>,
     pub sort_field: ScreenField,
     pub sort_direction: ScreenSortDirection,
     pub limit: usize,
@@ -200,6 +362,36 @@ impl ScreenDefinition {
             label: label.into(),
             universe_id: universe_id.into(),
             clauses,
+            expression_tree: None,
+            sort_field,
+            sort_direction,
+            limit,
+            built_in,
+        };
+        definition.validate()?;
+        Ok(definition)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_expression(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        universe_id: impl Into<String>,
+        expression_tree: ScreenExpression,
+        sort_field: ScreenField,
+        sort_direction: ScreenSortDirection,
+        limit: usize,
+        built_in: bool,
+    ) -> Result<Self, ScreenError> {
+        expression_tree.validate()?;
+        let mut clauses = Vec::new();
+        expression_tree.clauses(&mut clauses);
+        let definition = Self {
+            id: id.into(),
+            label: label.into(),
+            universe_id: universe_id.into(),
+            clauses,
+            expression_tree: Some(expression_tree),
             sort_field,
             sort_direction,
             limit,
@@ -221,6 +413,14 @@ impl ScreenDefinition {
         if self.clauses.iter().any(|clause| !clause.value.is_finite()) {
             return Err(ScreenError::InvalidThreshold);
         }
+        if let Some(expression) = &self.expression_tree {
+            expression.validate()?;
+            let mut expression_clauses = Vec::new();
+            expression.clauses(&mut expression_clauses);
+            if expression_clauses != self.clauses {
+                return Err(ScreenError::ExpressionClauseMismatch);
+            }
+        }
         if !(1..=MAX_SCREEN_RESULTS).contains(&self.limit) {
             return Err(ScreenError::InvalidLimit);
         }
@@ -228,11 +428,31 @@ impl ScreenDefinition {
     }
 
     pub fn expression(&self) -> String {
-        self.clauses
-            .iter()
-            .map(ScreenClause::label)
-            .collect::<Vec<_>>()
-            .join(" AND ")
+        self.expression_tree.as_ref().map_or_else(
+            || {
+                self.clauses
+                    .iter()
+                    .map(ScreenClause::label)
+                    .collect::<Vec<_>>()
+                    .join(" AND ")
+            },
+            ScreenExpression::label,
+        )
+    }
+
+    fn evaluate_member(&self, member: &UniverseMember, evidence: &mut Vec<ClauseEvidence>) -> bool {
+        if let Some(expression) = &self.expression_tree {
+            expression.evaluate(member, evidence).unwrap_or(false)
+        } else {
+            self.clauses
+                .iter()
+                .map(|clause| {
+                    ScreenExpression::Predicate(clause.clone())
+                        .evaluate(member, evidence)
+                        .unwrap_or(false)
+                })
+                .fold(true, |result, passed| result & passed)
+        }
     }
 }
 
@@ -555,23 +775,12 @@ pub fn evaluate_screen(
     let mut exclusions = Vec::new();
     let mut coverage_count = 0;
     for member in &universe.members {
-        let evidence = definition
-            .clauses
-            .iter()
-            .map(|clause| {
-                let actual = clause.field.value(member);
-                ClauseEvidence {
-                    clause: clause.clone(),
-                    actual,
-                    passed: actual
-                        .is_some_and(|actual| clause.comparison.matches(actual, clause.value)),
-                }
-            })
-            .collect::<Vec<_>>();
+        let mut evidence = Vec::with_capacity(definition.clauses.len());
+        let expression_passed = definition.evaluate_member(member, &mut evidence);
         let sort_value = definition.sort_field.value(member);
         let complete = evidence.iter().all(|item| item.actual.is_some()) && sort_value.is_some();
         coverage_count += usize::from(complete);
-        if let Some(sort_value) = sort_value.filter(|_| evidence.iter().all(|item| item.passed)) {
+        if let Some(sort_value) = sort_value.filter(|_| complete && expression_passed) {
             accepted.push((member.clone(), sort_value, evidence));
         } else {
             exclusions.push(ScreenExclusion {
@@ -727,6 +936,9 @@ pub enum ScreenError {
     InvalidLabel,
     InvalidClauseCount,
     InvalidThreshold,
+    InvalidExpression,
+    ExpressionTooDeep,
+    ExpressionClauseMismatch,
     InvalidLimit,
     MissingMetadata,
     UniverseTooLarge,
@@ -751,6 +963,16 @@ impl fmt::Display for ScreenError {
                 write!(formatter, "screen requires 1-{MAX_SCREEN_CLAUSES} clauses")
             }
             Self::InvalidThreshold => formatter.write_str("screen threshold must be finite"),
+            Self::InvalidExpression => {
+                formatter.write_str("screen boolean groups require at least two child expressions")
+            }
+            Self::ExpressionTooDeep => write!(
+                formatter,
+                "screen expression exceeds {MAX_SCREEN_EXPRESSION_DEPTH} levels",
+            ),
+            Self::ExpressionClauseMismatch => {
+                formatter.write_str("screen expression predicates do not match its clause catalog")
+            }
             Self::InvalidLimit => write!(formatter, "screen limit must be 1-{MAX_SCREEN_RESULTS}"),
             Self::MissingMetadata => formatter.write_str("universe metadata is incomplete"),
             Self::UniverseTooLarge => {
@@ -946,6 +1168,133 @@ mod tests {
             .evidence
             .iter()
             .any(|evidence| evidence.actual.is_none()));
+    }
+
+    #[test]
+    fn nested_boolean_expressions_preserve_precedence_and_fail_closed() {
+        let expression = ScreenExpression::All(vec![
+            ScreenExpression::Any(vec![
+                ScreenExpression::Predicate(
+                    ScreenClause::new(
+                        ScreenField::ChangePercent,
+                        Comparison::GreaterThanOrEqual,
+                        1.0,
+                    )
+                    .unwrap(),
+                ),
+                ScreenExpression::Predicate(
+                    ScreenClause::new(
+                        ScreenField::Volume,
+                        Comparison::GreaterThanOrEqual,
+                        40_000_000.0,
+                    )
+                    .unwrap(),
+                ),
+            ]),
+            ScreenExpression::Not(Box::new(ScreenExpression::Predicate(
+                ScreenClause::new(ScreenField::SpreadBps, Comparison::GreaterThan, 5.0).unwrap(),
+            ))),
+        ]);
+        let definition = ScreenDefinition::new_expression(
+            "nested",
+            "NESTED",
+            "core",
+            expression,
+            ScreenField::ChangePercent,
+            ScreenSortDirection::Descending,
+            20,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            definition.expression(),
+            "(% CHG >= 1.00% OR VOLUME >= 40.00M) AND NOT SPREAD BP > 5.00BP"
+        );
+
+        let mut missing_spread = member("us:m", "M", Some(2.0), Some(1_000_000.0));
+        missing_spread.spread_bps = None;
+        let result = evaluate_screen(
+            &definition,
+            universe(vec![
+                member("us:a", "A", Some(2.0), Some(1_000_000.0)),
+                member("us:b", "B", Some(-1.0), Some(50_000_000.0)),
+                missing_spread,
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            result
+                .rows
+                .iter()
+                .map(|row| row.member.symbol.as_str())
+                .collect::<Vec<_>>(),
+            ["A", "B"]
+        );
+        assert_eq!(result.coverage_count, 2);
+        assert!(result.exclusions[0]
+            .evidence
+            .iter()
+            .any(|evidence| evidence.actual.is_none()));
+    }
+
+    #[test]
+    fn a_true_or_branch_cannot_mask_a_missing_predicate() {
+        let expression = ScreenExpression::Any(vec![
+            ScreenExpression::Predicate(
+                ScreenClause::new(ScreenField::ChangePercent, Comparison::GreaterThan, 0.0)
+                    .unwrap(),
+            ),
+            ScreenExpression::Predicate(
+                ScreenClause::new(ScreenField::Volume, Comparison::GreaterThan, 0.0).unwrap(),
+            ),
+        ]);
+        let definition = ScreenDefinition::new_expression(
+            "strict-null",
+            "STRICT NULL",
+            "core",
+            expression,
+            ScreenField::ChangePercent,
+            ScreenSortDirection::Descending,
+            20,
+            false,
+        )
+        .unwrap();
+        let result = evaluate_screen(
+            &definition,
+            universe(vec![member("us:a", "A", Some(2.0), None)]),
+        )
+        .unwrap();
+        assert!(result.rows.is_empty());
+        assert_eq!(result.coverage_count, 0);
+    }
+
+    #[test]
+    fn expression_tree_round_trips_while_legacy_and_definitions_still_load() {
+        let clause = ScreenClause::new(ScreenField::Volume, Comparison::GreaterThan, 10.0).unwrap();
+        let definition = ScreenDefinition::new_expression(
+            "portable",
+            "PORTABLE",
+            "core",
+            ScreenExpression::Not(Box::new(ScreenExpression::Predicate(clause))),
+            ScreenField::Volume,
+            ScreenSortDirection::Descending,
+            10,
+            false,
+        )
+        .unwrap();
+        let encoded = serde_json::to_string(&definition).unwrap();
+        let decoded: ScreenDefinition = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, definition);
+
+        let legacy = r#"{
+            "id":"legacy","label":"LEGACY","universe_id":"core",
+            "clauses":[{"field":"volume","comparison":"greater_than","value":10.0}],
+            "sort_field":"volume","sort_direction":"descending","limit":10,"built_in":false
+        }"#;
+        let decoded: ScreenDefinition = serde_json::from_str(legacy).unwrap();
+        decoded.validate().unwrap();
+        assert!(decoded.expression_tree.is_none());
+        assert_eq!(decoded.expression(), "VOLUME > 10");
     }
 
     #[test]

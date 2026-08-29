@@ -284,16 +284,21 @@ move to its own crate later without changing its public vocabulary.
   pass/fail, exclusion, coverage, and truncation evidence. Built-in and up to 64
   crash-safe custom definitions run asynchronously in the new `SCREEN`
   workspace with last-valid-result failure behavior, bounded scrolling,
-  identity-checked pointer/spatial/follow actions, Security and Spreadsheet row
+  identity-checked pointer/spatial/follow actions, Security, Chart, and Spreadsheet row
   promotion, Monitor universe routing, and saved-view recovery by stable screen
   and row identities. Deterministic engine, adapter, persistence, stale-action,
   restart-state, three-size semantic, and 2,000-member performance evidence lock
   the slice. The follow-on history increment now retains 32 immutable input
-  frames with content verification and exact offline replay across restart.
-  Full formula grouping/unit inference, factors, heatmaps, history repair, and
-  whole-result promotion remain.
+  frames with content verification and exact offline replay across restart. The
+  expression follow-on replaces flat custom predicates with a tagged, bounded
+  boolean AST: nested `AND`/`OR`/`NOT`, parentheses, conventional precedence,
+  complete leaf evidence, and tri-state missing propagation are deterministic
+  and restart-safe. Percent, basis-point, and scaled-quantity suffixes are
+  dimension-checked, legacy definitions migrate as implicit `AND`, and selected
+  rows route directly to Chart. Arithmetic formulas, broader field dimensions,
+  factors, heatmaps, history repair, and whole-result promotion remain.
 - **Next:** deepen P2/P3 universe storage, hotlists/breadth/heatmaps, Screening
-  expressions and whole-result promotion, factor research, and compound alert
+  arithmetic and whole-result promotion, factor research, and compound alert
   families. Provider availability
   extends the deployment surface; deterministic fixtures remain the acceptance
   baseline and opt-in live contracts verify real provider behavior.
@@ -380,7 +385,7 @@ continues.
 | DOM, time and sales, hotlists, heatmaps | Missing | Listed-instrument monitor and quote stream only | Add entitlement-aware depth/tape models, movers, breadth, sector/market heatmaps, and replay fixtures without synthesizing unavailable order-book data. |
 | Multi-panel technical chart workstation | Partial | OHLC/line charts, comparisons, volume, SMA/EMA, RSI, periods, cursor | Add up to nine linked panes, multi-timeframe layouts, indicator registry, annotations, volume profile, historical replay, alternate chart types, and image/data export. |
 | Security Hub and equity research | Partial | Profile, financials, filings, SEC Form 4, news, basic peer/estimate states | Add statements/trends, estimates/revisions, earnings, ESG, corporate actions, dividends, shareholding history, richer peers, and multi-market identity. |
-| Advanced screener and factor dashboard | Partial | Production `SCREEN` workspace over versioned point-in-time Watchlist/Market Data universes, closed typed `AND` predicates, fail-closed nulls, deterministic ranking/ties, coverage/exclusion/why-ranked evidence, crash-safe saved definitions, 32-frame immutable history with verified exact replay, saved views, and Security/Monitor/Spreadsheet routing | Add nested `AND`/`OR` formula AST with unit inference, history audit/repair, whole-result atomic promotion, fundamentals and factors, neutralized composites, and factor history/IC/turnover. |
+| Advanced screener and factor dashboard | Partial | Production `SCREEN` workspace over versioned point-in-time Watchlist/Market Data universes, bounded nested `AND`/`OR`/`NOT` AST, dimension-checked thresholds, tri-state fail-closed nulls, deterministic ranking/ties, coverage/exclusion/why-ranked evidence, crash-safe migration-safe definitions, 32-frame immutable history with verified exact replay, saved views, and Security/Chart/Monitor/Spreadsheet routing | Add arithmetic formula nodes and broader field dimensions, history audit/repair, whole-result atomic promotion, fundamentals and factors, neutralized composites, and factor history/IC/turnover. |
 | Tool-using AI research | Partial | Codex/OpenRouter chat, validated UI intents, bounded article reading | Add screen-aware read tools, research retrieval, cited artifacts, provider routing, debate, bounded strategy research, and local-model fallback. |
 | Futures and options suite | Missing | Stage 3 domain placeholder only | Add chains, Greeks/IV, OI/PCR/flow, strategies, futures basis/curve, expiry calendar, scenario tools, and delayed/entitled data states. |
 | Portfolio accounting and attribution | Partial | Exact positions, cash/activity, valuations/TWR, lots, realized gains, fills, single/multi-period attribution | Add portfolio CRUD/transaction truth, allocation views, benchmark history, dividends, multi-portfolio comparison, and rebalance evidence. |
@@ -744,7 +749,7 @@ data foundation for screening, derivatives, risk, and backtesting.
   - **Still required:** orphan audit/repair and retention health metrics,
     broader classifications and field coverage, breadth/advance-decline, unusual
     volume, dedicated hotlists, sector/market heatmaps, normalized split
-    comparison, and direct Chart promotion.
+    comparison. Direct selected-result Chart promotion is complete.
 - Evolve Chart into a one-to-nine-pane workstation with linked crosshairs,
   canonical selection, independent/synchronized periods, multi-timeframe layouts,
   pane focus, saved layouts, and graceful narrow-terminal tabbing.
@@ -793,8 +798,13 @@ loop before adding more asset classes.
     and restores screen/selection/viewport identities from saved views. `SCREEN
     HISTORY`, `SCREEN REPLAY`, and `SCREEN LIVE` expose retained version metadata,
     exact historical evaluation, and an explicit return to fresh provider input.
-  - **Still required:** nested `AND`/`OR`/`NOT` expression trees, dimension and
-    unit inference beyond the closed field catalog, historical point-in-time
+  - **Expression follow-on delivered:** custom definitions now own a tagged,
+    bounded, migration-safe `AND`/`OR`/`NOT` tree with parentheses, conventional
+    precedence, complete predicate evidence, tri-state missing propagation, and
+    compatible percent/basis-point/scaled-quantity threshold inference. Selected
+    results route directly to Chart.
+  - **Still required:** arithmetic formula nodes and dimensions beyond the
+    closed field catalog, historical point-in-time
     audit/repair and longer policy-driven retention, fundamental/event/factor
     fields, direct Chart routing, transactional whole-result Monitor and typed
     Spreadsheet-range promotion, result-set persistence/export, and richer

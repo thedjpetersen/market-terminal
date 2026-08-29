@@ -6,7 +6,7 @@ use market_terminal::{
     features::{
         screening::{
             evaluate_screen, universe_content_digest, Comparison, ScreenClause, ScreenDefinition,
-            ScreenField, ScreenSortDirection, UniverseMember, UniverseSnapshot,
+            ScreenExpression, ScreenField, ScreenSortDirection, UniverseMember, UniverseSnapshot,
             MAX_UNIVERSE_MEMBERS,
         },
         spreadsheet::{
@@ -144,18 +144,41 @@ fn spreadsheet_edit_case() -> Result<CaseResult, Box<dyn Error>> {
 }
 
 fn screening_evaluation_case() -> Result<CaseResult, Box<dyn Error>> {
-    let definition = ScreenDefinition::new(
+    let definition = ScreenDefinition::new_expression(
         "performance",
         "PERFORMANCE",
         "performance",
-        vec![
-            ScreenClause::new(ScreenField::ChangePercent, Comparison::GreaterThan, 0.0)?,
-            ScreenClause::new(
-                ScreenField::Volume,
-                Comparison::GreaterThanOrEqual,
-                1_000_000.0,
-            )?,
-        ],
+        ScreenExpression::All(vec![
+            ScreenExpression::Any(vec![
+                ScreenExpression::Predicate(ScreenClause::new(
+                    ScreenField::ChangePercent,
+                    Comparison::GreaterThan,
+                    0.0,
+                )?),
+                ScreenExpression::Predicate(ScreenClause::new(
+                    ScreenField::Volume,
+                    Comparison::GreaterThanOrEqual,
+                    10_000_000.0,
+                )?),
+            ]),
+            ScreenExpression::Not(Box::new(ScreenExpression::Predicate(ScreenClause::new(
+                ScreenField::SpreadBps,
+                Comparison::GreaterThan,
+                7.5,
+            )?))),
+            ScreenExpression::Any(vec![
+                ScreenExpression::Predicate(ScreenClause::new(
+                    ScreenField::DayRangePercent,
+                    Comparison::GreaterThanOrEqual,
+                    1.0,
+                )?),
+                ScreenExpression::Predicate(ScreenClause::new(
+                    ScreenField::Last,
+                    Comparison::LessThan,
+                    125.0,
+                )?),
+            ]),
+        ]),
         ScreenField::ChangePercent,
         ScreenSortDirection::Descending,
         200,
@@ -196,7 +219,7 @@ fn screening_evaluation_case() -> Result<CaseResult, Box<dyn Error>> {
         name: "screening_evaluation",
         p95_ms,
         context: format!(
-            "universe_members={} clauses={} limit={} replay_digest=verified",
+            "universe_members={} nested_predicates={} limit={} replay_digest=verified",
             universe.members.len(),
             definition.clauses.len(),
             definition.limit

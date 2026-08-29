@@ -13,8 +13,13 @@ set and one Market Data quote batch into Screening-owned values.
   observation time, source/provider set, label, and member-level quality.
 - Supported numeric fields are last price, percent change, volume, bid/ask
   spread in basis points, and intraday range as a percent of last price.
-- A definition contains one to eight typed clauses combined with `AND`, one
-  explicit sort field and direction, and a result limit from 1 to 200.
+- A definition contains one to eight typed predicates in a boolean AST bounded
+  to eight levels, one explicit sort field and direction, and a result limit
+  from 1 to 200. `NOT` binds before `AND`, which binds before `OR`; parentheses
+  preserve explicit grouping.
+- Thresholds infer and validate percent (`%`/`pct`), basis-point (`bp`/`bps`),
+  and quantity (`k`/`m`/`b`) units against the selected field. Bare values use
+  the field's native display unit; incompatible suffixes are rejected.
 - Missing predicate or sort values fail closed. Coverage and every rejected
   member remain explicit; no value is filled, blended, or inferred.
 - Ranking is deterministic. Equal sort values use canonical instrument identity
@@ -38,11 +43,10 @@ set and one Market Data quote batch into Screening-owned values.
   Replay never falls back to a fresh provider call or substitutes another
   version.
 
-This remains intentionally bounded. It does not yet provide `OR` or
-nested expression groups, dimension/unit inference beyond the closed numeric
-field catalog, fundamental/factor fields, an audit/repair command for orphaned
-documents, whole-result atomic promotion, or a direct Chart action. Those remain
-P2/P3 roadmap work.
+This remains intentionally bounded. It does not yet provide arithmetic formula
+nodes or dimensions beyond the closed numeric field catalog, fundamental/factor
+fields, an audit/repair command for orphaned documents, or whole-result atomic
+promotion. Those remain P2/P3 roadmap work.
 
 ## Commands
 
@@ -70,19 +74,29 @@ The grammar is deliberately closed:
 
 ```text
 SCREEN SAVE <id> <universe> <field> <op> <number>
-  [AND <field> <op> <number>]...
+  [(AND|OR) [NOT] <field> <op> <number>]...
   [SORT <field> <ASC|DESC>]
   [LIMIT <1..200>]
 ```
 
 Fields accept `last`, `change_pct`, `volume`, `spread_bps`, and
-`day_range_pct`; comparisons accept `>`, `>=`, `<`, `<=`, and `=`. Delete only
-custom definitions with `SCREEN DELETE <id>`.
+`day_range_pct`; comparisons accept `>`, `>=`, `<`, `<=`, and `=`. Parentheses
+may be attached to adjacent tokens or separated by spaces. For example:
+
+```text
+SCREEN SAVE quality-move core (change_pct >= 1% OR volume >= 20m) AND NOT spread_bps > 5bps SORT change_pct DESC LIMIT 25
+```
+
+Delete only custom definitions with `SCREEN DELETE <id>`. Schema-v1 definitions
+without an expression tree continue to load as their original all-`AND` clause
+list; new definitions persist an explicit tagged tree plus its validated leaf
+catalog so corruption cannot silently alter logic.
 
 ## Terminal interaction
 
 - `Up`/`Down` or `k`/`j`: move the stable row selection.
 - `Enter` or `s`: open the selected instrument in Security.
+- `c`: open the selected instrument directly in Chart.
 - `a`: insert the selected symbol into Spreadsheet.
 - `m`: open the source universe in Monitor.
 - `h`: summarize the newest retained versions for the active universe.
@@ -107,11 +121,12 @@ saved views cannot mutate or duplicate these point-in-time inputs.
 
 ## Verification boundary
 
-Deterministic tests cover stable tie-breaking, null failure, truncation,
-multi-clause parsing, protected built-ins, stale actions, asynchronous saved-view
+Deterministic tests cover stable tie-breaking, tri-state null failure through
+`NOT`, precedence/grouping, unit compatibility, schema-v1 migration, truncation,
+protected built-ins, direct Chart routing, stale actions, asynchronous saved-view
 recovery, adapter translation, private persistence, and semantic frames at
 80×24, 120×36, and 160×48. The release performance gate separately evaluates a
-2,000-member, two-clause universe and enforces the repository-wide 50 ms p95
-budget. History tests additionally lock idempotent publication, restart replay,
+2,000-member, five-predicate nested tree and enforces the repository-wide 50 ms
+p95 budget. History tests additionally lock idempotent publication, restart replay,
 manifest retention, physical eviction, missing-payload failure, post-publication
 mutation detection, and exact evaluation equality between live and replay.

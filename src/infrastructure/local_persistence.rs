@@ -1302,25 +1302,30 @@ mod tests {
     #[test]
     fn saved_screens_round_trip_through_private_feature_state() {
         use crate::features::screening::{
-            Comparison, ScreenClause, ScreenDefinition, ScreenField, ScreenSortDirection,
+            Comparison, ScreenClause, ScreenDefinition, ScreenExpression, ScreenField,
+            ScreenSortDirection,
         };
 
         let directory = TestDirectory::new("screening");
         let repository = LocalPersistence::new(&directory.0);
-        let definition = ScreenDefinition::new(
+        let definition = ScreenDefinition::new_expression(
             "liquid-gainers",
             "LIQUID GAINERS",
             "core",
-            vec![
-                ScreenClause::new(ScreenField::ChangePercent, Comparison::GreaterThan, 1.0)
+            ScreenExpression::Any(vec![
+                ScreenExpression::Predicate(
+                    ScreenClause::new(ScreenField::ChangePercent, Comparison::GreaterThan, 1.0)
+                        .unwrap(),
+                ),
+                ScreenExpression::Predicate(
+                    ScreenClause::new(
+                        ScreenField::Volume,
+                        Comparison::GreaterThanOrEqual,
+                        1_000_000.0,
+                    )
                     .unwrap(),
-                ScreenClause::new(
-                    ScreenField::Volume,
-                    Comparison::GreaterThanOrEqual,
-                    1_000_000.0,
-                )
-                .unwrap(),
-            ],
+                ),
+            ]),
             ScreenField::ChangePercent,
             ScreenSortDirection::Descending,
             25,

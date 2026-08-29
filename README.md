@@ -105,6 +105,7 @@ are versioned and persisted privately:
 ```text
 SCREEN momentum
 SCREEN SAVE liquid-gainers core change_pct >= 1 AND volume >= 1000000 SORT change_pct DESC LIMIT 25
+SCREEN SAVE quality-move core (change_pct >= 1% OR volume >= 20m) AND NOT spread_bps > 5bps SORT change_pct DESC LIMIT 25
 SCREEN LIST
 SCREEN DELETE liquid-gainers
 SCREEN HISTORY core
@@ -113,11 +114,15 @@ SCREEN LIVE
 ```
 
 Predicates are typed over last price, percent change, volume, bid/ask spread,
-and day-range percent. Missing fields fail closed, ties resolve by canonical
-instrument identity, and the header reports input version, as-of, source,
-coverage, matches, and exclusions. The detail pane shows actual values and
-pass/fail evidence for every clause. Use arrows or `j`/`k` to select rows,
-`Enter`/`s` for Security, `a` for Spreadsheet insertion, `m` for the source
+and day-range percent. Saved definitions support bounded nested `AND`, `OR`,
+`NOT`, and parentheses with normal boolean precedence. Percent (`%`/`pct`),
+basis-point (`bp`/`bps`), and volume (`k`/`m`/`b`) suffixes are normalized only
+when compatible with the field dimension. Missing values remain unknown through
+the tree—especially under `NOT`—and fail closed at the result boundary. Ties
+resolve by canonical instrument identity, and the header reports input version,
+as-of, source, coverage, matches, and exclusions. The detail pane shows actual
+values and pass/fail evidence for every predicate. Use arrows or `j`/`k` to select rows,
+`Enter`/`s` for Security, `c` for Chart, `a` for Spreadsheet insertion, `m` for the source
 Monitor universe, `h` for retained input versions, `l` to return to live mode,
 `[`/`]` to cycle definitions, and `r` to rerun the current live or replay input.
 Persistent deployments retain 32 immutable universe frames with independent

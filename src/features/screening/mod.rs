@@ -4,9 +4,10 @@ mod workspace;
 
 pub use domain::{
     builtin_screen_definitions, evaluate_screen, universe_content_digest, ClauseEvidence,
-    Comparison, ScreenCatalogState, ScreenClause, ScreenDefinition, ScreenEvaluation, ScreenField,
-    ScreenResultRow, ScreenSortDirection, UniverseHistoryEntry, UniverseHistoryManifest,
-    UniverseMember, UniverseSnapshot, MAX_SAVED_SCREENS, MAX_SCREEN_CLAUSES, MAX_SCREEN_RESULTS,
+    Comparison, ScreenCatalogState, ScreenClause, ScreenDefinition, ScreenDimension,
+    ScreenEvaluation, ScreenExpression, ScreenField, ScreenResultRow, ScreenSortDirection,
+    UniverseHistoryEntry, UniverseHistoryManifest, UniverseMember, UniverseSnapshot,
+    MAX_SAVED_SCREENS, MAX_SCREEN_CLAUSES, MAX_SCREEN_EXPRESSION_DEPTH, MAX_SCREEN_RESULTS,
     MAX_UNIVERSE_HISTORY, MAX_UNIVERSE_MEMBERS,
 };
 pub use port::{
