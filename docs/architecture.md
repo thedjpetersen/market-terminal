@@ -125,10 +125,17 @@ bootstrap ──▶ app kernel
   Market Data quote batch into Screening DTOs; Screening never imports either
   peer feature's types. The translation emits one immutable input version,
   provider set, as-of, field availability, and canonical identities without
-  blending observations. Evaluation and persistence each use a separate
-  capacity-one worker, so provider and disk I/O never enter input or rendering.
+  blending observations. Evaluation and definition persistence each use a
+  separate capacity-one worker, so provider and disk I/O never enter input or
+  rendering. The evaluation worker records successful live inputs through a
+  separate `UniverseHistoryStore` port and can load an exact historical version
+  without consulting the provider.
   Generation checks reject stale evaluations, while a failed refresh retains
-  the explicitly labeled last valid result. Saved views contain only the
+  the explicitly labeled last valid result. History uses immutable snapshot
+  documents plus a 32-entry manifest, snapshot-first publication, manifest-first
+  eviction, and an independent content digest checked on replay. Recording
+  failure degrades history without hiding a valid live result; missing or mutated
+  historical payloads fail closed. Saved views contain only the
   definition and row-anchor identities; the versioned universe and rank
   evidence remain derived feature state. See `docs/screening.md`.
 - `foundation` contains only stable, narrowly shared value objects. Canonical

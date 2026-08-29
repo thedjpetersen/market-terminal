@@ -5,8 +5,9 @@ use market_terminal::{
     bootstrap,
     features::{
         screening::{
-            evaluate_screen, Comparison, ScreenClause, ScreenDefinition, ScreenField,
-            ScreenSortDirection, UniverseMember, UniverseSnapshot, MAX_UNIVERSE_MEMBERS,
+            evaluate_screen, universe_content_digest, Comparison, ScreenClause, ScreenDefinition,
+            ScreenField, ScreenSortDirection, UniverseMember, UniverseSnapshot,
+            MAX_UNIVERSE_MEMBERS,
         },
         spreadsheet::{
             domain::{CellAddress, Workbook, Worksheet},
@@ -167,8 +168,12 @@ fn screening_evaluation_case() -> Result<CaseResult, Box<dyn Error>> {
             })
             .collect(),
     )?;
+    let expected_digest = universe_content_digest(&universe);
     evaluate_screen(&definition, universe.clone())?;
     let p95_ms = measure(|_| {
+        if universe_content_digest(&universe) != expected_digest {
+            return Err("screening replay digest changed".into());
+        }
         evaluate_screen(&definition, universe.clone())?;
         Ok(())
     })?;
@@ -176,7 +181,7 @@ fn screening_evaluation_case() -> Result<CaseResult, Box<dyn Error>> {
         name: "screening_evaluation",
         p95_ms,
         context: format!(
-            "universe_members={} clauses={} limit={}",
+            "universe_members={} clauses={} limit={} replay_digest=verified",
             universe.members.len(),
             definition.clauses.len(),
             definition.limit

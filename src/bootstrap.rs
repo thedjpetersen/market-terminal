@@ -15,7 +15,7 @@ use crate::{
         overview::{OverviewQuery, OverviewWorkspace, ID as OVERVIEW},
         portfolio::{PortfolioRepository, PortfolioWorkspace},
         risk::{RiskQuery, RiskWorkspace},
-        screening::{ScreenStateStore, ScreeningWorkspace},
+        screening::{ScreenStateStore, ScreeningWorkspace, UniverseHistoryStore},
         security::{SecurityDocumentOpener, SecurityQuery, SecurityWorkspace},
         spreadsheet::{SpreadsheetMarketData, SpreadsheetWorkbookStore, SpreadsheetWorkspace},
         watchlist::{WatchlistCatalog, WatchlistWorkspace},
@@ -64,6 +64,7 @@ pub fn demo_app() -> App {
         alert_state_store: None,
         launchpad_state_store: None,
         screen_state_store: None,
+        screen_history_store: None,
         snapshot_refresh_interval: Duration::from_secs(60),
         runtime_settings: RuntimeSettingsSummary::demo(),
     })
@@ -92,6 +93,7 @@ struct AppProviders {
     alert_state_store: Option<Arc<dyn AlertStateStore>>,
     launchpad_state_store: Option<Arc<dyn LaunchpadStateStore>>,
     screen_state_store: Option<Arc<dyn ScreenStateStore>>,
+    screen_history_store: Option<Arc<dyn UniverseHistoryStore>>,
     snapshot_refresh_interval: Duration,
     runtime_settings: RuntimeSettingsSummary,
 }
@@ -120,6 +122,7 @@ fn build_app(providers: AppProviders) -> App {
         alert_state_store,
         launchpad_state_store,
         screen_state_store,
+        screen_history_store,
         snapshot_refresh_interval,
         runtime_settings,
     } = providers;
@@ -201,9 +204,12 @@ fn build_app(providers: AppProviders) -> App {
             snapshot_refresh_interval,
         )),
         Box::new(MarketsWorkspace::new(markets_query)),
-        Box::new(match screen_state_store {
-            Some(store) => ScreeningWorkspace::persistent(screening_query, store),
-            None => ScreeningWorkspace::new(screening_query),
+        Box::new(match (screen_state_store, screen_history_store) {
+            (Some(store), Some(history)) => {
+                ScreeningWorkspace::persistent_with_history(screening_query, store, history)
+            }
+            (Some(store), None) => ScreeningWorkspace::persistent(screening_query, store),
+            (None, _) => ScreeningWorkspace::new(screening_query),
         }),
         Box::new(ChartingWorkspace::with_primary(
             chart_history,
@@ -302,6 +308,7 @@ pub fn persistent_app() -> App {
         alert_state_store: Some(repository.clone()),
         launchpad_state_store: Some(repository.clone()),
         screen_state_store: Some(repository.clone()),
+        screen_history_store: Some(repository.clone()),
         snapshot_refresh_interval,
         runtime_settings,
     })

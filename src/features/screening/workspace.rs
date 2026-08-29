@@ -31,17 +31,28 @@ use crate::{
 use super::{
     builtin_screen_definitions, evaluate_screen, Comparison, ScreenCatalogState, ScreenClause,
     ScreenDefinition, ScreenEvaluation, ScreenField, ScreenSortDirection, ScreenStateError,
-    ScreenStateStore, ScreeningUniverseQuery, ID, MAX_SAVED_SCREENS,
+    ScreenStateStore, ScreeningUniverseQuery, UniverseHistoryManifest, UniverseHistoryStore, ID,
+    MAX_SAVED_SCREENS,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunSource {
+    Live,
+    Replay(u64),
+}
 
 struct RunRequest {
     generation: u64,
     definition: ScreenDefinition,
+    source: RunSource,
 }
 
 struct RunResult {
     generation: u64,
     result: Result<ScreenEvaluation, String>,
+    history: Option<UniverseHistoryManifest>,
+    history_warning: Option<String>,
+    source: RunSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +62,8 @@ enum ScreenControl {
     Security,
     Spreadsheet,
     Monitor,
+    History,
+    Live,
     Refresh,
 }
 
@@ -62,6 +75,8 @@ impl ScreenControl {
             Self::Security => "control:security",
             Self::Spreadsheet => "control:spreadsheet",
             Self::Monitor => "control:monitor",
+            Self::History => "control:history",
+            Self::Live => "control:live",
             Self::Refresh => "control:refresh",
         }
     }
@@ -73,6 +88,8 @@ impl ScreenControl {
             "control:security" => Some(Self::Security),
             "control:spreadsheet" => Some(Self::Spreadsheet),
             "control:monitor" => Some(Self::Monitor),
+            "control:history" => Some(Self::History),
+            "control:live" => Some(Self::Live),
             "control:refresh" => Some(Self::Refresh),
             _ => None,
         }
@@ -87,7 +104,9 @@ pub struct ScreeningWorkspace {
     applied_generation: u64,
     definitions: Vec<ScreenDefinition>,
     custom_revision: u64,
+    history: UniverseHistoryManifest,
     active_screen_id: String,
+    replay_version: Option<u64>,
     evaluation: Option<ScreenEvaluation>,
     selected: usize,
     viewport_top: StateCell<usize>,
@@ -104,37 +123,70 @@ pub struct ScreeningWorkspace {
 
 impl ScreeningWorkspace {
     pub fn new(query: Arc<dyn ScreeningUniverseQuery>) -> Self {
-        Self::configured(query, None)
+        Self::configured(query, None, None)
     }
 
     pub fn persistent(
         query: Arc<dyn ScreeningUniverseQuery>,
         store: Arc<dyn ScreenStateStore>,
     ) -> Self {
-        Self::configured(query, Some(store))
+        Self::configured(query, Some(store), None)
+    }
+
+    pub fn persistent_with_history(
+        query: Arc<dyn ScreeningUniverseQuery>,
+        store: Arc<dyn ScreenStateStore>,
+        history_store: Arc<dyn UniverseHistoryStore>,
+    ) -> Self {
+        Self::configured(query, Some(store), Some(history_store))
     }
 
     fn configured(
         query: Arc<dyn ScreeningUniverseQuery>,
         store: Option<Arc<dyn ScreenStateStore>>,
+        history_store: Option<Arc<dyn UniverseHistoryStore>>,
     ) -> Self {
         let (run_sender, worker_receiver) = sync_channel::<RunRequest>(1);
         let (worker_sender, run_receiver) = sync_channel::<RunResult>(1);
+        let worker_history = history_store.clone();
         std::thread::Builder::new()
             .name("screening-runner".to_owned())
             .spawn(move || {
                 while let Ok(request) = worker_receiver.recv() {
-                    let result = query
-                        .load_universe(&request.definition.universe_id)
-                        .map_err(|error| error.to_string())
-                        .and_then(|snapshot| {
-                            evaluate_screen(&request.definition, snapshot)
-                                .map_err(|error| error.to_string())
-                        });
+                    let mut history = None;
+                    let mut history_warning = None;
+                    let snapshot = match request.source {
+                        RunSource::Live => query
+                            .load_universe(&request.definition.universe_id)
+                            .map_err(|error| error.to_string())
+                            .inspect(|snapshot| {
+                                if let Some(store) = &worker_history {
+                                    match store.record_snapshot(snapshot) {
+                                        Ok(manifest) => history = Some(manifest),
+                                        Err(error) => history_warning = Some(error.to_string()),
+                                    }
+                                }
+                            }),
+                        RunSource::Replay(version) => worker_history
+                            .as_ref()
+                            .ok_or_else(|| "universe history is not configured".to_owned())
+                            .and_then(|store| {
+                                store
+                                    .load_snapshot(version)
+                                    .map_err(|error| error.to_string())
+                            }),
+                    };
+                    let result = snapshot.and_then(|snapshot| {
+                        evaluate_screen(&request.definition, snapshot)
+                            .map_err(|error| error.to_string())
+                    });
                     if worker_sender
                         .send(RunResult {
                             generation: request.generation,
                             result,
+                            history,
+                            history_warning,
+                            source: request.source,
                         })
                         .is_err()
                     {
@@ -158,6 +210,17 @@ impl ScreeningWorkspace {
                 Err(error) => status = format!("SAVED SCREEN RESTORE DEGRADED · {error}"),
             }
         }
+        let history = history_store
+            .as_ref()
+            .map_or_else(UniverseHistoryManifest::empty, |store| {
+                match store.load_history() {
+                    Ok(history) => history,
+                    Err(error) => {
+                        status = format!("UNIVERSE HISTORY RESTORE DEGRADED · {error}");
+                        UniverseHistoryManifest::empty()
+                    }
+                }
+            });
 
         let (persist_sender, persist_receiver, persist_worker) = if let Some(store) = store {
             let (sender, receiver) = sync_channel::<ScreenCatalogState>(1);
@@ -192,7 +255,9 @@ impl ScreeningWorkspace {
             applied_generation: 0,
             definitions,
             custom_revision,
+            history,
             active_screen_id,
+            replay_version: None,
             evaluation: None,
             selected: 0,
             viewport_top: StateCell::new(0),
@@ -219,12 +284,27 @@ impl ScreeningWorkspace {
 
     fn refresh(&mut self) {
         self.desired_generation = self.desired_generation.saturating_add(1);
+        let source = self
+            .replay_version
+            .map_or(RunSource::Live, RunSource::Replay);
         self.pending_run = Some(RunRequest {
             generation: self.desired_generation,
             definition: self.active_definition().clone(),
+            source,
         });
-        self.status = format!("RUNNING {}…", self.active_definition().label);
+        self.status = match source {
+            RunSource::Live => format!("RUNNING {}…", self.active_definition().label),
+            RunSource::Replay(version) => format!(
+                "REPLAYING {} · V{version:016X}…",
+                self.active_definition().label
+            ),
+        };
         self.dispatch_pending_run();
+    }
+
+    fn refresh_live(&mut self) {
+        self.replay_version = None;
+        self.refresh();
     }
 
     fn dispatch_pending_run(&mut self) {
@@ -242,6 +322,9 @@ impl ScreeningWorkspace {
 
     fn poll_run(&mut self) {
         while let Ok(result) = self.run_receiver.try_recv() {
+            if let Some(history) = result.history {
+                self.history = history;
+            }
             if result.generation != self.desired_generation {
                 continue;
             }
@@ -256,12 +339,20 @@ impl ScreeningWorkspace {
                     self.evaluation = Some(evaluation);
                     self.restore_row_anchors(selected.as_deref(), top.as_deref());
                     let evaluation = self.evaluation.as_ref().expect("installed evaluation");
+                    let mode = match result.source {
+                        RunSource::Live => "LIVE COMPLETE".to_owned(),
+                        RunSource::Replay(version) => format!("REPLAY V{version:016X}"),
+                    };
                     self.status = format!(
-                        "COMPLETE · {} MATCHES · {} EXCLUDED · {:.0}% COVERAGE",
+                        "{mode} · {} MATCHES · {} EXCLUDED · {:.0}% COVERAGE",
                         evaluation.rows.len(),
                         evaluation.exclusions.len(),
                         evaluation.coverage_percent(),
                     );
+                    if let Some(warning) = result.history_warning {
+                        self.status.push_str(" · HISTORY DEGRADED · ");
+                        self.status.push_str(&warning);
+                    }
                 }
                 Err(error) => {
                     self.status = if self.evaluation.is_some() {
@@ -380,6 +471,73 @@ impl ScreeningWorkspace {
             return false;
         };
         self.active_screen_id.clone_from(&definition.id);
+        self.replay_version = None;
+        self.selected = 0;
+        self.viewport_top.set(0);
+        self.pending_selected_id = None;
+        self.pending_top_id = None;
+        self.refresh();
+        true
+    }
+
+    fn history_summary(&mut self, universe_id: Option<&str>) {
+        let universe_id = universe_id
+            .unwrap_or(&self.active_definition().universe_id)
+            .to_ascii_lowercase();
+        let entries = self.history.entries_for(&universe_id);
+        if entries.is_empty() {
+            self.status = format!("NO RECORDED HISTORY · {universe_id}");
+            return;
+        }
+        let summary = entries
+            .iter()
+            .take(4)
+            .map(|entry| {
+                format!(
+                    "V{:016X} {} {} MEMBERS",
+                    entry.version, entry.as_of, entry.member_count
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("  |  ");
+        self.status = format!(
+            "HISTORY {universe_id} · {} FRAME(S) · {summary}",
+            entries.len()
+        );
+    }
+
+    fn replay(&mut self, version: u64, screen_id: Option<&str>) -> bool {
+        let Some(entry) = self
+            .history
+            .entries
+            .iter()
+            .find(|entry| entry.version == version)
+            .cloned()
+        else {
+            self.status = format!("HISTORY VERSION NOT FOUND · V{version:016X}");
+            return false;
+        };
+        if let Some(screen_id) = screen_id {
+            let Some(definition) = self
+                .definitions
+                .iter()
+                .find(|definition| definition.id.eq_ignore_ascii_case(screen_id))
+            else {
+                self.status = format!("SCREEN NOT FOUND · {screen_id}");
+                return false;
+            };
+            self.active_screen_id.clone_from(&definition.id);
+        }
+        if self.active_definition().universe_id != entry.universe_id {
+            self.status = format!(
+                "REPLAY UNIVERSE MISMATCH · SCREEN {} EXPECTS {} · VERSION IS {}",
+                self.active_definition().id,
+                self.active_definition().universe_id,
+                entry.universe_id
+            );
+            return false;
+        }
+        self.replay_version = Some(version);
         self.selected = 0;
         self.viewport_top.set(0);
         self.pending_selected_id = None;
@@ -566,6 +724,8 @@ impl ScreeningWorkspace {
             ScreenControl::Security => return self.open_selected(),
             ScreenControl::Spreadsheet => return self.send_selected_to_sheet(),
             ScreenControl::Monitor => return self.open_universe_monitor(),
+            ScreenControl::History => self.history_summary(None),
+            ScreenControl::Live => self.refresh_live(),
             ScreenControl::Refresh => self.refresh(),
         }
         true
@@ -578,6 +738,8 @@ impl ScreeningWorkspace {
             Constraint::Length(12),
             Constraint::Length(12),
             Constraint::Length(11),
+            Constraint::Length(11),
+            Constraint::Length(8),
             Constraint::Min(10),
         ])
         .split(area);
@@ -587,6 +749,8 @@ impl ScreeningWorkspace {
             ScreenControl::Security,
             ScreenControl::Spreadsheet,
             ScreenControl::Monitor,
+            ScreenControl::History,
+            ScreenControl::Live,
             ScreenControl::Refresh,
         ]
         .into_iter()
@@ -602,6 +766,8 @@ impl ScreeningWorkspace {
                 .as_ref()
                 .is_some_and(|evaluation| !evaluation.rows.is_empty()),
             ScreenControl::Previous | ScreenControl::Next => self.definitions.len() > 1,
+            ScreenControl::History => !self.history.entries.is_empty(),
+            ScreenControl::Live => self.replay_version.is_some(),
             ScreenControl::Monitor | ScreenControl::Refresh => true,
         }
     }
@@ -656,6 +822,19 @@ impl Workspace for ScreeningWorkspace {
                         .join(" · ")
                 );
             }
+            "HISTORY" => self.history_summary(invocation.args.get(1).map(String::as_str)),
+            "REPLAY" => {
+                let Some(version) = invocation
+                    .args
+                    .get(1)
+                    .and_then(|value| parse_version(value))
+                else {
+                    self.status = "SCREEN REPLAY REQUIRES A DECIMAL OR HEX VERSION".to_owned();
+                    return true;
+                };
+                self.replay(version, invocation.args.get(2).map(String::as_str));
+            }
+            "LIVE" => self.refresh_live(),
             "NEXT" => self.cycle_screen(1),
             "PREV" | "PREVIOUS" => self.cycle_screen(-1),
             _ => {
@@ -674,6 +853,8 @@ impl Workspace for ScreeningWorkspace {
             }
             KeyCode::Char('a') => return self.send_selected_to_sheet(),
             KeyCode::Char('m') => return self.open_universe_monitor(),
+            KeyCode::Char('h') => self.history_summary(None),
+            KeyCode::Char('l') => self.refresh_live(),
             KeyCode::Char('r') => self.refresh(),
             KeyCode::Char('[') => self.cycle_screen(-1),
             KeyCode::Char(']') => self.cycle_screen(1),
@@ -752,6 +933,8 @@ impl Workspace for ScreeningWorkspace {
                         ScreenControl::Security => "Open selected result in Security",
                         ScreenControl::Spreadsheet => "Insert selected symbol into Spreadsheet",
                         ScreenControl::Monitor => "Open source universe in Monitor",
+                        ScreenControl::History => "List retained point-in-time universe versions",
+                        ScreenControl::Live => "Leave replay and evaluate a new live snapshot",
                         ScreenControl::Refresh => "Re-run screen against a new versioned snapshot",
                     };
                     let action = WorkspaceAction::new(control.id(), label, area);
@@ -804,6 +987,10 @@ impl Workspace for ScreeningWorkspace {
         let areas = screen_areas(area);
         let (top, capacity) = self.update_viewport(areas.table);
         let definition = self.active_definition();
+        let mode = self.replay_version.map_or_else(
+            || "LIVE".to_owned(),
+            |version| format!("REPLAY V{version:016X}"),
+        );
         let (universe_label, version, as_of, source, matches, exclusions, coverage) = self
             .evaluation
             .as_ref()
@@ -826,6 +1013,7 @@ impl Workspace for ScreeningWorkspace {
                 ),
                 Span::styled(format!(" {universe_label}  "), INK),
                 Span::styled(format!("V{version:016X}  "), MUTED),
+                Span::styled(format!("{mode}  "), AMBER),
                 Span::styled(
                     format!("{matches} MATCH  {exclusions} OUT  {coverage:.0}% COVERAGE  "),
                     CYAN,
@@ -852,7 +1040,13 @@ impl Workspace for ScreeningWorkspace {
                 ]),
                 Line::from(vec![
                     Span::styled("INPUT  ", AMBER),
-                    Span::styled(format!("{source} · AS OF {as_of}"), MUTED),
+                    Span::styled(
+                        format!(
+                            "{source} · AS OF {as_of} · {} RETAINED FRAME(S)",
+                            self.history.entries_for(&definition.universe_id).len()
+                        ),
+                        MUTED,
+                    ),
                 ]),
             ]),
             areas.expression,
@@ -961,6 +1155,8 @@ impl Workspace for ScreeningWorkspace {
                 ScreenControl::Security => " ENTER SEC ",
                 ScreenControl::Spreadsheet => " A SHEET ",
                 ScreenControl::Monitor => " M MONITOR ",
+                ScreenControl::History => " H HISTORY ",
+                ScreenControl::Live => " L LIVE ",
                 ScreenControl::Refresh => " R REFRESH ",
             };
             frame.render_widget(
@@ -1119,6 +1315,23 @@ fn parse_saved_definition(args: &[String]) -> Result<ScreenDefinition, String> {
     .map_err(|error| error.to_string())
 }
 
+fn parse_version(value: &str) -> Option<u64> {
+    let value = value.trim();
+    if let Some(value) = value.strip_prefix('V').or_else(|| value.strip_prefix('v')) {
+        return u64::from_str_radix(value, 16).ok();
+    }
+    if let Some(value) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        return u64::from_str_radix(value, 16).ok();
+    }
+    value
+        .parse::<u64>()
+        .ok()
+        .or_else(|| u64::from_str_radix(value, 16).ok())
+}
+
 fn parse_clause(args: &[String], index: &mut usize) -> Result<ScreenClause, String> {
     let field = args
         .get(*index)
@@ -1205,7 +1418,15 @@ fn format_volume(value: Option<f64>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Mutex, thread, time::Duration};
+    use std::{
+        collections::BTreeMap,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Mutex,
+        },
+        thread,
+        time::Duration,
+    };
 
     use super::*;
     use crate::features::screening::{ScreeningError, UniverseMember, UniverseSnapshot};
@@ -1241,6 +1462,15 @@ mod tests {
         }
     }
 
+    struct CountingQuery(Arc<AtomicUsize>);
+
+    impl ScreeningUniverseQuery for CountingQuery {
+        fn load_universe(&self, id: &str) -> Result<UniverseSnapshot, ScreeningError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            FixtureQuery.load_universe(id)
+        }
+    }
+
     #[derive(Default)]
     struct MemoryStore(Mutex<Option<ScreenCatalogState>>);
 
@@ -1252,6 +1482,60 @@ mod tests {
         fn save_screens(&self, state: &ScreenCatalogState) -> Result<(), ScreenStateError> {
             *self.0.lock().unwrap() = Some(state.clone());
             Ok(())
+        }
+    }
+
+    struct MemoryHistoryStore {
+        manifest: Mutex<UniverseHistoryManifest>,
+        snapshots: Mutex<BTreeMap<u64, UniverseSnapshot>>,
+    }
+
+    impl Default for MemoryHistoryStore {
+        fn default() -> Self {
+            Self {
+                manifest: Mutex::new(UniverseHistoryManifest::empty()),
+                snapshots: Mutex::new(BTreeMap::new()),
+            }
+        }
+    }
+
+    impl UniverseHistoryStore for MemoryHistoryStore {
+        fn load_history(&self) -> Result<UniverseHistoryManifest, ScreenStateError> {
+            Ok(self.manifest.lock().unwrap().clone())
+        }
+
+        fn load_snapshot(&self, version: u64) -> Result<UniverseSnapshot, ScreenStateError> {
+            self.snapshots
+                .lock()
+                .unwrap()
+                .get(&version)
+                .cloned()
+                .ok_or_else(|| ScreenStateError::Corrupt("snapshot missing".to_owned()))
+        }
+
+        fn record_snapshot(
+            &self,
+            snapshot: &UniverseSnapshot,
+        ) -> Result<UniverseHistoryManifest, ScreenStateError> {
+            let mut manifest = self.manifest.lock().unwrap();
+            let (next, evicted) = manifest
+                .record(snapshot)
+                .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+            let mut snapshots = self.snapshots.lock().unwrap();
+            if let Some(existing) = snapshots.get(&snapshot.version) {
+                if existing != snapshot {
+                    return Err(ScreenStateError::Corrupt(
+                        "immutable snapshot changed".to_owned(),
+                    ));
+                }
+            } else {
+                snapshots.insert(snapshot.version, snapshot.clone());
+            }
+            if let Some(evicted) = evicted {
+                snapshots.remove(&evicted.version);
+            }
+            *manifest = next.clone();
+            Ok(next)
         }
     }
 
@@ -1365,5 +1649,63 @@ mod tests {
         assert_eq!(workspace.active_screen_id, "tight-spread");
         workspace.cycle_screen(1);
         assert_eq!(workspace.active_screen_id, "momentum");
+        assert_eq!(parse_version("42"), Some(42));
+        assert_eq!(parse_version("0x42"), Some(66));
+        assert_eq!(parse_version("V0000000000000042"), Some(66));
+    }
+
+    #[test]
+    fn live_input_is_recorded_and_exactly_replayed_after_restart() {
+        let screens = Arc::new(MemoryStore::default());
+        let history = Arc::new(MemoryHistoryStore::default());
+        let provider_calls = Arc::new(AtomicUsize::new(0));
+        let mut workspace = ScreeningWorkspace::persistent_with_history(
+            Arc::new(CountingQuery(provider_calls.clone())),
+            screens.clone(),
+            history.clone(),
+        );
+        settle(&mut workspace);
+        assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
+        let live = workspace.evaluation.clone().unwrap();
+        assert_eq!(workspace.history.entries.len(), 1);
+        assert_eq!(workspace.history.entries[0].version, 42);
+
+        workspace.handle_command(&CommandInvocation {
+            function: "SCREEN".to_owned(),
+            args: vec!["HISTORY".to_owned(), "core".to_owned()],
+        });
+        assert!(workspace.status.contains("V000000000000002A"));
+        workspace.handle_command(&CommandInvocation {
+            function: "SCREEN".to_owned(),
+            args: vec!["REPLAY".to_owned(), "V000000000000002A".to_owned()],
+        });
+        settle(&mut workspace);
+        assert_eq!(workspace.replay_version, Some(42));
+        assert_eq!(workspace.evaluation.as_ref().unwrap(), &live);
+        assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
+
+        drop(workspace);
+        let mut restarted = ScreeningWorkspace::persistent_with_history(
+            Arc::new(CountingQuery(provider_calls.clone())),
+            screens,
+            history,
+        );
+        settle(&mut restarted);
+        assert_eq!(provider_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(restarted.history.entries.len(), 1);
+        restarted.handle_command(&CommandInvocation {
+            function: "SCREEN".to_owned(),
+            args: vec!["REPLAY".to_owned(), "0x2a".to_owned()],
+        });
+        settle(&mut restarted);
+        assert_eq!(restarted.evaluation.as_ref().unwrap(), &live);
+        assert_eq!(provider_calls.load(Ordering::SeqCst), 2);
+        restarted.handle_command(&CommandInvocation {
+            function: "SCREEN".to_owned(),
+            args: vec!["LIVE".to_owned()],
+        });
+        assert_eq!(restarted.replay_version, None);
+        settle(&mut restarted);
+        assert_eq!(provider_calls.load(Ordering::SeqCst), 3);
     }
 }

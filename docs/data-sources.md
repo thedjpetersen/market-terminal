@@ -113,9 +113,16 @@ persist provider data.
   denial, unavailable data, unknown universes, duplicate members, and oversized
   inputs remain typed failures. A refresh failure keeps the last valid result
   with a visible failure label rather than substituting gallery data.
-- **Retention:** observations, universes, results, and rank evidence are
-  in-memory only. Only validated custom definitions and saved-view identities
-  are persisted; credentials and provider responses are never included.
+- **Retention:** persistent deployments retain the newest 32 immutable universe
+  snapshots across all universe IDs. Each snapshot is a private, independently
+  bounded feature document referenced by a schema-versioned manifest; it
+  includes only the Screening-owned projection needed to reproduce evaluation,
+  not credentials or raw provider responses. Snapshot-first/manifest-second
+  publication prevents dangling references. The oldest manifest entry is
+  removed before its payload is deleted, and exact replay verifies the manifest,
+  payload version, domain bounds, and independent content digest. Screen results,
+  exclusions, and rank evidence remain derived in memory; definitions and saved
+  views remain separate documents.
 
 ## Yahoo Finance chart
 

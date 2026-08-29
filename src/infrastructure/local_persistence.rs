@@ -21,7 +21,10 @@ use crate::features::persistence::{
     SessionState, SessionStateRepository, MAX_DOCUMENT_BYTES,
 };
 use crate::features::portfolio::{PortfolioError, PortfolioImportStateStore};
-use crate::features::screening::{ScreenCatalogState, ScreenStateError, ScreenStateStore};
+use crate::features::screening::{
+    universe_content_digest, ScreenCatalogState, ScreenStateError, ScreenStateStore,
+    UniverseHistoryManifest, UniverseHistoryStore, UniverseSnapshot,
+};
 use crate::features::spreadsheet::{
     SpreadsheetFileError, SpreadsheetWorkbookStore, StoredWorkbook,
 };
@@ -558,6 +561,127 @@ impl ScreenStateStore for LocalPersistence {
     }
 }
 
+impl UniverseHistoryStore for LocalPersistence {
+    fn load_history(&self) -> Result<UniverseHistoryManifest, ScreenStateError> {
+        let feature = screening_feature_key()?;
+        let id = screening_history_document_id()?;
+        let Some(document) = FeatureDocumentRepository::load(self, &feature, &id)
+            .map_err(screening_persistence_error)?
+        else {
+            return Ok(UniverseHistoryManifest::empty());
+        };
+        let manifest: UniverseHistoryManifest = serde_json::from_value(document.payload().clone())
+            .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+        manifest
+            .validate()
+            .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+        if manifest.revision != document.revision() {
+            return Err(ScreenStateError::Corrupt(
+                "document and universe history revisions do not match".to_owned(),
+            ));
+        }
+        Ok(manifest)
+    }
+
+    fn load_snapshot(&self, version: u64) -> Result<UniverseSnapshot, ScreenStateError> {
+        let feature = screening_feature_key()?;
+        let id = screening_snapshot_document_id(version)?;
+        let document = FeatureDocumentRepository::load(self, &feature, &id)
+            .map_err(screening_persistence_error)?
+            .ok_or_else(|| {
+                ScreenStateError::Corrupt(format!("universe snapshot {version:016X} is missing"))
+            })?;
+        if document.revision() != version {
+            return Err(ScreenStateError::Corrupt(format!(
+                "universe snapshot {version:016X} revision does not match its identity"
+            )));
+        }
+        let snapshot: UniverseSnapshot = serde_json::from_value(document.payload().clone())
+            .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+        snapshot
+            .validate()
+            .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+        if snapshot.version != version {
+            return Err(ScreenStateError::Corrupt(format!(
+                "universe snapshot payload version {:016X} does not match {version:016X}",
+                snapshot.version
+            )));
+        }
+        let manifest = UniverseHistoryStore::load_history(self)?;
+        let entry = manifest
+            .entries
+            .iter()
+            .find(|entry| entry.version == version)
+            .ok_or_else(|| {
+                ScreenStateError::Corrupt(format!(
+                    "universe snapshot {version:016X} is not referenced by its manifest"
+                ))
+            })?;
+        let digest = universe_content_digest(&snapshot);
+        if entry.content_digest != digest {
+            return Err(ScreenStateError::Corrupt(format!(
+                "universe snapshot {version:016X} failed content verification"
+            )));
+        }
+        Ok(snapshot)
+    }
+
+    fn record_snapshot(
+        &self,
+        snapshot: &UniverseSnapshot,
+    ) -> Result<UniverseHistoryManifest, ScreenStateError> {
+        snapshot
+            .validate()
+            .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+        let current = UniverseHistoryStore::load_history(self)?;
+        let (next, evicted) = current
+            .record(snapshot)
+            .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+        if next == current {
+            let persisted = UniverseHistoryStore::load_snapshot(self, snapshot.version)?;
+            if persisted != *snapshot {
+                return Err(ScreenStateError::Corrupt(format!(
+                    "universe snapshot {:016X} changed after publication",
+                    snapshot.version
+                )));
+            }
+            return Ok(current);
+        }
+
+        let feature = screening_feature_key()?;
+        let snapshot_document = FeatureDocument::new(
+            feature.clone(),
+            screening_snapshot_document_id(snapshot.version)?,
+            snapshot.version,
+            serde_json::to_value(snapshot)
+                .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?,
+        )
+        .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+        // Publish the immutable payload first. A crash can leave an unreferenced
+        // snapshot, but can never leave a manifest pointing at absent data.
+        FeatureDocumentRepository::save(self, &snapshot_document)
+            .map_err(screening_persistence_error)?;
+
+        let manifest_document = FeatureDocument::new(
+            feature.clone(),
+            screening_history_document_id()?,
+            next.revision,
+            serde_json::to_value(&next)
+                .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?,
+        )
+        .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+        FeatureDocumentRepository::save(self, &manifest_document)
+            .map_err(screening_persistence_error)?;
+
+        if let Some(evicted) = evicted {
+            let id = screening_snapshot_document_id(evicted.version)?;
+            FeatureDocumentRepository::delete(self, &feature, &id)
+                .map_err(screening_persistence_error)?;
+        }
+        Ok(next)
+    }
+}
+
 impl LaunchpadStateStore for LocalPersistence {
     fn load_launchpad(&self) -> Result<Option<LaunchpadState>, LaunchpadStateError> {
         let feature = launchpad_feature_key()?;
@@ -750,6 +874,16 @@ fn screening_feature_key() -> Result<FeatureKey, ScreenStateError> {
 
 fn screening_catalog_document_id() -> Result<DocumentId, ScreenStateError> {
     DocumentId::new("saved_screens").map_err(|error| ScreenStateError::Corrupt(error.to_string()))
+}
+
+fn screening_history_document_id() -> Result<DocumentId, ScreenStateError> {
+    DocumentId::new("universe_history")
+        .map_err(|error| ScreenStateError::Corrupt(error.to_string()))
+}
+
+fn screening_snapshot_document_id(version: u64) -> Result<DocumentId, ScreenStateError> {
+    DocumentId::new(format!("snapshot_{version:016x}"))
+        .map_err(|error| ScreenStateError::Corrupt(error.to_string()))
 }
 
 fn screening_persistence_error(error: PersistenceError) -> ScreenStateError {
@@ -1212,6 +1346,128 @@ mod tests {
             fs::metadata(document).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[test]
+    fn universe_history_publishes_replays_and_verifies_immutable_snapshots() {
+        use crate::{
+            features::screening::{UniverseMember, UniverseSnapshot},
+            foundation::InstrumentId,
+        };
+
+        let directory = TestDirectory::new("screening-history");
+        let repository = LocalPersistence::new(&directory.0);
+        let snapshot = UniverseSnapshot::new(
+            "core",
+            "CORE",
+            0xA11CE,
+            "2026-08-29T12:00:00Z",
+            "FIXTURE PROVIDER",
+            vec![UniverseMember {
+                instrument_id: InstrumentId::new("us:xnas:aapl"),
+                symbol: "AAPL".to_owned(),
+                description: "APPLE INC".to_owned(),
+                currency: "USD".to_owned(),
+                last: Some(230.25),
+                change_percent: Some(1.5),
+                volume: Some(42_000_000.0),
+                spread_bps: Some(0.8),
+                day_range_percent: Some(2.1),
+                quality: "REALTIME".to_owned(),
+                provider: "fixture".to_owned(),
+            }],
+        )
+        .unwrap();
+
+        let first = UniverseHistoryStore::record_snapshot(&repository, &snapshot).unwrap();
+        let second = UniverseHistoryStore::record_snapshot(&repository, &snapshot).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.revision, 1);
+        assert_eq!(first.entries.len(), 1);
+        assert_eq!(
+            UniverseHistoryStore::load_snapshot(&repository, snapshot.version).unwrap(),
+            snapshot
+        );
+
+        let manifest_path = directory
+            .0
+            .join("documents")
+            .join("screening")
+            .join("universe_history.json");
+        let snapshot_path = directory
+            .0
+            .join("documents")
+            .join("screening")
+            .join("snapshot_00000000000a11ce.json");
+        assert!(manifest_path.is_file());
+        assert!(snapshot_path.is_file());
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                fs::metadata(manifest_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(snapshot_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+
+        let feature = screening_feature_key().unwrap();
+        let id = screening_snapshot_document_id(snapshot.version).unwrap();
+        let mut mutated = snapshot.clone();
+        mutated.members[0].last = Some(1.0);
+        let corrupt = FeatureDocument::new(
+            feature.clone(),
+            id.clone(),
+            snapshot.version,
+            serde_json::to_value(mutated).unwrap(),
+        )
+        .unwrap();
+        FeatureDocumentRepository::save(&repository, &corrupt).unwrap();
+        assert!(UniverseHistoryStore::load_snapshot(&repository, snapshot.version).is_err());
+
+        assert!(FeatureDocumentRepository::delete(&repository, &feature, &id).unwrap());
+        assert!(UniverseHistoryStore::load_snapshot(&repository, snapshot.version).is_err());
+        assert_eq!(
+            UniverseHistoryStore::load_history(&repository).unwrap(),
+            first
+        );
+    }
+
+    #[test]
+    fn universe_history_retention_removes_evicted_snapshot_documents() {
+        use crate::features::screening::{UniverseSnapshot, MAX_UNIVERSE_HISTORY};
+
+        let directory = TestDirectory::new("screening-history-retention");
+        let repository = LocalPersistence::new(&directory.0);
+        for version in 1..=MAX_UNIVERSE_HISTORY as u64 + 1 {
+            let snapshot = UniverseSnapshot::new(
+                "core",
+                "CORE",
+                version,
+                format!("2026-08-29T00:00:{version:02}Z"),
+                "RETENTION FIXTURE",
+                Vec::new(),
+            )
+            .unwrap();
+            UniverseHistoryStore::record_snapshot(&repository, &snapshot).unwrap();
+        }
+
+        let manifest = UniverseHistoryStore::load_history(&repository).unwrap();
+        assert_eq!(manifest.entries.len(), MAX_UNIVERSE_HISTORY);
+        assert_eq!(manifest.entries.first().unwrap().version, 2);
+        assert!(UniverseHistoryStore::load_snapshot(&repository, 1).is_err());
+        assert_eq!(
+            UniverseHistoryStore::load_snapshot(&repository, 2)
+                .unwrap()
+                .version,
+            2
+        );
+        assert!(!directory
+            .0
+            .join("documents/screening/snapshot_0000000000000001.json")
+            .exists());
     }
 
     #[test]

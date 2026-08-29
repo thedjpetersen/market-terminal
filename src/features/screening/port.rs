@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::{ScreenCatalogState, UniverseSnapshot};
+use super::{ScreenCatalogState, UniverseHistoryManifest, UniverseSnapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScreeningError {
@@ -57,4 +57,16 @@ impl std::error::Error for ScreenStateError {}
 pub trait ScreenStateStore: Send + Sync {
     fn load_screens(&self) -> Result<Option<ScreenCatalogState>, ScreenStateError>;
     fn save_screens(&self, state: &ScreenCatalogState) -> Result<(), ScreenStateError>;
+}
+
+/// Durable immutable point-in-time inputs are independent of saved screen
+/// definitions and saved workspace views. Implementations must publish a
+/// snapshot before referencing it from the bounded manifest.
+pub trait UniverseHistoryStore: Send + Sync {
+    fn load_history(&self) -> Result<UniverseHistoryManifest, ScreenStateError>;
+    fn load_snapshot(&self, version: u64) -> Result<UniverseSnapshot, ScreenStateError>;
+    fn record_snapshot(
+        &self,
+        snapshot: &UniverseSnapshot,
+    ) -> Result<UniverseHistoryManifest, ScreenStateError>;
 }

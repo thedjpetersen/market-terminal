@@ -5,7 +5,10 @@ use std::{
 
 use crate::features::{
     market_data::{MarketDataError, MarketDataQuery, QuoteSnapshot},
-    screening::{ScreeningError, ScreeningUniverseQuery, UniverseMember, UniverseSnapshot},
+    screening::{
+        universe_content_digest, ScreeningError, ScreeningUniverseQuery, UniverseMember,
+        UniverseSnapshot,
+    },
     watchlist::WatchlistCatalog,
 };
 
@@ -76,16 +79,11 @@ impl ScreeningUniverseQuery for MarketScreeningUniverseQuery {
         }
         let source = providers.into_iter().collect::<Vec<_>>().join(" + ");
         let snapshot_id = id.to_ascii_lowercase();
-        let version = universe_version(&snapshot_id, &as_of, &source, &members);
-        UniverseSnapshot::new(
-            snapshot_id,
-            definition.name,
-            version,
-            as_of,
-            source,
-            members,
-        )
-        .map_err(|error| ScreeningError::InvalidSnapshot(error.to_string()))
+        let mut snapshot =
+            UniverseSnapshot::new(snapshot_id, definition.name, 1, as_of, source, members)
+                .map_err(|error| ScreeningError::InvalidSnapshot(error.to_string()))?;
+        snapshot.version = universe_content_digest(&snapshot);
+        Ok(snapshot)
     }
 }
 
@@ -141,57 +139,6 @@ fn map_market_data_error(error: MarketDataError) -> ScreeningError {
         MarketDataError::InvalidRequest(message) => ScreeningError::InvalidSnapshot(message),
         other => ScreeningError::TemporarilyUnavailable(other.to_string()),
     }
-}
-
-fn universe_version(id: &str, as_of: &str, source: &str, members: &[UniverseMember]) -> u64 {
-    let mut hash = 0xcbf29ce484222325_u64;
-    hash_text(&mut hash, id);
-    hash_text(&mut hash, as_of);
-    hash_text(&mut hash, source);
-    hash_u64(&mut hash, members.len() as u64);
-    for member in members {
-        hash_text(&mut hash, member.instrument_id.as_str());
-        hash_text(&mut hash, &member.symbol);
-        hash_text(&mut hash, &member.description);
-        hash_text(&mut hash, &member.currency);
-        hash_optional_f64(&mut hash, member.last);
-        hash_optional_f64(&mut hash, member.change_percent);
-        hash_optional_f64(&mut hash, member.volume);
-        hash_optional_f64(&mut hash, member.spread_bps);
-        hash_optional_f64(&mut hash, member.day_range_percent);
-        hash_text(&mut hash, &member.quality);
-        hash_text(&mut hash, &member.provider);
-    }
-    hash
-}
-
-fn hash_text(hash: &mut u64, value: &str) {
-    hash_u64(hash, value.len() as u64);
-    for byte in value.bytes() {
-        *hash ^= u64::from(byte);
-        *hash = (*hash).wrapping_mul(0x100000001b3);
-    }
-}
-
-fn hash_optional_f64(hash: &mut u64, value: Option<f64>) {
-    match value {
-        Some(value) => {
-            hash_byte(hash, 1);
-            hash_u64(hash, value.to_bits());
-        }
-        None => hash_byte(hash, 0),
-    }
-}
-
-fn hash_u64(hash: &mut u64, value: u64) {
-    for byte in value.to_le_bytes() {
-        hash_byte(hash, byte);
-    }
-}
-
-fn hash_byte(hash: &mut u64, byte: u8) {
-    *hash ^= u64::from(byte);
-    *hash = (*hash).wrapping_mul(0x100000001b3);
 }
 
 #[cfg(test)]

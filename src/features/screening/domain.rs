@@ -1,6 +1,9 @@
 use std::{cmp::Ordering, collections::BTreeSet, fmt};
 
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{self, Deserializer},
+    Deserialize, Serialize, Serializer,
+};
 
 use crate::foundation::InstrumentId;
 
@@ -8,6 +11,7 @@ pub const MAX_UNIVERSE_MEMBERS: usize = 2_000;
 pub const MAX_SCREEN_CLAUSES: usize = 8;
 pub const MAX_SCREEN_RESULTS: usize = 200;
 pub const MAX_SAVED_SCREENS: usize = 64;
+pub const MAX_UNIVERSE_HISTORY: usize = 32;
 const MAX_ID_BYTES: usize = 64;
 const MAX_LABEL_BYTES: usize = 96;
 const MAX_MEMBER_TEXT_BYTES: usize = 160;
@@ -232,8 +236,12 @@ impl ScreenDefinition {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UniverseMember {
+    #[serde(
+        serialize_with = "serialize_instrument_id",
+        deserialize_with = "deserialize_instrument_id"
+    )]
     pub instrument_id: InstrumentId,
     pub symbol: String,
     pub description: String,
@@ -247,7 +255,7 @@ pub struct UniverseMember {
     pub provider: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UniverseSnapshot {
     pub id: String,
     pub label: String,
@@ -274,25 +282,199 @@ impl UniverseSnapshot {
             source: source.into(),
             members,
         };
-        validate_id(&snapshot.id, "universe ID")?;
-        if snapshot.label.trim().is_empty() || snapshot.label.len() > MAX_LABEL_BYTES {
+        snapshot.validate()?;
+        Ok(snapshot)
+    }
+
+    pub fn validate(&self) -> Result<(), ScreenError> {
+        validate_id(&self.id, "universe ID")?;
+        if self.label.trim().is_empty() || self.label.len() > MAX_LABEL_BYTES {
             return Err(ScreenError::InvalidLabel);
         }
-        if !valid_bounded_text(&snapshot.as_of, MAX_METADATA_BYTES, false)
-            || !valid_bounded_text(&snapshot.source, MAX_METADATA_BYTES, false)
+        if !valid_bounded_text(&self.as_of, MAX_METADATA_BYTES, false)
+            || !valid_bounded_text(&self.source, MAX_METADATA_BYTES, false)
         {
             return Err(ScreenError::MissingMetadata);
         }
-        if snapshot.members.len() > MAX_UNIVERSE_MEMBERS {
+        if self.members.len() > MAX_UNIVERSE_MEMBERS {
             return Err(ScreenError::UniverseTooLarge);
         }
         let mut identities = BTreeSet::new();
-        if snapshot.members.iter().any(|member| {
+        if self.members.iter().any(|member| {
             !valid_member(member) || !identities.insert(member.instrument_id.as_str().to_owned())
         }) {
             return Err(ScreenError::InvalidUniverseMember);
         }
-        Ok(snapshot)
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UniverseHistoryEntry {
+    pub universe_id: String,
+    pub universe_label: String,
+    pub version: u64,
+    pub content_digest: u64,
+    pub as_of: String,
+    pub source: String,
+    pub member_count: usize,
+}
+
+impl UniverseHistoryEntry {
+    pub fn from_snapshot(snapshot: &UniverseSnapshot) -> Self {
+        Self {
+            universe_id: snapshot.id.clone(),
+            universe_label: snapshot.label.clone(),
+            version: snapshot.version,
+            content_digest: universe_content_digest(snapshot),
+            as_of: snapshot.as_of.clone(),
+            source: snapshot.source.clone(),
+            member_count: snapshot.members.len(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), ScreenError> {
+        validate_id(&self.universe_id, "universe ID")?;
+        if self.universe_label.trim().is_empty() || self.universe_label.len() > MAX_LABEL_BYTES {
+            return Err(ScreenError::InvalidLabel);
+        }
+        if self.version == 0
+            || self.content_digest == 0
+            || !valid_bounded_text(&self.as_of, MAX_METADATA_BYTES, false)
+            || !valid_bounded_text(&self.source, MAX_METADATA_BYTES, false)
+            || self.member_count > MAX_UNIVERSE_MEMBERS
+        {
+            return Err(ScreenError::InvalidHistoryEntry);
+        }
+        Ok(())
+    }
+}
+
+/// Stable digest over every decision-relevant universe field. History uses it
+/// independently from the caller-supplied version so valid-looking JSON cannot
+/// mutate after publication without being detected during replay.
+pub fn universe_content_digest(snapshot: &UniverseSnapshot) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    digest_text(&mut hash, &snapshot.id);
+    digest_text(&mut hash, &snapshot.as_of);
+    digest_text(&mut hash, &snapshot.source);
+    digest_u64(&mut hash, snapshot.members.len() as u64);
+    for member in &snapshot.members {
+        digest_text(&mut hash, member.instrument_id.as_str());
+        digest_text(&mut hash, &member.symbol);
+        digest_text(&mut hash, &member.description);
+        digest_text(&mut hash, &member.currency);
+        digest_optional_f64(&mut hash, member.last);
+        digest_optional_f64(&mut hash, member.change_percent);
+        digest_optional_f64(&mut hash, member.volume);
+        digest_optional_f64(&mut hash, member.spread_bps);
+        digest_optional_f64(&mut hash, member.day_range_percent);
+        digest_text(&mut hash, &member.quality);
+        digest_text(&mut hash, &member.provider);
+    }
+    hash
+}
+
+fn digest_text(hash: &mut u64, value: &str) {
+    digest_u64(hash, value.len() as u64);
+    for byte in value.bytes() {
+        digest_byte(hash, byte);
+    }
+}
+
+fn digest_optional_f64(hash: &mut u64, value: Option<f64>) {
+    match value {
+        Some(value) => {
+            digest_byte(hash, 1);
+            digest_u64(hash, value.to_bits());
+        }
+        None => digest_byte(hash, 0),
+    }
+}
+
+fn digest_u64(hash: &mut u64, value: u64) {
+    for byte in value.to_le_bytes() {
+        digest_byte(hash, byte);
+    }
+}
+
+fn digest_byte(hash: &mut u64, byte: u8) {
+    *hash ^= u64::from(byte);
+    *hash = (*hash).wrapping_mul(0x100000001b3);
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UniverseHistoryManifest {
+    pub schema_version: u16,
+    pub revision: u64,
+    pub entries: Vec<UniverseHistoryEntry>,
+}
+
+impl UniverseHistoryManifest {
+    pub const SCHEMA_VERSION: u16 = 1;
+
+    pub fn empty() -> Self {
+        Self {
+            schema_version: Self::SCHEMA_VERSION,
+            revision: 0,
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), ScreenError> {
+        if self.schema_version != Self::SCHEMA_VERSION {
+            return Err(ScreenError::UnsupportedHistorySchema(self.schema_version));
+        }
+        if self.entries.len() > MAX_UNIVERSE_HISTORY {
+            return Err(ScreenError::TooManyHistoryEntries);
+        }
+        let mut versions = BTreeSet::new();
+        for entry in &self.entries {
+            entry.validate()?;
+            if !versions.insert(entry.version) {
+                return Err(ScreenError::DuplicateHistoryVersion(entry.version));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn entries_for(&self, universe_id: &str) -> Vec<&UniverseHistoryEntry> {
+        self.entries
+            .iter()
+            .rev()
+            .filter(|entry| entry.universe_id.eq_ignore_ascii_case(universe_id))
+            .collect()
+    }
+
+    pub fn record(
+        &self,
+        snapshot: &UniverseSnapshot,
+    ) -> Result<(Self, Option<UniverseHistoryEntry>), ScreenError> {
+        self.validate()?;
+        snapshot.validate()?;
+        let entry = UniverseHistoryEntry::from_snapshot(snapshot);
+        entry.validate()?;
+        if let Some(existing) = self
+            .entries
+            .iter()
+            .find(|existing| existing.version == entry.version)
+        {
+            if existing == &entry {
+                return Ok((self.clone(), None));
+            }
+            return Err(ScreenError::HistoryVersionCollision(entry.version));
+        }
+
+        let mut entries = self.entries.clone();
+        entries.push(entry);
+        let evicted = (entries.len() > MAX_UNIVERSE_HISTORY).then(|| entries.remove(0));
+        let next = Self {
+            schema_version: Self::SCHEMA_VERSION,
+            revision: self.revision.saturating_add(1),
+            entries,
+        };
+        next.validate()?;
+        Ok((next, evicted))
     }
 }
 
@@ -553,6 +735,11 @@ pub enum ScreenError {
     UnsupportedSchema(u16),
     TooManySavedScreens,
     ProtectedOrDuplicateId(String),
+    InvalidHistoryEntry,
+    UnsupportedHistorySchema(u16),
+    TooManyHistoryEntries,
+    DuplicateHistoryVersion(u64),
+    HistoryVersionCollision(u64),
 }
 
 impl fmt::Display for ScreenError {
@@ -585,6 +772,26 @@ impl fmt::Display for ScreenError {
             ),
             Self::ProtectedOrDuplicateId(id) => {
                 write!(formatter, "screen ID {id} is protected or duplicated")
+            }
+            Self::InvalidHistoryEntry => formatter.write_str("universe history entry is invalid"),
+            Self::UnsupportedHistorySchema(version) => {
+                write!(formatter, "unsupported universe history schema {version}")
+            }
+            Self::TooManyHistoryEntries => write!(
+                formatter,
+                "universe history exceeds {MAX_UNIVERSE_HISTORY} snapshots"
+            ),
+            Self::DuplicateHistoryVersion(version) => {
+                write!(
+                    formatter,
+                    "universe history duplicates version {version:016X}"
+                )
+            }
+            Self::HistoryVersionCollision(version) => {
+                write!(
+                    formatter,
+                    "universe history version collision {version:016X}"
+                )
             }
         }
     }
@@ -631,6 +838,24 @@ fn valid_bounded_text(value: &str, maximum: usize, allow_empty: bool) -> bool {
         && (allow_empty || !value.trim().is_empty())
         && value.trim() == value
         && !value.chars().any(char::is_control)
+}
+
+fn serialize_instrument_id<S>(id: &InstrumentId, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(id.as_str())
+}
+
+fn deserialize_instrument_id<'de, D>(deserializer: D) -> Result<InstrumentId, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if !valid_bounded_text(&value, 128, false) {
+        return Err(de::Error::custom("instrument identity is invalid"));
+    }
+    Ok(InstrumentId::new(value))
 }
 
 pub fn format_value(field: ScreenField, value: f64) -> String {
@@ -778,5 +1003,68 @@ mod tests {
             try_universe(vec![invalid]).unwrap_err(),
             ScreenError::InvalidUniverseMember
         );
+    }
+
+    #[test]
+    fn history_is_bounded_idempotent_and_rejects_version_collisions() {
+        let mut manifest = UniverseHistoryManifest::empty();
+        for version in 1..=MAX_UNIVERSE_HISTORY as u64 + 1 {
+            let mut snapshot = universe(vec![member(
+                &format!("us:test:{version}"),
+                &format!("T{version}"),
+                Some(version as f64),
+                Some(30_000_000.0),
+            )]);
+            snapshot.version = version;
+            snapshot.as_of = format!("2026-08-29T00:00:{version:02}Z");
+            let (next, evicted) = manifest.record(&snapshot).unwrap();
+            if version <= MAX_UNIVERSE_HISTORY as u64 {
+                assert!(evicted.is_none());
+            } else {
+                assert_eq!(evicted.unwrap().version, 1);
+            }
+            manifest = next;
+        }
+
+        assert_eq!(manifest.entries.len(), MAX_UNIVERSE_HISTORY);
+        assert_eq!(manifest.entries.first().unwrap().version, 2);
+        assert_eq!(manifest.entries.last().unwrap().version, 33);
+        assert_eq!(manifest.revision, 33);
+
+        let mut same = universe(vec![member(
+            "us:test:33",
+            "T33",
+            Some(33.0),
+            Some(30_000_000.0),
+        )]);
+        same.version = 33;
+        same.as_of = "2026-08-29T00:00:33Z".to_owned();
+        let (unchanged, evicted) = manifest.record(&same).unwrap();
+        assert_eq!(unchanged, manifest);
+        assert!(evicted.is_none());
+
+        same.source = "DIFFERENT SOURCE".to_owned();
+        assert_eq!(
+            manifest.record(&same).unwrap_err(),
+            ScreenError::HistoryVersionCollision(33)
+        );
+    }
+
+    #[test]
+    fn snapshot_json_round_trip_preserves_canonical_identity_and_revalidates() {
+        let expected = universe(vec![member(
+            "us:xnas:aapl",
+            "AAPL",
+            Some(1.5),
+            Some(42_000_000.0),
+        )]);
+        let encoded = serde_json::to_value(&expected).unwrap();
+        let restored: UniverseSnapshot = serde_json::from_value(encoded.clone()).unwrap();
+        restored.validate().unwrap();
+        assert_eq!(restored, expected);
+
+        let mut invalid = encoded;
+        invalid["members"][0]["instrument_id"] = serde_json::Value::String(" ".to_owned());
+        assert!(serde_json::from_value::<UniverseSnapshot>(invalid).is_err());
     }
 }

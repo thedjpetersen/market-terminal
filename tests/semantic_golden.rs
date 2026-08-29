@@ -46,7 +46,7 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "screening",
         prepare: prepare_screening,
-        hashes: [0x7067b728428c06ee, 0x800236565347d821, 0x9af15961fc492197],
+        hashes: [0xe94bd3e97ae9f820, 0xa96a69aded6f3e27, 0x03c75d0fa1360625],
     },
     Golden {
         name: "help",

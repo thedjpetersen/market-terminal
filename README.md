@@ -107,6 +107,9 @@ SCREEN momentum
 SCREEN SAVE liquid-gainers core change_pct >= 1 AND volume >= 1000000 SORT change_pct DESC LIMIT 25
 SCREEN LIST
 SCREEN DELETE liquid-gainers
+SCREEN HISTORY core
+SCREEN REPLAY V0123456789ABCDEF momentum
+SCREEN LIVE
 ```
 
 Predicates are typed over last price, percent change, volume, bid/ask spread,
@@ -115,7 +118,11 @@ instrument identity, and the header reports input version, as-of, source,
 coverage, matches, and exclusions. The detail pane shows actual values and
 pass/fail evidence for every clause. Use arrows or `j`/`k` to select rows,
 `Enter`/`s` for Security, `a` for Spreadsheet insertion, `m` for the source
-Monitor universe, `[`/`]` to cycle definitions, and `r` to refresh. Mouse,
+Monitor universe, `h` for retained input versions, `l` to return to live mode,
+`[`/`]` to cycle definitions, and `r` to rerun the current live or replay input.
+Persistent deployments retain 32 immutable universe frames with independent
+content verification; exact replay never calls the provider or substitutes a
+newer frame. Mouse,
 spatial focus, and `F` hints use those same identity-checked actions. See
 [the Screening contract](docs/screening.md) for limits, persistence, and the
 remaining P2/P3 scope.

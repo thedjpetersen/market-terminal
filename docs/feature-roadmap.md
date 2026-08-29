@@ -285,8 +285,10 @@ move to its own crate later without changing its public vocabulary.
   promotion, Monitor universe routing, and saved-view recovery by stable screen
   and row identities. Deterministic engine, adapter, persistence, stale-action,
   restart-state, three-size semantic, and 2,000-member performance evidence lock
-  the slice. Full formula grouping/unit inference, historical universe storage,
-  factors, heatmaps, and whole-result promotion remain.
+  the slice. The follow-on history increment now retains 32 immutable input
+  frames with content verification and exact offline replay across restart.
+  Full formula grouping/unit inference, factors, heatmaps, history repair, and
+  whole-result promotion remain.
 - **Next:** finish P1 unified discovery while deepening P2/P3 universe storage,
   hotlists/breadth/heatmaps, Screening expressions and result promotion, factor
   research, and compound alert families. Provider availability
@@ -375,7 +377,7 @@ continues.
 | DOM, time and sales, hotlists, heatmaps | Missing | Listed-instrument monitor and quote stream only | Add entitlement-aware depth/tape models, movers, breadth, sector/market heatmaps, and replay fixtures without synthesizing unavailable order-book data. |
 | Multi-panel technical chart workstation | Partial | OHLC/line charts, comparisons, volume, SMA/EMA, RSI, periods, cursor | Add up to nine linked panes, multi-timeframe layouts, indicator registry, annotations, volume profile, historical replay, alternate chart types, and image/data export. |
 | Security Hub and equity research | Partial | Profile, financials, filings, SEC Form 4, news, basic peer/estimate states | Add statements/trends, estimates/revisions, earnings, ESG, corporate actions, dividends, shareholding history, richer peers, and multi-market identity. |
-| Advanced screener and factor dashboard | Partial | Production `SCREEN` workspace over versioned point-in-time Watchlist/Market Data universes, closed typed `AND` predicates, fail-closed nulls, deterministic ranking/ties, coverage/exclusion/why-ranked evidence, crash-safe saved definitions, saved views, and Security/Monitor/Spreadsheet routing | Add nested `AND`/`OR` formula AST with unit inference, historical universe storage/replay, whole-result atomic promotion, fundamentals and factors, neutralized composites, and factor history/IC/turnover. |
+| Advanced screener and factor dashboard | Partial | Production `SCREEN` workspace over versioned point-in-time Watchlist/Market Data universes, closed typed `AND` predicates, fail-closed nulls, deterministic ranking/ties, coverage/exclusion/why-ranked evidence, crash-safe saved definitions, 32-frame immutable history with verified exact replay, saved views, and Security/Monitor/Spreadsheet routing | Add nested `AND`/`OR` formula AST with unit inference, history audit/repair, whole-result atomic promotion, fundamentals and factors, neutralized composites, and factor history/IC/turnover. |
 | Tool-using AI research | Partial | Codex/OpenRouter chat, validated UI intents, bounded article reading | Add screen-aware read tools, research retrieval, cited artifacts, provider routing, debate, bounded strategy research, and local-model fallback. |
 | Futures and options suite | Missing | Stage 3 domain placeholder only | Add chains, Greeks/IV, OI/PCR/flow, strategies, futures basis/curve, expiry calendar, scenario tools, and delayed/entitled data states. |
 | Portfolio accounting and attribution | Partial | Exact positions, cash/activity, valuations/TWR, lots, realized gains, fills, single/multi-period attribution | Add portfolio CRUD/transaction truth, allocation views, benchmark history, dividends, multi-portfolio comparison, and rebalance evidence. |
@@ -708,8 +710,15 @@ data foundation for screening, derivatives, risk, and backtesting.
     snapshot with canonical member identity, deterministic version, as-of,
     provider/quality fields, coverage and exclusions. The built-in momentum,
     liquidity, and tight-spread rankings are deterministic under equal values and
-    survive saved-view restart by identity.
-  - **Still required:** durable historical universe manifests, repair/audit,
+    survive saved-view restart by identity. Persistent deployments now publish
+    successful live inputs snapshot-first into immutable private documents and
+    then a schema-versioned 32-entry manifest. Exact `SCREEN REPLAY` verifies the
+    manifest reference, version, domain bounds, and independent content digest;
+    missing or post-publication-mutated payloads fail closed. Publication is
+    idempotent, retention removes the oldest payload only after publishing the
+    new manifest, and restart replay produces the identical evaluation without a
+    provider call.
+  - **Still required:** orphan audit/repair and retention health metrics,
     broader classifications and field coverage, breadth/advance-decline, unusual
     volume, dedicated hotlists, sector/market heatmaps, normalized split
     comparison, and direct Chart promotion.
@@ -758,12 +767,15 @@ loop before adding more asset classes.
     input version/as-of/source/coverage and selected-row reasons, shares geometry
     across mouse/spatial/follow routing, revalidates row identity, opens Security,
     inserts the selected symbol into Spreadsheet, routes its universe to Monitor,
-    and restores screen/selection/viewport identities from saved views.
+    and restores screen/selection/viewport identities from saved views. `SCREEN
+    HISTORY`, `SCREEN REPLAY`, and `SCREEN LIVE` expose retained version metadata,
+    exact historical evaluation, and an explicit return to fresh provider input.
   - **Still required:** nested `AND`/`OR`/`NOT` expression trees, dimension and
     unit inference beyond the closed field catalog, historical point-in-time
-    universe storage and replay, fundamental/event/factor fields, direct Chart
-    routing, transactional whole-result Monitor and typed Spreadsheet-range
-    promotion, result-set persistence/export, and richer definition management.
+    audit/repair and longer policy-driven retention, fundamental/event/factor
+    fields, direct Chart routing, transactional whole-result Monitor and typed
+    Spreadsheet-range promotion, result-set persistence/export, and richer
+    definition management.
 - Add factor research for value, momentum, quality, size, and low-volatility with
   winsorization, sector neutralization, z-scores, weights, coverage, exposure,
   return history, information coefficient, turnover, and why-ranked components.
