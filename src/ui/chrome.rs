@@ -219,7 +219,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
                     ),
                     AMBER,
                 ),
-                Span::raw("CLOSE HELP   "),
+                Span::raw("CLOSE DISCOVERY   "),
                 Span::styled(
                     format!("{} ", app.key_labels(&[ShellAction::OpenCommand])),
                     AMBER,

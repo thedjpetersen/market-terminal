@@ -1,5 +1,6 @@
 mod command_inference;
 mod desk;
+mod discovery;
 mod events;
 mod input;
 mod keymap;
@@ -30,6 +31,7 @@ pub use command_inference::{
     CommandInference, CommandInferenceError, CommandInferenceRequest, InferredCommand,
 };
 pub use desk::{DeskWorkspace, DESK_ID};
+pub use discovery::{DiscoveryItem, DiscoveryKind};
 pub use events::{
     CommandDispatched, EventBus, EventEnvelope, EventTopic, SubscriptionId, SubscriptionMetrics,
     WorkspaceActivated,
@@ -111,6 +113,9 @@ pub struct App {
     pub(crate) help_visible: bool,
     pub(crate) help_selected: usize,
     pub(crate) help_details_visible: bool,
+    help_query: String,
+    help_searching: bool,
+    help_delete_armed: Option<(u64, u64)>,
     pub(crate) settings_visible: bool,
     pub(crate) settings_first_run: bool,
     runtime_settings: RuntimeSettingsSummary,
@@ -155,6 +160,9 @@ impl App {
             help_visible: false,
             help_selected: 0,
             help_details_visible: false,
+            help_query: String::new(),
+            help_searching: false,
+            help_delete_armed: None,
             settings_visible: false,
             settings_first_run: false,
             runtime_settings: RuntimeSettingsSummary::demo(),
@@ -289,6 +297,11 @@ impl App {
                 "Open this interactive command guide.",
             ),
             (
+                "DISCOVER",
+                &["DISCOVER"][..],
+                "Search commands, workspaces, saved views, and Launchpad objects.",
+            ),
+            (
                 "SETTINGS",
                 &["SETTINGS", "CONFIG", "SETUP"][..],
                 "Open effective runtime settings and setup guidance.",
@@ -353,8 +366,105 @@ impl App {
         commands
     }
 
+    /// Returns the bounded, deterministically ranked global destination set.
+    /// Search is literal-token based so a query can never fuzzy-route to a
+    /// surprising command.
+    pub(crate) fn discovery_items(&self) -> Vec<DiscoveryItem> {
+        let mut items = Vec::new();
+        for descriptor in self.workspaces.descriptors() {
+            let Some(command) = descriptor.commands.first() else {
+                continue;
+            };
+            items.push(
+                DiscoveryItem::new(
+                    format!("workspace:{}", descriptor.id.as_str()),
+                    DiscoveryKind::Workspace,
+                    descriptor.label,
+                    *command,
+                    "WORKSPACE",
+                    format!("Open the {} workspace.", descriptor.label),
+                )
+                .with_aliases(descriptor.commands.iter().map(|alias| (*alias).to_owned()))
+                .with_keywords([descriptor.id.as_str().to_owned()]),
+            );
+        }
+        items.extend(self.help_commands().into_iter().map(|command| {
+            DiscoveryItem::new(
+                format!("command:{}", command.command.to_ascii_lowercase()),
+                DiscoveryKind::Command,
+                command.command.clone(),
+                command.command,
+                command.owner,
+                command.description,
+            )
+            .with_aliases(command.aliases)
+            .with_keywords(
+                command
+                    .hotkey
+                    .map(|hotkey| vec![format!("hotkey {hotkey}")])
+                    .unwrap_or_default(),
+            )
+        }));
+        items.extend(self.saved_views.views.iter().map(|view| {
+            DiscoveryItem::new(
+                format!("saved-view:{}:r{}", view.id, view.revision),
+                DiscoveryKind::SavedView,
+                view.label.clone(),
+                format!("VIEW RESTORE {}", quoted_command_argument(&view.label)),
+                "SAVED VIEW",
+                format!(
+                    "Restore revision {} in {} with {} workspace destination(s).",
+                    view.revision,
+                    view.active_workspace.to_ascii_uppercase(),
+                    view.workspace_order.len()
+                ),
+            )
+            .with_aliases([view.id.to_string(), view.active_workspace.clone()])
+            .with_keywords(view.workspace_order.clone())
+            .with_identity(view.id, view.revision)
+        }));
+        items.extend(self.workspaces.discovery_items());
+        let mut seen = std::collections::BTreeSet::new();
+        items
+            .into_iter()
+            .filter(|item| item.is_valid() && seen.insert(item.id.clone()))
+            .take(discovery::MAX_DISCOVERY_ITEMS)
+            .collect()
+    }
+
+    pub(crate) fn help_items(&self) -> Vec<DiscoveryItem> {
+        discovery::search(self.discovery_items(), &self.help_query)
+    }
+
+    pub(crate) fn help_query(&self) -> &str {
+        &self.help_query
+    }
+
+    pub(crate) fn help_searching(&self) -> bool {
+        self.help_searching
+    }
+
+    pub(crate) fn help_delete_armed(&self) -> bool {
+        let Some(armed) = self.help_delete_armed else {
+            return false;
+        };
+        self.help_selected_item()
+            .and_then(|item| Some((item.entity_id?, item.revision?)))
+            == Some(armed)
+    }
+
+    pub(crate) fn help_selected_item(&self) -> Option<DiscoveryItem> {
+        self.help_items().into_iter().nth(self.help_selected)
+    }
+
     pub(crate) fn help_selected_command(&self) -> Option<HelpCommand> {
-        self.help_commands().into_iter().nth(self.help_selected)
+        self.help_selected_item().map(|item| HelpCommand {
+            command: item.command,
+            owner: item.owner,
+            aliases: item.aliases,
+            hotkey: None,
+            description: item.description,
+        })
     }
 
     pub(crate) fn help_selected_index(&self) -> usize {
@@ -665,24 +775,41 @@ impl App {
     }
 
     fn open_help(&mut self) {
+        self.open_discovery(String::new(), false);
+    }
+
+    fn open_discovery(&mut self, query: String, searching: bool) {
         self.help_visible = true;
         self.help_details_visible = false;
-        let last = self.help_commands().len().saturating_sub(1);
-        self.help_selected = self.help_selected.min(last);
+        self.help_query = query;
+        while self.help_query.len() > discovery::MAX_DISCOVERY_QUERY_BYTES {
+            self.help_query.pop();
+        }
+        self.help_searching = searching;
+        self.help_delete_armed = None;
+        let last = self.help_items().len().saturating_sub(1);
+        self.help_selected = if searching {
+            0
+        } else {
+            self.help_selected.min(last)
+        };
     }
 
     fn close_help(&mut self) {
         self.help_visible = false;
         self.help_details_visible = false;
+        self.help_searching = false;
+        self.help_delete_armed = None;
     }
 
     fn move_help_selection(&mut self, amount: isize) {
-        let last = self.help_commands().len().saturating_sub(1);
+        let last = self.help_items().len().saturating_sub(1);
         self.help_selected = if amount.is_negative() {
             self.help_selected.saturating_sub(amount.unsigned_abs())
         } else {
             self.help_selected.saturating_add(amount as usize).min(last)
         };
+        self.help_delete_armed = None;
     }
 
     fn invoke_selected_help_command(&mut self) {
@@ -695,7 +822,83 @@ impl App {
         self.execute_command();
     }
 
+    fn update_discovery_query(&mut self, update: impl FnOnce(&mut String)) {
+        update(&mut self.help_query);
+        while self.help_query.len() > discovery::MAX_DISCOVERY_QUERY_BYTES {
+            self.help_query.pop();
+        }
+        self.help_selected = 0;
+        self.help_details_visible = false;
+        self.help_delete_armed = None;
+    }
+
+    fn arm_or_delete_discovered_view(&mut self) {
+        let Some(item) = self.help_selected_item() else {
+            return;
+        };
+        let (Some(id), Some(revision)) = (item.entity_id, item.revision) else {
+            self.command_feedback = Some("ONLY SAVED VIEWS CAN BE DELETED HERE".to_owned());
+            return;
+        };
+        if item.kind != DiscoveryKind::SavedView {
+            self.command_feedback = Some("ONLY SAVED VIEWS CAN BE DELETED HERE".to_owned());
+            return;
+        }
+        if self.help_delete_armed != Some((id, revision)) {
+            self.help_delete_armed = Some((id, revision));
+            self.command_feedback = Some(format!(
+                "DELETE ARMED · {} R{} · PRESS X AGAIN",
+                item.label, revision
+            ));
+            return;
+        }
+        let still_current = self
+            .saved_views
+            .views
+            .iter()
+            .any(|view| view.id == id && view.revision == revision);
+        if !still_current {
+            self.help_delete_armed = None;
+            self.command_feedback = Some("DELETE CANCELED · SAVED VIEW CHANGED".to_owned());
+            return;
+        }
+        self.delete_saved_view(&id.to_string());
+        self.help_delete_armed = None;
+        self.help_selected = self
+            .help_selected
+            .min(self.help_items().len().saturating_sub(1));
+    }
+
     fn handle_help_key(&mut self, key: KeyEvent) {
+        if self.help_searching {
+            match key.code {
+                KeyCode::Esc => self.help_searching = false,
+                KeyCode::Backspace => {
+                    self.update_discovery_query(|query| {
+                        let boundary = previous_char_boundary(query, query.len());
+                        query.truncate(boundary);
+                    });
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.update_discovery_query(String::clear);
+                }
+                KeyCode::Char(character)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    self.update_discovery_query(|query| query.push(character));
+                }
+                KeyCode::Up => self.move_help_selection(-1),
+                KeyCode::Down => self.move_help_selection(1),
+                KeyCode::Enter if self.help_selected_item().is_some() => {
+                    self.help_searching = false;
+                    self.help_details_visible = true;
+                }
+                _ => {}
+            }
+            return;
+        }
         match key.code {
             KeyCode::Esc => {
                 if self.help_details_visible {
@@ -726,7 +929,16 @@ impl App {
                 return;
             }
             KeyCode::End => {
-                self.help_selected = self.help_commands().len().saturating_sub(1);
+                self.help_selected = self.help_items().len().saturating_sub(1);
+                return;
+            }
+            KeyCode::Char('/') if !self.help_details_visible => {
+                self.help_searching = true;
+                self.help_delete_armed = None;
+                return;
+            }
+            KeyCode::Char('x' | 'X') if !self.help_details_visible => {
+                self.arm_or_delete_discovered_view();
                 return;
             }
             KeyCode::Left if self.help_details_visible => {
@@ -967,18 +1179,20 @@ impl App {
         let invocation = CommandInvocation::parse(&command);
         let mut command_target = None;
         let mut inference_pending = false;
-        let opens_help = invocation
-            .as_ref()
-            .is_some_and(|invocation| invocation.function == "HELP");
+        let discovery_request = invocation.as_ref().and_then(|invocation| {
+            matches!(invocation.function.as_str(), "HELP" | "DISCOVER")
+                .then(|| invocation.args.join(" "))
+        });
         let opens_settings = invocation.as_ref().is_some_and(|invocation| {
             matches!(
                 invocation.function.as_str(),
                 "SETTINGS" | "CONFIG" | "SETUP"
             )
         });
-        if opens_help {
+        if let Some(query) = discovery_request {
             self.settings_visible = false;
-            self.open_help();
+            let searching = !query.is_empty();
+            self.open_discovery(query, searching);
         } else if opens_settings {
             self.open_settings();
         } else if let Some(invocation) = invocation
@@ -2292,6 +2506,10 @@ fn next_word_start(value: &str, cursor: usize) -> usize {
     position
 }
 
+fn quoted_command_argument(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -2689,7 +2907,7 @@ mod tests {
         let frame_area = Rect::new(0, 0, 120, 30);
         let mut app = bootstrap::demo_app();
         app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-        let command_count = app.help_commands().len();
+        let command_count = app.help_items().len();
 
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         assert_eq!(app.help_selected, 0);
@@ -2720,7 +2938,7 @@ mod tests {
     fn enter_opens_help_command_details_then_invokes_the_exact_command() {
         let mut app = bootstrap::demo_app();
         app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-        for _ in 0..app.help_commands().len() {
+        for _ in 0..app.help_items().len() {
             if app.help_selected_command().map(|command| command.command) == Some("PORT".to_owned())
             {
                 break;
@@ -2778,7 +2996,7 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(rendered.contains("MARKET TERMINAL GUIDE"));
+        assert!(rendered.contains("UNIFIED DESTINATION DIRECTORY"));
         assert!(rendered.contains("PORT IMPORT <CSV>"));
 
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -2792,14 +3010,112 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(rendered.contains("COMMAND INFORMATION"));
-        assert!(rendered.contains("Open or update"));
-        assert!(rendered.contains("ENTER RUN COMMAND"));
+        assert!(rendered.contains("DESTINATION INFORMATION"));
+        assert!(rendered.contains("Open the"));
+        assert!(rendered.contains("COMMAND"));
 
         let close = crate::ui::help_close_area(crate::ui::ShellLayout::new(frame_area).workspace);
         app.handle_mouse(left_click(close.x + 1, close.y), frame_area);
 
         assert!(!app.help_visible());
+    }
+
+    #[test]
+    fn unified_discovery_searches_every_destination_class_and_invokes_exact_commands() {
+        let documents = Arc::new(MemoryFeatureRepository::default());
+        let mut app = bootstrap::demo_app().with_saved_view_repository(documents);
+        app.command = "SEC MSFT US --view=filings".to_owned();
+        app.execute_command();
+        app.command = "VIEW SAVE My Filing Research".to_owned();
+        app.execute_command();
+
+        let inventory = app.discovery_items();
+        assert!(inventory
+            .iter()
+            .any(|item| item.kind == DiscoveryKind::Workspace));
+        assert!(inventory
+            .iter()
+            .any(|item| item.kind == DiscoveryKind::Command));
+        assert!(inventory
+            .iter()
+            .any(|item| item.kind == DiscoveryKind::SavedView));
+        assert!(inventory
+            .iter()
+            .any(|item| item.kind == DiscoveryKind::Launchpad));
+
+        app.command = "DISCOVER my filing".to_owned();
+        app.execute_command();
+        assert!(app.help_visible());
+        assert!(app.help_searching());
+        assert_eq!(app.help_items().len(), 1);
+        assert_eq!(app.help_items()[0].kind, DiscoveryKind::SavedView);
+
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.help_details_visible());
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.help_visible());
+        assert_eq!(app.active_workspace(), SECURITY);
+        assert!(app
+            .command_feedback()
+            .is_some_and(|message| message.contains("VIEW RESTORED")));
+    }
+
+    #[test]
+    fn discovery_saved_view_management_is_revision_checked_and_durable() {
+        let documents = Arc::new(MemoryFeatureRepository::default());
+        let mut app = bootstrap::demo_app().with_saved_view_repository(documents.clone());
+        app.command = "VIEW SAVE Delete Me Exactly".to_owned();
+        app.execute_command();
+        let revision = app.saved_views.views[0].revision;
+
+        app.command = "DISCOVER delete me exactly".to_owned();
+        app.execute_command();
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert_eq!(app.help_delete_armed, Some((1, revision)));
+        assert_eq!(app.saved_views.views.len(), 1);
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert!(app.saved_views.views.is_empty());
+
+        let restarted = bootstrap::demo_app().with_saved_view_repository(documents);
+        assert!(restarted.saved_views.views.is_empty());
+    }
+
+    #[test]
+    fn discovery_delete_confirmation_does_not_cross_saved_view_revisions() {
+        let documents = Arc::new(MemoryFeatureRepository::default());
+        let mut app = bootstrap::demo_app().with_saved_view_repository(documents);
+        app.command = "VIEW SAVE Mutable View".to_owned();
+        app.execute_command();
+        app.command = "DISCOVER mutable view".to_owned();
+        app.execute_command();
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        let armed = app.help_delete_armed;
+
+        app.saved_views.views[0].revision += 1;
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+
+        assert_eq!(app.saved_views.views.len(), 1);
+        assert_ne!(app.help_delete_armed, armed);
+        assert_eq!(
+            app.help_delete_armed,
+            Some((
+                app.saved_views.views[0].id,
+                app.saved_views.views[0].revision
+            ))
+        );
+    }
+
+    #[test]
+    fn discovery_query_is_utf8_safe_and_bounded() {
+        let mut app = bootstrap::demo_app();
+        app.command = format!("DISCOVER {}", "é".repeat(100));
+        app.execute_command();
+
+        assert!(app.help_query().is_char_boundary(app.help_query().len()));
+        assert!(app.help_query().len() <= discovery::MAX_DISCOVERY_QUERY_BYTES);
+        assert!(!app.help_delete_armed());
     }
 
     #[test]

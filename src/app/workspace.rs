@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{layout::Rect, Frame};
 
-use super::{ViewRestoreReport, WorkspaceViewState};
+use super::{DiscoveryItem, ViewRestoreReport, WorkspaceViewState};
 
 pub(super) const MAX_COMMAND_BYTES: usize = 4_096;
 const MAX_COMMAND_TOKENS: usize = 64;
@@ -332,6 +332,12 @@ pub trait Workspace: Send {
         ShellChrome::Standard
     }
 
+    /// Contributes feature-owned saved objects to global discovery without
+    /// exposing mutable feature state to the shell.
+    fn discovery_items(&self) -> Vec<DiscoveryItem> {
+        Vec::new()
+    }
+
     /// Direct feature hotkeys are optional. Existing descriptors can opt out with `\0`.
     fn hotkey(&self) -> Option<char> {
         let hotkey = self.descriptor().hotkey;
@@ -427,6 +433,20 @@ impl WorkspaceRegistry {
             .iter()
             .flat_map(|workspace| workspace.descriptor().commands.iter().copied())
             .map(str::to_owned)
+            .collect()
+    }
+
+    pub fn discovery_items(&self) -> Vec<DiscoveryItem> {
+        let mut seen = HashSet::new();
+        self.entries
+            .iter()
+            .flat_map(|workspace| workspace.discovery_items())
+            .filter(|item| {
+                item.is_valid()
+                    && CommandInvocation::try_parse(&item.command).is_ok()
+                    && seen.insert(item.id.clone())
+            })
+            .take(super::discovery::MAX_DISCOVERY_ITEMS)
             .collect()
     }
 
@@ -743,6 +763,7 @@ mod tests {
         invocation: Option<Arc<Mutex<Option<CommandInvocation>>>>,
         actions: Vec<WorkspaceAction>,
         activated: Option<Arc<Mutex<Vec<String>>>>,
+        discovery: Vec<DiscoveryItem>,
     }
 
     impl Stub {
@@ -754,6 +775,7 @@ mod tests {
                 invocation: None,
                 actions: Vec::new(),
                 activated: None,
+                discovery: Vec::new(),
             }
         }
     }
@@ -787,6 +809,9 @@ mod tests {
                 .expect("activation capture lock")
                 .push(id.to_owned());
             true
+        }
+        fn discovery_items(&self) -> Vec<DiscoveryItem> {
+            self.discovery.clone()
         }
     }
 
@@ -925,6 +950,41 @@ mod tests {
             *activated.lock().expect("activation capture lock"),
             ["row:0"]
         );
+    }
+
+    #[test]
+    fn discovery_registry_bounds_validates_and_deduplicates_feature_items() {
+        let valid = DiscoveryItem::new(
+            "tile:1",
+            super::super::DiscoveryKind::Launchpad,
+            "Research",
+            "SEC AAPL US",
+            "LAUNCHPAD",
+            "Open research",
+        );
+        let workspace = Stub {
+            discovery: vec![
+                valid.clone(),
+                valid,
+                DiscoveryItem::new(
+                    "tile:bad",
+                    super::super::DiscoveryKind::Launchpad,
+                    "Broken",
+                    "'unterminated",
+                    "LAUNCHPAD",
+                    "Rejected malformed command",
+                ),
+            ],
+            ..Stub::new(descriptor(
+                WorkspaceId::new("discover"),
+                'd',
+                &["DISCOVERABLE"],
+            ))
+        };
+        let registry = WorkspaceRegistry::new(vec![Box::new(workspace)]);
+
+        assert_eq!(registry.discovery_items().len(), 1);
+        assert_eq!(registry.discovery_items()[0].id, "tile:1");
     }
 
     #[test]

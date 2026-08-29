@@ -32,6 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .unwrap_or(50.0);
     let results = [
         command_dispatch_case()?,
+        discovery_search_case()?,
         visible_action_routing_case()?,
         responsive_theme_render_case()?,
         screening_evaluation_case()?,
@@ -52,6 +53,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+fn discovery_search_case() -> Result<CaseResult, Box<dyn Error>> {
+    let mut app = bootstrap::demo_app();
+    search_discovery(&mut app);
+    let p95_ms = measure(|_| {
+        search_discovery(&mut app);
+        Ok(())
+    })?;
+    Ok(CaseResult {
+        name: "discovery_search",
+        p95_ms,
+        context: "commands+workspaces+launchpad query=portfolio".to_owned(),
+    })
 }
 
 struct CaseResult {
@@ -205,6 +220,12 @@ fn measure(
 
 fn dispatch_help(app: &mut market_terminal::App) {
     dispatch(app, "HELP");
+}
+
+fn search_discovery(app: &mut market_terminal::App) {
+    dispatch(app, "DISCOVER portfolio");
+    app.handle_key(key(KeyCode::Esc));
+    app.handle_key(key(KeyCode::Esc));
 }
 
 fn dispatch(app: &mut market_terminal::App, command: &str) {

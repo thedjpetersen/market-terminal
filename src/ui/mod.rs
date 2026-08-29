@@ -640,13 +640,13 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
         .border_style(theme::CYAN)
         .title(Line::from(vec![
             Span::styled(
-                " HELP ",
+                " DISCOVER ",
                 Style::new()
                     .bg(theme::CYAN.into())
                     .fg(theme::BG.into())
                     .bold(),
             ),
-            Span::styled(" MARKET TERMINAL GUIDE ", theme::CYAN),
+            Span::styled(" UNIFIED DESTINATION DIRECTORY ", theme::CYAN),
         ]));
     let inner = block.inner(panel);
     frame.render_widget(block, panel);
@@ -657,14 +657,33 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(2),
     ])
     .split(inner);
+    let search_mode = if app.help_searching() {
+        "SEARCHING"
+    } else {
+        "BROWSE"
+    };
+    let query = if app.help_query().is_empty() {
+        "ALL DESTINATIONS".to_owned()
+    } else {
+        format!("QUERY · {}", app.help_query())
+    };
     frame.render_widget(
         Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(
+                    format!(" {search_mode} "),
+                    Style::new()
+                        .bg(theme::AMBER.into())
+                        .fg(theme::BG.into())
+                        .bold(),
+                ),
+                Span::styled(
+                    format!("  {query}"),
+                    Style::new().fg(theme::INK.into()).bold(),
+                ),
+            ]),
             Line::styled(
-                "COMMANDS, KEYS, AND MOUSE CONTROLS",
-                Style::new().fg(theme::INK.into()).bold(),
-            ),
-            Line::styled(
-                "Your current workspace stays open behind this guide.",
+                "Commands, workspaces, saved views, and Launchpad objects share one exact router.",
                 theme::MUTED,
             ),
         ]),
@@ -673,22 +692,25 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
 
     let columns =
         Layout::horizontal([Constraint::Percentage(58), Constraint::Percentage(42)]).split(rows[1]);
-    let commands = app.help_commands();
-    let selected = app
-        .help_selected_index()
-        .min(commands.len().saturating_sub(1));
+    let items = app.help_items();
+    let selected = app.help_selected_index().min(items.len().saturating_sub(1));
     let visible_rows = usize::from(columns[0].height.saturating_sub(2)).max(1);
     let offset = selected
         .saturating_sub(visible_rows.saturating_sub(1))
-        .min(commands.len().saturating_sub(visible_rows));
-    let end = (offset + visible_rows).min(commands.len());
-    let command_lines = commands[offset..end]
+        .min(items.len().saturating_sub(visible_rows));
+    let end = (offset + visible_rows).min(items.len());
+    let item_lines = items[offset..end]
         .iter()
         .enumerate()
-        .map(|(visible_index, command)| {
+        .map(|(visible_index, item)| {
             let index = offset + visible_index;
             let marker = if index == selected { '›' } else { ' ' };
-            let line = format!("{marker} {:<16} {}", command.command, command.owner);
+            let line = format!(
+                "{marker} {:<4} {:<22} {}",
+                item.kind.short_label(),
+                item.label,
+                item.owner
+            );
             if index == selected {
                 Line::styled(
                     line,
@@ -702,55 +724,76 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             }
         })
         .collect::<Vec<_>>();
-    let directory_title = format!("COMMANDS {}-{} / {}", offset + 1, end, commands.len());
+    let item_lines = if item_lines.is_empty() {
+        vec![Line::styled("NO LITERAL-TOKEN MATCHES", theme::MUTED)]
+    } else {
+        item_lines
+    };
+    let start = usize::from(!items.is_empty()).saturating_add(offset);
+    let directory_title = format!("RESULTS {start}-{end} / {}", items.len());
     frame.render_widget(
-        Paragraph::new(command_lines).block(components::terminal_block("CMD", &directory_title)),
+        Paragraph::new(item_lines).block(components::terminal_block("FIND", &directory_title)),
         columns[0],
     );
     if app.help_details_visible() {
-        let detail_lines = commands.get(selected).map_or_else(Vec::new, |command| {
-            let hotkey = command
-                .hotkey
-                .map(|hotkey| hotkey.to_ascii_uppercase().to_string())
+        let detail_lines = items.get(selected).map_or_else(Vec::new, |item| {
+            let aliases = if item.aliases.is_empty() {
+                "—".to_owned()
+            } else {
+                item.aliases.join(" · ")
+            };
+            let revision = item
+                .revision
+                .map(|revision| revision.to_string())
                 .unwrap_or_else(|| "—".to_owned());
             vec![
                 Line::from(vec![
-                    Span::styled("COMMAND      ", theme::AMBER),
-                    Span::styled(
-                        command.command.clone(),
-                        Style::new().fg(theme::INK.into()).bold(),
-                    ),
+                    Span::styled("TYPE         ", theme::AMBER),
+                    Span::styled(item.kind.label(), Style::new().fg(theme::INK.into()).bold()),
                 ]),
                 Line::from(vec![
-                    Span::styled("DESTINATION  ", theme::AMBER),
-                    Span::raw(command.owner.clone()),
+                    Span::styled("LABEL        ", theme::AMBER),
+                    Span::raw(item.label.clone()),
+                ]),
+                Line::from(vec![
+                    Span::styled("COMMAND      ", theme::AMBER),
+                    Span::raw(item.command.clone()),
+                ]),
+                Line::from(vec![
+                    Span::styled("OWNER        ", theme::AMBER),
+                    Span::raw(item.owner.clone()),
                 ]),
                 Line::from(vec![
                     Span::styled("ALIASES      ", theme::AMBER),
-                    Span::raw(command.aliases.join(" · ")),
+                    Span::raw(aliases),
                 ]),
                 Line::from(vec![
-                    Span::styled("HOTKEY       ", theme::AMBER),
-                    Span::raw(hotkey),
+                    Span::styled("REVISION     ", theme::AMBER),
+                    Span::raw(revision),
                 ]),
                 Line::raw(""),
                 Line::styled("INFORMATION", theme::AMBER),
-                Line::raw(command.description.clone()),
+                Line::raw(item.description.clone()),
             ]
         });
         frame.render_widget(
             Paragraph::new(detail_lines)
                 .wrap(Wrap { trim: true })
-                .block(components::terminal_block("INFO", "COMMAND INFORMATION")),
+                .block(components::terminal_block(
+                    "INFO",
+                    "DESTINATION INFORMATION",
+                )),
             columns[1],
         );
     } else {
         frame.render_widget(
             Paragraph::new(vec![
-                Line::styled("BROWSE THE DIRECTORY", theme::AMBER),
-                Line::raw("↑/↓ or J/K       Select command"),
-                Line::raw("PgUp/PgDn/Wheel Scroll commands"),
-                Line::raw("Enter            Open command information"),
+                Line::styled("SEARCH AND BROWSE", theme::AMBER),
+                Line::raw("/                  Search literal tokens"),
+                Line::raw("↑/↓ or J/K         Select destination"),
+                Line::raw("PgUp/PgDn/Wheel   Scroll results"),
+                Line::raw("Enter              Inspect, then run"),
+                Line::raw("X twice            Delete selected saved view"),
                 Line::raw(""),
                 Line::styled("OPEN AND NAVIGATE", theme::AMBER),
                 Line::raw(format!(
@@ -770,7 +813,8 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
                 )),
                 Line::raw(""),
                 Line::styled("USEFUL COMMANDS", theme::AMBER),
-                Line::raw("HELP                 This guide"),
+                Line::raw("DISCOVER <QUERY>     Open filtered directory"),
+                Line::raw("HELP                 Open full directory"),
                 Line::raw("PORT IMPORT <CSV>    Import positions"),
                 Line::raw("SHEET IMPORT <CSV>   Replace active sheet"),
                 Line::raw("CHART <SYMBOL>       Provider OHLC history"),
@@ -784,10 +828,14 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
             columns[1],
         );
     }
-    let footer = if app.help_details_visible() {
-        " ↑/↓ SELECT · ENTER RUN COMMAND · ESC BACK "
+    let footer = if app.help_delete_armed() {
+        " DELETE ARMED FOR EXACT SAVED-VIEW REVISION · X CONFIRM · ESC CANCEL "
+    } else if app.help_searching() {
+        " TYPE TO FILTER · BACKSPACE EDIT · ^U CLEAR · ↑/↓ SELECT · ENTER INFO · ESC BROWSE "
+    } else if app.help_details_visible() {
+        " ↑/↓ SELECT · ENTER RUN DESTINATION · ESC BACK "
     } else {
-        " ↑/↓ SELECT · PGUP/PGDN/WHEEL SCROLL · ENTER COMMAND INFO · ESC CLOSE "
+        " / SEARCH · ↑/↓ SELECT · ENTER INFO · X DELETE SAVED VIEW · ESC CLOSE "
     };
     frame.render_widget(Paragraph::new(Line::styled(footer, theme::MUTED)), rows[2]);
     frame.render_widget(

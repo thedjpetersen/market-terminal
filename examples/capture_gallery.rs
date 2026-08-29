@@ -62,6 +62,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         type_text(app, "Bring the monitor forward and compare AAPL with SPY");
     })?;
     capture(&output, &font, "launchpad", |app| command(app, "LAUNCH"))?;
+    capture(&output, &font, "discovery", |app| {
+        command(app, "DISCOVER portfolio")
+    })?;
     capture(&output, &font, "find", |app| command(app, "FIND US"))?;
     capture(&output, &font, "security", |app| command(app, "AAPL US"))?;
     Ok(())

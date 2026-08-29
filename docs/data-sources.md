@@ -24,12 +24,14 @@ persist provider data.
 
 ## Local shell, navigation, and presentation state
 
-- **Surfaces:** command routing and Help, workspace/panel focus, follow hints,
-  responsive layout, and theme selection.
+- **Surfaces:** command routing, unified discovery and Help, workspace/panel
+  focus, follow hints, responsive layout, and theme selection.
 - **Source boundary:** these capabilities consume no market, broker, publisher,
   or third-party reference data. Their inputs are bounded terminal events,
-  feature-owned action descriptors, built-in theme definitions, and the local
-  session document.
+  feature-owned action and discovery descriptors, built-in theme definitions,
+  the local saved-view and Launchpad metadata projections, and the local session
+  document. Discovery performs no provider, network, or filesystem work in the
+  input or rendering path.
 - **Persistence:** the selected theme, workspace order, active workspace,
   preset return point, keymap preferences, recent commands, bounded saved-view
   catalog, and bounded Launchpad tile document are eligible for crash-safe
@@ -87,12 +89,16 @@ persist provider data.
   underlying portfolio, sheet, screen, or layout contents. Portable Launchpad
   JSON omits local IDs and revisions, is limited to 64 KiB, and is read or
   written only after an explicit `LAUNCH IMPORT[!]` or `EXPORT[!]` command.
-  Visible-action rectangles, selections, delete confirmation, and follow labels
-  are derived in process and never persisted.
-- **Quality and privacy:** command, action, theme, Launchpad, and Mission Control
-  routing behavior is deterministic under the checked-in fixtures. No command
-  text, focus history, terminal frame, ranking result, or user interaction is
-  transmitted by these capabilities.
+  Unified-discovery query text, result ranking, selection, details state, and
+  exact saved-view deletion confirmation are derived in process and never
+  persisted. Visible-action rectangles and follow labels are likewise
+  transient.
+- **Quality and privacy:** command, discovery, action, theme, Launchpad, and
+  Mission Control routing behavior is deterministic under the checked-in
+  fixtures. Discovery indexes only bounded executable metadata and never
+  provider observations or feature payloads. No command text, query, focus
+  history, terminal frame, ranking result, or user interaction is transmitted
+  by these capabilities.
 
 ## Screening universe projection
 

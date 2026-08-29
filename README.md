@@ -159,9 +159,17 @@ derive from the same current geometry. At a bound, the unavailable direction is
 removed from action routing. On short terminals the News pane still yields and
 its row controls are removed.
 
-Run `HELP` from the command bar—or press `F1`—to open the command and controls
-guide without leaving the current workspace. Close it with `Esc`, `Q`, `F1`,
-the on-screen close button, or by selecting a workspace tab.
+Run `DISCOVER [QUERY]` to search one deterministic directory of commands,
+workspaces, saved views, and typed Launchpad objects. `HELP` or `F1` opens the
+same inventory in browse mode without leaving the current workspace. Matching
+is case-insensitive and literal, every query token is required, and exact
+canonical commands rank before aliases and descriptive keywords. Press `/` to
+search, use arrows or `J`/`K` to select, then press `Enter` once to inspect and
+again to run the stored exact command. `X` twice deletes only the selected
+saved-view ID and revision; a changed view cannot inherit an older confirmation.
+`Esc` returns one level at a time from details or search and then closes the
+overlay. See [the unified discovery contract](docs/discovery.md) for bounds,
+ranking, contribution, and mutation-safety rules.
 
 Run `SETTINGS` (aliases `CONFIG` and `SETUP`) or press `F2` to inspect the
 secret-free effective startup configuration. On the first persistent launch,
@@ -863,6 +871,8 @@ mockups.
 ### Typed Launchpad
 
 ![Persistent typed Launchpad for commands, instruments, screens, portfolios, workbooks, and saved layouts](docs/screenshots/launchpad.png)
+
+![Unified literal-token discovery across executable terminal destinations](docs/screenshots/discovery.png)
 
 ### Recoverable split Desk
 

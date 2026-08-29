@@ -17,7 +17,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor},
+    app::{
+        AppIntent, CommandInvocation, DiscoveryItem, DiscoveryKind, Workspace, WorkspaceAction,
+        WorkspaceDescriptor,
+    },
     ui::{
         components::terminal_block,
         contains, is_primary_click,
@@ -463,6 +466,34 @@ impl Workspace for LaunchpadWorkspace {
             hotkey: 'l',
             commands: &["LAUNCH", "LAUNCHPAD"],
         }
+    }
+
+    fn discovery_items(&self) -> Vec<DiscoveryItem> {
+        self.state
+            .tiles
+            .iter()
+            .map(|tile| {
+                DiscoveryItem::new(
+                    format!(
+                        "launchpad:{}:{:016x}",
+                        tile.id,
+                        tile_digest(&tile.label, &tile.target)
+                    ),
+                    DiscoveryKind::Launchpad,
+                    tile.label.clone(),
+                    tile.command(),
+                    "LAUNCHPAD",
+                    format!(
+                        "Open saved {} tile {} from Launchpad revision {}.",
+                        tile.target.kind().to_ascii_lowercase(),
+                        tile.id,
+                        self.state.revision
+                    ),
+                )
+                .with_keywords([tile.target.kind().to_owned(), format!("tile {}", tile.id)])
+                .with_identity(tile.id, self.state.revision)
+            })
+            .collect()
     }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {

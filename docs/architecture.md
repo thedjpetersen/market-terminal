@@ -34,8 +34,20 @@ bootstrap ──▶ app kernel
   `capture_view`/`restore_view`; composed workspaces nest child envelopes. The
   shell validates depth, field, list, text, workspace, and catalog bounds,
   persists a versioned catalog through the opaque feature-document repository,
-  and reports skipped or unavailable capabilities on restore. Desk owns a
-  bounded geometry value object alongside its child workspaces: one typed state
+  and reports skipped or unavailable capabilities on restore.
+  Unified discovery follows the same projection boundary. The shell owns
+  workspace, command, and saved-view entries; features may contribute bounded
+  read-only `DiscoveryItem` values through `Workspace`. The registry validates
+  field bounds, exact command parseability, stable-ID uniqueness, and global
+  capacity before the shell sees a contribution. Launchpad projects typed tiles
+  through this contract, so the shell never imports its tile aggregate. A pure
+  literal-token ranker requires every token, gives canonical label/command
+  fields precedence, and resolves ties by kind, label, then stable ID. The
+  selected stored command is dispatched through the existing exact parser; the
+  query is never executed. Saved-view management arms an exact ID/revision and
+  revalidates it before the second-key deletion, then uses the existing
+  crash-safe view repository. See `docs/discovery.md`.
+  Desk owns a bounded geometry value object alongside its child workspaces: one typed state
   stores Monitor width and top-row height, while the same computed rectangles
   drive rendering, mouse hit testing, pane-body routing, resize buttons,
   spatial focus, and follow hints. Keyboard steps clamp at declared bounds;

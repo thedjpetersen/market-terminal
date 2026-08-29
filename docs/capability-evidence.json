@@ -5,11 +5,13 @@
   "capabilities": [
     {
       "id": "OTUI-001",
-      "commands": ["HELP"],
-      "help_entries": ["HELP"],
+      "commands": ["HELP", "DISCOVER"],
+      "help_entries": ["HELP", "DISCOVER"],
       "implementation_files": [
+        "src/app/discovery.rs",
         "src/app/mod.rs",
         "src/app/workspace.rs",
+        "src/features/launchpad/workspace.rs",
         "src/ui/mod.rs"
       ],
       "semantic_goldens": ["help"],
@@ -21,6 +23,14 @@
         {
           "file": "src/app/mod.rs",
           "test": "enter_opens_help_command_details_then_invokes_the_exact_command"
+        },
+        {
+          "file": "src/app/mod.rs",
+          "test": "unified_discovery_searches_every_destination_class_and_invokes_exact_commands"
+        },
+        {
+          "file": "src/app/mod.rs",
+          "test": "discovery_delete_confirmation_does_not_cross_saved_view_revisions"
         }
       ],
       "data_source_sections": [
@@ -29,7 +39,7 @@
           "section": "Local shell, navigation, and presentation state"
         }
       ],
-      "performance_cases": ["command_dispatch"],
+      "performance_cases": ["command_dispatch", "discovery_search"],
       "state_gallery": "docs/capability-gallery.json"
     },
     {

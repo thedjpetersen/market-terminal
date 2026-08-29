@@ -27,7 +27,7 @@
       "upstream_maturity": "substantive",
       "reference_files": ["frontend/src/components/layout/CommandBar.tsx", "frontend/src/components/layout/commanding.ts", "frontend/src/App.tsx", "backend/api/router.py"],
       "acceptance_tests": ["CMD-PARSER", "CMD-REGISTRY", "CMD-AI-REVALIDATION"],
-      "gap": "Preserve exact-command precedence while indexing every new parity command, saved object, instrument, and visible action for explainable discovery."
+      "gap": "Unified discovery now indexes exact commands, live workspaces, saved views, and typed Launchpad objects with bounded literal-token ranking, exact-command invocation, and revision-safe saved-view management. Preserve the contribution and evidence contracts as new executable object classes and visible actions land."
     },
     {
       "id": "OTUI-002",
@@ -49,7 +49,7 @@
       "upstream_maturity": "substantive",
       "reference_files": ["frontend/src/pages/HomePage.tsx", "frontend/src/components/home/MissionControlGrid.tsx", "frontend/src/components/home/SystemHealthBar.tsx"],
       "acceptance_tests": ["MISSION-OFFLINE", "MISSION-DRILLDOWN", "MISSION-RANKING"],
-      "gap": "Mission Control now composes exact market pulse provenance, imported portfolio state, provider-backed events, source health, saved Launchpad work, current news, and score-ranked actionable items with visible rationale/as-of/owner/command. Offline semantic evidence proves provider failures remain labeled without gallery substitution. Complete P1 still requires recoverable pane/view objects and unified discovery integration."
+      "gap": "Mission Control now composes exact market pulse provenance, imported portfolio state, provider-backed events, source health, saved Launchpad work, current news, and score-ranked actionable items with visible rationale/as-of/owner/command. Offline semantic evidence proves provider failures remain labeled without gallery substitution; typed workspace recovery and unified discovery are complete. Remaining reference breadth is a denser configurable ticker and pulse surface."
     },
     {
       "id": "OTUI-004",
@@ -60,7 +60,7 @@
       "upstream_maturity": "substantive",
       "reference_files": ["frontend/src/pages/Launchpad.tsx", "frontend/src/components/layout/LaunchpadWorkspace.tsx", "frontend/src/components/layout/TemplateGallery.tsx", "frontend/tests/e2e/workspace-templates.spec.ts"],
       "acceptance_tests": ["LAUNCHPAD-EDIT", "LAUNCHPAD-PRESET", "LAUNCHPAD-RESTART"],
-      "gap": "Versioned Trader, Quant, PM, Risk, and Ops seeds have safe modal preview and crash-safe return. Launchpad now has a responsive bounded typed grid for commands, canonical instruments, saved screens, portfolios, workbooks, and saved layouts; stable identities; add/rename/reorder/guarded-remove/reset; keyboard/pointer/follow routing; schema-v1 migration; private bounded atomic import/export; background crash-safe persistence; and restart plus shell-layout routing evidence. Desk geometry is now keyboard, command, pointer, and follow-hint configurable and saved while bare arrows retain direct pane routing. Complete remaining saved pane contents and unified discovery to close P1 parity."
+      "gap": "Versioned Trader, Quant, PM, Risk, and Ops seeds have safe modal preview and crash-safe return. Launchpad has a responsive bounded typed grid for commands, canonical instruments, saved screens, portfolios, workbooks, and saved layouts; stable identities; add/rename/reorder/guarded-remove/reset; keyboard/pointer/follow routing; schema-v1 migration; private bounded atomic import/export; background crash-safe persistence; restart and shell-layout routing evidence; and validated unified-discovery projection. Remaining reference breadth is richer multi-pane template geometry and contextual action indexing."
     },
     {
       "id": "OTUI-005",
@@ -71,7 +71,7 @@
       "upstream_maturity": "mixed",
       "reference_files": ["backend/saved_views/routes.py", "backend/api/routes/user_layouts.py", "frontend/src/components/savedViews/SavedViewsControl.tsx", "frontend/src/pages/SavedViewsPage.tsx"],
       "acceptance_tests": ["VIEW-ROUNDTRIP", "VIEW-MIGRATION", "VIEW-MISSING-CAPABILITY"],
-      "gap": "Schema-v2 saved views now persist stable identity/revision, workspace order, active destination, nested Desk pane focus and bounded split geometry, typed Chart instrument/period/normalization/comparison/study/inspection/viewport/display state, Security provider-neutral instrument/research-tab/stable Form 4 selection, News filters/Stories-or-Events/stable story selection, Monitor watchlist/sort/exact columns/preset/selected instrument/viewport anchor, Portfolio eight-subview/selected-row/top-row state, Alerts selected-rule/top-rule state, and Spreadsheet workbook/sheet/cell/viewport state. V1 migration, exact keyboard-only restart round trips, pending asynchronous Alerts recovery, reordered or missing Form 4/News story/Monitor/Portfolio/Alerts row handling, long-table viewport recovery, renamed-sheet fallback, missing-workbook handling, transient/live-data exclusion, stale action rejection, and unknown-field degradation are locked. Typed capture covers every current workspace; remaining parity is a dedicated searchable saved-view management and unified-discovery surface."
+      "gap": "Schema-v2 saved views persist stable identity/revision, workspace order, active destination, nested Desk pane focus and bounded split geometry, and typed state for every current workspace. V1 migration, exact keyboard-only restart round trips, asynchronous recovery, reordered or missing row handling, long-table viewport recovery, renamed-sheet and missing-workbook handling, transient/live-data exclusion, stale action rejection, and unknown-field degradation are locked. Unified discovery provides exact restore plus two-step ID/revision-checked durable deletion. Remaining reference breadth is portable per-view import/export and a denser sortable management table."
     },
     {
       "id": "OTUI-006",

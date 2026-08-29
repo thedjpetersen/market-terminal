@@ -245,7 +245,7 @@ move to its own crate later without changing its public vocabulary.
   Portfolio domain types or repository access. Watchlist also consumes the
   foundation-owned canonical `InstrumentId` directly rather than Market Data's
   compatibility alias.
-- **In progress:** P1 saved workspace experience. Five versioned Trader, Quant,
+- **Complete:** P1 saved workspace experience. Five versioned Trader, Quant,
   PM, Risk, and Ops seeds now project through the live registry, disclose
   missing destinations, and require an explicit modal confirmation. The first
   applied role persists a crash-safe custom return point; `PRESET RETURN`
@@ -270,7 +270,10 @@ move to its own crate later without changing its public vocabulary.
   shared viewport. Alerts now restores selected-rule and top-visible-rule IDs,
   including a pending identity when restore precedes asynchronous rule loading,
   over a real shared viewport. Typed capture adoption is complete across every
-  current workspace; unified discovery remains.
+  current workspace. Unified discovery now deterministically searches exact
+  commands, workspace destinations, saved views, and typed Launchpad objects;
+  routes only stored parseable commands; and provides revision-checked,
+  two-step, durable saved-view deletion.
 - **Complete:** first cross-cutting P2/P3 Screening slice. A new bounded context
   consumes a composition-root projection of Watchlist membership and one Market
   Data quote batch as a capped, immutable point-in-time universe with canonical
@@ -289,9 +292,9 @@ move to its own crate later without changing its public vocabulary.
   frames with content verification and exact offline replay across restart.
   Full formula grouping/unit inference, factors, heatmaps, history repair, and
   whole-result promotion remain.
-- **Next:** finish P1 unified discovery while deepening P2/P3 universe storage,
-  hotlists/breadth/heatmaps, Screening expressions and result promotion, factor
-  research, and compound alert families. Provider availability
+- **Next:** deepen P2/P3 universe storage, hotlists/breadth/heatmaps, Screening
+  expressions and whole-result promotion, factor research, and compound alert
+  families. Provider availability
   extends the deployment surface; deterministic fixtures remain the acceptance
   baseline and opt-in live contracts verify real provider behavior.
 
@@ -367,10 +370,10 @@ continues.
 
 | Reference capability | Status | Market Terminal evidence | Gap required for parity |
 | --- | --- | --- | --- |
-| GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
-| Mission Control, launchpad, ticker tape | Partial | Live pulse, imported portfolio, provider events, source health, saved work, inspectable priority ranking, persistent editable typed Launchpad with portable import/export, typed saved views across every workspace, and versioned role presets | Add unified discovery and a denser configurable ticker/pulse surface. |
+| GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, and bounded unified discovery over commands, workspaces, saved views, and typed Launchpad objects | Extend the contribution contract to new executable object classes and visible actions as they land. |
+| Mission Control, launchpad, ticker tape | Partial | Live pulse, imported portfolio, provider events, source health, saved work, inspectable priority ranking, persistent editable typed Launchpad with portable import/export, typed saved views across every workspace, versioned role presets, and unified discovery | Add a denser configurable ticker/pulse surface. |
 | Keyboard navigation and icon rail | Covered | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, Chart periods/studies/comparisons/inspection/modes/promotion/refresh, modal-safe News filters/headlines/story/calendar/reader actions, Overview periods/cards/live holdings/headlines/context controls, Alerts rows/mutations/Security/refresh controls, and Spreadsheet cells/rows/formula/tabs/workflow controls | Preserve the action and modal-trapping contracts as new controls and overlays are added. |
-| Saved views and workspace presets | Partial | Workspace order, active workspace, role presets, schema-v2 nested Desk/Chart state with bounded split geometry, Security instrument/tab/Form 4 selection, News filters/subview/story selection, Monitor watchlist/sort/columns/identity/viewport, Portfolio subview/row/viewport, Alerts rule/viewport, and workbook/sheet/cell/viewport Spreadsheet state persist with migration and degraded recovery | Integrate saved views into unified discovery and add a dedicated searchable management surface. |
+| Saved views and workspace presets | Partial | Workspace order, active workspace, role presets, schema-v2 nested Desk/Chart state with bounded split geometry, Security instrument/tab/Form 4 selection, News filters/subview/story selection, Monitor watchlist/sort/columns/identity/viewport, Portfolio subview/row/viewport, Alerts rule/viewport, and workbook/sheet/cell/viewport Spreadsheet state persist with migration and degraded recovery; unified discovery restores and revision-safely deletes saved views | Add portable per-view import/export and a denser sortable management table. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
 | Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
 | Snapshot/streaming data and provider fallback | Partial | Yahoo, Alpha Vantage, Alpaca, Finnhub, bounded workers, coalescing, LKG cache, replay | Add capability-aware provider waterfall, durable bar cache, session calendars, health routing, and cross-provider provenance. |
@@ -558,8 +561,9 @@ workspace recovery experience while retaining the terminal shell.
   meaningful, and split geometry. Define migration and graceful degradation when
   a command, provider, or instrument disappears.
 - Unify command discovery across exact functions, saved objects, instruments,
-  actions, settings, and Help. Preserve exact-command precedence and expose why a
-  fuzzy or AI result was chosen before dispatch.
+  actions, settings, and Help. Use deterministic literal-token ranking and
+  preserve exact-command precedence; fuzzy or AI suggestions remain outside
+  automatic dispatch unless they can expose why they were chosen.
 
 **Exit evidence:** a keyboard-only test creates a multi-pane view, saves it,
 restarts, restores the same semantic frame, switches presets, and returns without
@@ -680,8 +684,27 @@ evidence locks reordered registers, pending asynchronous recovery, long-table
 scrolling, rendered-action alignment, and degraded state. An application restart
 restores exact rule selection before provider data arrives, and a dedicated
 three-size semantic golden locks a long, scrolled alert register. Typed saved-
-view adoption is complete for every current workspace. P1 exit now requires
-unified discovery.
+view adoption is complete for every current workspace. Unified discovery closes
+the final P1 exit requirement with one shell-owned directory for live workspace
+descriptors, exact command Help entries, saved-view metadata, and bounded typed
+feature contributions. Launchpad publishes command, instrument, screen,
+portfolio, workbook, and saved-layout tiles through the read-only `Workspace`
+contract; the shell does not import its domain model. Registry validation rejects
+oversized fields, duplicate IDs, and commands that fail exact parsing before an
+item is searchable. The pure ranker requires every case-insensitive literal
+token and scores exact, prefix, word-prefix, then substring matches across
+canonical labels/commands, aliases, owners, and keywords with deterministic
+kind/label/ID ties. Search text is never dispatched: the selected stored command
+still crosses the normal parser and registry. `/`, arrows, paging, mouse wheel,
+and two-stage Enter inspection provide keyboard and pointer management. `X`
+twice can delete only a saved view whose exact ID/revision remains current; query
+edits, navigation, selection changes, and revision changes invalidate the arm
+before the crash-safe catalog mutation. Queries, validated inventory, and
+results are bounded at 128 bytes, 256 items, and 128 results. Unit evidence locks
+all-token ranking, UTF-8 bounds, feature contribution validation, all four
+destination classes, exact restore, durable deletion, and revision-crossing
+rejection; the responsive Help semantic golden and an independent discovery
+search performance case lock the UI and latency. P1 exit evidence is complete.
 
 ### P2 — Market-data fabric, microstructure, and chart workstation
 
