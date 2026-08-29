@@ -75,13 +75,16 @@ schema rejection, bounded identities/provenance, and fail-closed domain errors.
 
 ## Web expansion sequence
 
-1. **Delivered:** `market-terminal-api` depends directly on the engine and maps
-   authenticated routes to the closed operation enum.
-2. **Partially delivered:** bearer authentication, pre-deserialization body
-   limits, per-operation deployment policy, typed status mapping, structured
-   logging, safe response headers, loopback defaults, and graceful shutdown live
-   at the host boundary. Add tenant-aware authorization, deadlines, rate limits,
-   metrics, and distributed traces before multi-user deployment.
+1. **Delivered:** `market-terminal-application` is the sole analytical use-case
+   boundary. It maps validated tenant/principal identity and exact capabilities
+   to the closed operation enum, applies per-principal backtest/comparison
+   budgets, and then dispatches the engine without owning I/O.
+2. **Partially delivered:** `market-terminal-api` authenticates one configured
+   credential into that actor context and owns pre-deserialization body limits,
+   typed status mapping, structured actor/request logging, safe response headers,
+   loopback defaults, and graceful shutdown. Add a real credential/session store,
+   deadlines, aggregate rate limits, metrics, and distributed traces before
+   multi-user deployment.
 3. Expose provider and persistence capabilities through application services,
    never by teaching the engine to perform I/O.
 4. Generate or hand-maintain TypeScript request/response types from the versioned

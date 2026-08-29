@@ -1130,7 +1130,9 @@ the composition root.
 crates/
 ├── market-terminal-engine/ host-neutral Backtesting, Options, Fixed Income,
 │                           and a versioned request/response API
-└── market-terminal-api/    authenticated HTTP host over the engine
+├── market-terminal-application/ tenant identity, capability policy, workload budgets,
+│                               and host-neutral analytical use cases
+└── market-terminal-api/    authenticated HTTP adapter over application services
 src/
 ├── app/             lifecycle, input modes, workspace contract and registry
 ├── features/        bounded contexts packaged by feature
@@ -1158,7 +1160,8 @@ src/
 
 See [`docs/architecture.md`](docs/architecture.md) for dependency rules,
 [`docs/engine.md`](docs/engine.md) for the reusable host contract, and the recipe
-for adding a new terminal or web function.
+for adding a new terminal or web function. The tenant-aware use-case boundary is
+specified in [`docs/application-services.md`](docs/application-services.md).
 
 ### Headless analytical API
 
@@ -1172,7 +1175,8 @@ MARKET_TERMINAL_API_TOKEN="replace-with-a-random-token-at-least-32-characters" \
 ```
 
 `GET /healthz` is public and contains only version/health state. Authenticated
-`GET /v1/capabilities` discloses the deployment allowlist and body limit;
+`GET /v1/capabilities` discloses the server-owned tenant/principal identity,
+capability allowlist, body limit, and analytical workload ceilings;
 `POST /v1/engine` accepts the versioned engine envelope. There is no CORS,
 provider, persistence, arbitrary-command, or mutation surface in this slice.
 See [`docs/web-api.md`](docs/web-api.md) for request examples, status contracts,

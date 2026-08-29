@@ -1310,13 +1310,21 @@ name = "market-terminal-api"
 version = "0.1.0"
 dependencies = [
  "axum",
- "market-terminal-engine",
+ "market-terminal-application",
  "serde",
  "serde_json",
  "tokio",
  "tower",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "market-terminal-application"
+version = "0.1.0"
+dependencies = [
+ "market-terminal-engine",
+ "serde",
 ]
 
 [[package]]

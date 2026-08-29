@@ -7,7 +7,11 @@ license = "MIT"
 repository = "https://github.com/thedjpetersen/market-terminal"
 
 [workspace]
-members = ["crates/market-terminal-api", "crates/market-terminal-engine"]
+members = [
+    "crates/market-terminal-api",
+    "crates/market-terminal-application",
+    "crates/market-terminal-engine",
+]
 resolver = "2"
 
 [dependencies]

@@ -8,7 +8,7 @@ repository = "https://github.com/thedjpetersen/market-terminal"
 
 [dependencies]
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
-market-terminal-engine = { path = "../market-terminal-engine" }
+market-terminal-application = { path = "../market-terminal-application" }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
 tracing = "0.1"

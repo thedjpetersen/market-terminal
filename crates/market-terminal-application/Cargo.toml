@@ -1,0 +1,11 @@
+[package]
+name = "market-terminal-application"
+version = "0.1.0"
+edition = "2021"
+description = "Tenant-aware application services for Market Terminal analytical hosts"
+license = "MIT"
+repository = "https://github.com/thedjpetersen/market-terminal"
+
+[dependencies]
+market-terminal-engine = { path = "../market-terminal-engine" }
+serde = { version = "1", features = ["derive"] }

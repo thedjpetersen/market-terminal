@@ -16,7 +16,10 @@ native bootstrap ──▶ app kernel
        │                 ▲  │
        └────▶ infrastructure │
                              ▼
-                    market-terminal-engine ◀── market-terminal-api
+                    market-terminal-engine ◀── market-terminal-application
+                                                    ▲
+                                                    │
+                                          market-terminal-api
 ```
 
 - `crates/market-terminal-engine` owns host-neutral analytical contracts. Its
@@ -27,13 +30,22 @@ native bootstrap ──▶ app kernel
   results. Native feature modules retain thin compatibility facades, so the
   extraction does not fork public types or terminal behavior. See
   `docs/engine.md`.
-- `crates/market-terminal-api` is an HTTP host adapter over the engine crate. It
+- `crates/market-terminal-application` is the host-neutral use-case boundary
+  over the engine. It owns validated tenant/principal identity, exact analytical
+  capabilities, and per-principal backtest/comparison workload budgets. It has
+  no HTTP, runtime, clock, filesystem, network, provider, persistence, or native
+  product dependency. HTTP, worker, MCP, and future hosts must enter analytical
+  execution here rather than call the engine directly.
+- `crates/market-terminal-api` is an HTTP host adapter over the application
+  service crate. It
   does not depend on the native product, feature modules, infrastructure, or
-  terminal libraries. It owns bearer authentication, per-operation deployment
-  policy, body limits applied before JSON deserialization, transport-safe error
+  terminal libraries and cannot bypass application authorization to call the
+  engine. It maps the configured bearer credential to a server-owned actor,
+  applies body limits before JSON deserialization, and owns transport-safe error
   mapping, request correlation, security headers, loopback-safe binding, and
   graceful shutdown. It exposes no provider or persistence path. See
-  `docs/web-api.md`.
+  `docs/web-api.md`. See `docs/application-services.md` for the shared actor,
+  capability, and budget contract.
 
 - `app` owns lifecycle, input modes, keyboard/mouse routing, and the stable
   `Workspace` plug-in contract. It has no market or portfolio business rules.

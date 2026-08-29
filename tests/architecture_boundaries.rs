@@ -128,15 +128,112 @@ fn extracted_engine_is_host_neutral_and_terminal_facades_are_thin() {
 }
 
 #[test]
-fn web_api_depends_on_the_engine_without_importing_the_native_product() {
+fn application_services_are_host_neutral_and_own_engine_execution_policy() {
+    let root = manifest_root();
+    let application = root.join("crates/market-terminal-application");
+    let manifest =
+        fs::read_to_string(application.join("Cargo.toml")).expect("application manifest");
+    assert!(
+        manifest.contains("market-terminal-engine"),
+        "application services must execute the shared analytical engine"
+    );
+    for dependency in [
+        "market-terminal =",
+        "axum",
+        "tokio",
+        "reqwest",
+        "ratatui",
+        "crossterm",
+        "chrono",
+    ] {
+        assert_absent(
+            &application.join("Cargo.toml"),
+            &manifest,
+            dependency,
+            "application services must remain reusable across HTTP, workers, MCP, and native hosts",
+        );
+    }
+
+    for path in rust_sources(&application.join("src")) {
+        let source = production_source(&path);
+        let compact = source
+            .chars()
+            .filter(|value| !value.is_whitespace())
+            .collect::<String>();
+        for (needle, reason) in [
+            (
+                "market_terminal::",
+                "application services cannot depend on the native product",
+            ),
+            (
+                "std::fs",
+                "application services cannot perform filesystem I/O",
+            ),
+            ("fs::", "application services cannot perform filesystem I/O"),
+            (
+                "std::net",
+                "application services cannot perform network I/O",
+            ),
+            ("net::", "application services cannot perform network I/O"),
+            (
+                "std::env",
+                "application services cannot read process configuration",
+            ),
+            (
+                "env::",
+                "application services cannot read process configuration",
+            ),
+            (
+                "std::time",
+                "application services cannot consult a host clock",
+            ),
+            (
+                "SystemTime",
+                "application services cannot consult a host clock",
+            ),
+            (
+                "Instant",
+                "application services cannot consult a host clock",
+            ),
+            (
+                "crate::features",
+                "application services cannot bypass native feature ports",
+            ),
+            (
+                "crate::infrastructure",
+                "application services cannot depend on adapters",
+            ),
+        ] {
+            assert!(
+                !compact.contains(needle),
+                "{} violates the architecture boundary: {reason} (found `{needle}`)",
+                path.display()
+            );
+        }
+        assert!(
+            source.contains("market_terminal_engine::execute"),
+            "{} must be the sole policy boundary that dispatches engine work",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn web_api_depends_on_application_services_without_importing_the_native_product() {
     let root = manifest_root();
     let api = root.join("crates/market-terminal-api");
     let manifest = fs::read_to_string(api.join("Cargo.toml")).expect("API manifest");
     assert!(
-        manifest.contains("market-terminal-engine"),
-        "the web host must execute the shared analytical engine"
+        manifest.contains("market-terminal-application"),
+        "the web host must enter through tenant-aware application services"
     );
-    for dependency in ["market-terminal =", "ratatui", "crossterm", "reqwest"] {
+    for dependency in [
+        "market-terminal =",
+        "market-terminal-engine",
+        "ratatui",
+        "crossterm",
+        "reqwest",
+    ] {
         assert_absent(
             &api.join("Cargo.toml"),
             &manifest,
@@ -150,7 +247,11 @@ fn web_api_depends_on_the_engine_without_importing_the_native_product() {
         for (needle, reason) in [
             (
                 "market_terminal::",
-                "the API must depend directly on the engine, not the native product",
+                "the API cannot depend on the native product",
+            ),
+            (
+                "market_terminal_engine::",
+                "the API cannot bypass tenant-aware application services",
             ),
             (
                 "crate::features",

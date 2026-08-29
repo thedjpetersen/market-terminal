@@ -1,9 +1,10 @@
 # Market Terminal Web API
 
 `market-terminal-api` is the first web host for the extracted analytical engine.
-It is a separate Cargo package that depends directly on
-`market-terminal-engine`; it does not link the native terminal, feature
-workspaces, provider adapters, or local persistence.
+It is a separate Cargo package that enters through
+`market-terminal-application`, the host-neutral tenant/capability/budget layer,
+which alone dispatches `market-terminal-engine`. Neither crate links the native
+terminal, feature workspaces, provider adapters, or local persistence.
 
 ## Run locally
 
@@ -26,7 +27,11 @@ Optional configuration:
 |---|---:|---|
 | `MARKET_TERMINAL_API_BIND` | `127.0.0.1:8080` | Socket address; remote addresses require explicit opt-in. |
 | `MARKET_TERMINAL_API_MAX_BODY_BYTES` | `4194304` | Inclusive range 1024-8388608; enforced before JSON deserialization. |
+| `MARKET_TERMINAL_API_TENANT` | `local` | Stable 1-64 character tenant identity assigned by the server to this credential. |
+| `MARKET_TERMINAL_API_PRINCIPAL` | `api` | Stable 1-64 character audit actor assigned by the server to this credential. |
 | `MARKET_TERMINAL_API_OPERATIONS` | all four | Comma-separated exact names from `run_backtest`, `compare_backtests`, `price_option`, and `analyze_bond`. At least one is required. |
+| `MARKET_TERMINAL_API_MAX_BACKTEST_BARS` | `20000` | Per-principal bar ceiling, inclusive range 1-20000. |
+| `MARKET_TERMINAL_API_MAX_COMPARISON_POINTS` | `120000` | Per-principal combined decision/trade/equity ceiling, inclusive range 1-120000. |
 | `RUST_LOG` | subscriber default | Standard tracing filter; request bodies and bearer tokens are never logged. |
 
 The process handles Ctrl-C and SIGTERM with graceful Axum shutdown.
@@ -38,14 +43,15 @@ The process handles Ctrl-C and SIGTERM with graceful Axum shutdown.
 Public and intentionally minimal:
 
 ```json
-{"status":"ok","api_schema_version":1,"engine_schema_version":1}
+{"status":"ok","api_schema_version":1,"application_schema_version":1,"engine_schema_version":1}
 ```
 
 ### `GET /v1/capabilities`
 
-Requires `Authorization: Bearer <token>`. Returns the engine schema, exact
-enabled operation names, and request-body limit. It discloses no secret,
-provider, account, or persistence state.
+Requires `Authorization: Bearer <token>`. Returns the API, application, and
+engine schemas; the server-owned tenant/principal identity; exact enabled
+operation names; request-body limit; and per-principal analytical workload
+ceilings. It discloses no secret, provider, account, or persistence state.
 
 ### `POST /v1/engine`
 
@@ -92,11 +98,11 @@ contain the complete typed analytic artifact and disclosures.
 |---:|---|
 | 400 | Malformed JSON, unsupported engine schema, invalid request identity, or invalid provenance envelope. |
 | 401 | Missing or incorrect bearer token. |
-| 403 | Operation is valid but disabled by deployment policy. |
+| 403 | Operation is valid but the authenticated principal lacks its capability. |
 | 404 | Unknown route. |
 | 413 | Body exceeded the configured limit before deserialization. |
 | 415 | Content type is not JSON. |
-| 422 | A syntactically valid operation failed domain validation. |
+| 422 | A syntactically valid operation failed its principal workload budget or domain validation. |
 
 Responses set `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and
 `Referrer-Policy: no-referrer`. Unauthorized responses additionally advertise a
@@ -105,14 +111,18 @@ explicit origin allowlist at a reviewed gateway or future host middleware.
 
 ## Boundary and remaining work
 
-The host can run only the four closed deterministic engine operations. It cannot
-execute terminal commands, read environment-selected provider credentials,
-load or save user artifacts, inspect portfolios, or mutate external state.
-`tests/architecture_boundaries.rs` rejects imports from the native package,
-feature contexts, infrastructure adapters, provider clients, and terminal UI.
+The host can run only the four closed deterministic engine operations. Bearer
+authentication resolves to a validated server-owned tenant/principal context;
+clients cannot submit or replace that identity. Application services reject
+missing capabilities and over-budget work before engine dispatch. The host
+cannot execute terminal commands, read environment-selected provider
+credentials, load or save user artifacts, inspect portfolios, or mutate external
+state. `tests/architecture_boundaries.rs` enforces `API -> application -> engine`
+and rejects native package, feature, infrastructure, provider-client, terminal,
+runtime, clock, environment, filesystem, and network boundary violations.
 
-Before a multi-user web launch, add a tenant-aware identity and authorization
-service, per-principal quotas, deadlines, rate limiting, metrics/distributed
-tracing, audited provider/persistence application services, TLS termination, and
-cross-language contract fixtures. Those belong around the engine, never inside
-its deterministic domains.
+Before a multi-user web launch, replace the single configured credential mapping
+with an encrypted credential/session store, tenant-owned repositories, aggregate
+rate accounting, deadlines, metrics/distributed tracing, audited read-only
+provider/persistence services, TLS termination, and cross-language contract
+fixtures. Those belong around the engine, never inside its deterministic domains.
