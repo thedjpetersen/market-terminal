@@ -30,11 +30,11 @@ set and one Market Data quote batch into Screening-owned values.
   a schema-versioned, crash-safe, private feature document.
 - Evaluations run through a capacity-one worker. New requests supersede stale
   generations; the last valid result remains visible after a refresh failure.
-- Persistent deployments retain the last 32 point-in-time inputs across all
-  universes as immutable snapshot documents plus a small schema-versioned
-  manifest. Every snapshot has an independent content digest over all
-  decision-relevant fields; replay verifies the document identity, manifest
-  reference, domain bounds, and digest before evaluation.
+- Persistent deployments retain the last 32 point-in-time inputs by default,
+  configurable from 1 to 256 across all universes, as immutable snapshot
+  documents plus a small schema-versioned manifest. Every snapshot has an
+  independent content digest over all decision-relevant fields; replay verifies
+  the document identity, manifest reference, domain bounds, and digest before evaluation.
 - Publication is ordered snapshot-first and manifest-second. A crash may leave
   an unreferenced payload that is safe to ignore, but cannot make the manifest
   reference data that was never durably written. Retention publishes the new
@@ -42,11 +42,15 @@ set and one Market Data quote batch into Screening-owned values.
 - Live recording failures are visible but do not discard a valid live screen.
   Replay never falls back to a fresh provider call or substitutes another
   version.
+- Startup and `SCREEN HISTORY AUDIT` report verified references, missing or
+  corrupt payloads, orphaned or malformed snapshot documents, policy limit, and
+  over-retention state. `SCREEN HISTORY REPAIR` is explicit, serialized against
+  publication, and idempotent: it publishes a verified, in-policy manifest
+  before deleting corrupt, orphaned, malformed, or evicted documents.
 
 This remains intentionally bounded. It does not yet provide arithmetic formula
 nodes or dimensions beyond the closed numeric field catalog, fundamental/factor
-fields, an audit/repair command for orphaned documents, or whole-result atomic
-promotion. Those remain P2/P3 roadmap work.
+fields or whole-result atomic promotion. Those remain P2/P3 roadmap work.
 
 ## Commands
 
@@ -60,6 +64,8 @@ SCREEN LIST
 SCREEN NEXT
 SCREEN PREV
 SCREEN HISTORY [universe]
+SCREEN HISTORY AUDIT
+SCREEN HISTORY REPAIR
 SCREEN REPLAY <decimal|0xhex|Vhex> [screen-id]
 SCREEN LIVE
 ```
@@ -115,8 +121,10 @@ degraded instead of targeting a different instrument.
 
 Universe history is a separate feature-owned failure domain under
 `screening/universe_history` and immutable `screening/snapshot_<version>`
-documents. The manifest is globally capped at 32 entries; the oldest published
-entry and payload are removed after the cap is crossed. Custom definitions and
+documents. The manifest defaults to 32 entries and is restart-configurable from
+1 to the schema maximum of 256; the oldest published entries and payloads are
+removed after the cap is crossed. A lower new limit is reported as degraded
+until a live publication or explicit repair trims it. Custom definitions and
 saved views cannot mutate or duplicate these point-in-time inputs.
 
 ## Verification boundary
@@ -128,5 +136,7 @@ recovery, adapter translation, private persistence, and semantic frames at
 80×24, 120×36, and 160×48. The release performance gate separately evaluates a
 2,000-member, five-predicate nested tree and enforces the repository-wide 50 ms
 p95 budget. History tests additionally lock idempotent publication, restart replay,
-manifest retention, physical eviction, missing-payload failure, post-publication
-mutation detection, and exact evaluation equality between live and replay.
+manifest retention, policy changes, physical eviction, missing-payload failure,
+post-publication mutation detection, orphan/malformed discovery, manifest-first
+repair, repeated-repair idempotency, and exact evaluation equality between live
+and replay.

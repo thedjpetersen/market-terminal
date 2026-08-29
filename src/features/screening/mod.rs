@@ -7,12 +7,12 @@ pub use domain::{
     Comparison, ScreenCatalogState, ScreenClause, ScreenDefinition, ScreenDimension,
     ScreenEvaluation, ScreenExpression, ScreenField, ScreenResultRow, ScreenSortDirection,
     UniverseHistoryEntry, UniverseHistoryManifest, UniverseMember, UniverseSnapshot,
-    MAX_SAVED_SCREENS, MAX_SCREEN_CLAUSES, MAX_SCREEN_EXPRESSION_DEPTH, MAX_SCREEN_RESULTS,
-    MAX_UNIVERSE_HISTORY, MAX_UNIVERSE_MEMBERS,
+    DEFAULT_UNIVERSE_HISTORY_RETENTION, MAX_SAVED_SCREENS, MAX_SCREEN_CLAUSES,
+    MAX_SCREEN_EXPRESSION_DEPTH, MAX_SCREEN_RESULTS, MAX_UNIVERSE_HISTORY, MAX_UNIVERSE_MEMBERS,
 };
 pub use port::{
     ScreenStateError, ScreenStateStore, ScreeningError, ScreeningUniverseQuery,
-    UniverseHistoryStore,
+    UniverseHistoryHealth, UniverseHistoryRepair, UniverseHistoryStore,
 };
 pub use workspace::ScreeningWorkspace;
 

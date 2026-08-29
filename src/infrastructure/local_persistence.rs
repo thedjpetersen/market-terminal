@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
@@ -23,7 +24,8 @@ use crate::features::persistence::{
 use crate::features::portfolio::{PortfolioError, PortfolioImportStateStore};
 use crate::features::screening::{
     universe_content_digest, ScreenCatalogState, ScreenStateError, ScreenStateStore,
-    UniverseHistoryManifest, UniverseHistoryStore, UniverseSnapshot,
+    UniverseHistoryHealth, UniverseHistoryManifest, UniverseHistoryRepair, UniverseHistoryStore,
+    UniverseSnapshot, MAX_UNIVERSE_HISTORY,
 };
 use crate::features::spreadsheet::{
     SpreadsheetFileError, SpreadsheetWorkbookStore, StoredWorkbook,
@@ -35,6 +37,7 @@ const SESSION_VERSION: u64 = 2;
 const DOCUMENT_VERSION: u64 = 1;
 const MAX_ENVELOPE_BYTES: usize = MAX_DOCUMENT_BYTES + 16_384;
 const ATOMIC_CREATE_ATTEMPTS: u64 = 32;
+const MAX_HISTORY_AUDIT_DOCUMENTS: usize = MAX_UNIVERSE_HISTORY * 2;
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -47,13 +50,25 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 pub struct LocalPersistence {
     root: PathBuf,
     operation: Mutex<()>,
+    screening_history_operation: Mutex<()>,
+    screening_history_retention: usize,
 }
 
 impl LocalPersistence {
+    #[cfg(test)]
     pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self::with_screening_history_retention(
+            root,
+            crate::features::screening::DEFAULT_UNIVERSE_HISTORY_RETENTION,
+        )
+    }
+
+    pub fn with_screening_history_retention(root: impl Into<PathBuf>, retention: usize) -> Self {
         Self {
             root: root.into(),
             operation: Mutex::new(()),
+            screening_history_operation: Mutex::new(()),
+            screening_history_retention: retention.clamp(1, MAX_UNIVERSE_HISTORY),
         }
     }
 
@@ -561,6 +576,126 @@ impl ScreenStateStore for LocalPersistence {
     }
 }
 
+struct UniverseHistoryAuditDetails {
+    health: UniverseHistoryHealth,
+    invalid_references: BTreeSet<u64>,
+    removable_documents: Vec<DocumentId>,
+}
+
+impl LocalPersistence {
+    fn inspect_universe_history(
+        &self,
+        manifest: &UniverseHistoryManifest,
+    ) -> Result<UniverseHistoryAuditDetails, ScreenStateError> {
+        let feature = screening_feature_key()?;
+        let referenced = manifest
+            .entries
+            .iter()
+            .map(|entry| entry.version)
+            .collect::<BTreeSet<_>>();
+        let mut verified = 0;
+        let mut missing = 0;
+        let mut corrupt = 0;
+        let mut invalid_references = BTreeSet::new();
+
+        for entry in &manifest.entries {
+            let id = screening_snapshot_document_id(entry.version)?;
+            let document = match FeatureDocumentRepository::load(self, &feature, &id) {
+                Ok(Some(document)) => document,
+                Ok(None) => {
+                    missing += 1;
+                    invalid_references.insert(entry.version);
+                    continue;
+                }
+                Err(_) => {
+                    corrupt += 1;
+                    invalid_references.insert(entry.version);
+                    continue;
+                }
+            };
+            let snapshot = serde_json::from_value::<UniverseSnapshot>(document.payload().clone());
+            let valid = snapshot.ok().is_some_and(|snapshot| {
+                document.revision() == entry.version
+                    && snapshot.version == entry.version
+                    && snapshot.validate().is_ok()
+                    && universe_content_digest(&snapshot) == entry.content_digest
+                    && crate::features::screening::UniverseHistoryEntry::from_snapshot(&snapshot)
+                        == *entry
+            });
+            if valid {
+                verified += 1;
+            } else {
+                corrupt += 1;
+                invalid_references.insert(entry.version);
+            }
+        }
+
+        let documents =
+            FeatureDocumentRepository::list(self, &feature).map_err(screening_persistence_error)?;
+        let snapshot_documents = documents
+            .into_iter()
+            .filter(|id| id.as_str().starts_with("snapshot_"))
+            .collect::<Vec<_>>();
+        if snapshot_documents.len() > MAX_HISTORY_AUDIT_DOCUMENTS {
+            return Err(ScreenStateError::Corrupt(format!(
+                "universe history audit exceeds {MAX_HISTORY_AUDIT_DOCUMENTS} snapshot documents"
+            )));
+        }
+
+        let mut orphaned = 0;
+        let mut malformed = 0;
+        let mut removable_documents = Vec::new();
+        for id in snapshot_documents {
+            match parse_screening_snapshot_document_id(id.as_str()) {
+                Some(version) if referenced.contains(&version) => {
+                    if invalid_references.contains(&version) {
+                        removable_documents.push(id);
+                    }
+                }
+                Some(_) => {
+                    orphaned += 1;
+                    removable_documents.push(id);
+                }
+                None => {
+                    malformed += 1;
+                    removable_documents.push(id);
+                }
+            }
+        }
+        removable_documents.sort();
+        removable_documents.dedup();
+
+        Ok(UniverseHistoryAuditDetails {
+            health: UniverseHistoryHealth {
+                retention_limit: self.screening_history_retention,
+                referenced: manifest.entries.len(),
+                verified,
+                missing,
+                corrupt,
+                orphaned,
+                malformed,
+            },
+            invalid_references,
+            removable_documents,
+        })
+    }
+
+    fn save_universe_history_manifest(
+        &self,
+        manifest: &UniverseHistoryManifest,
+    ) -> Result<(), ScreenStateError> {
+        let document = FeatureDocument::new(
+            screening_feature_key()?,
+            screening_history_document_id()?,
+            manifest.revision,
+            serde_json::to_value(manifest)
+                .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?,
+        )
+        .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+        FeatureDocumentRepository::save(self, &document).map_err(screening_persistence_error)
+    }
+}
+
 impl UniverseHistoryStore for LocalPersistence {
     fn load_history(&self) -> Result<UniverseHistoryManifest, ScreenStateError> {
         let feature = screening_feature_key()?;
@@ -618,7 +753,9 @@ impl UniverseHistoryStore for LocalPersistence {
                 ))
             })?;
         let digest = universe_content_digest(&snapshot);
-        if entry.content_digest != digest {
+        if entry.content_digest != digest
+            || crate::features::screening::UniverseHistoryEntry::from_snapshot(&snapshot) != *entry
+        {
             return Err(ScreenStateError::Corrupt(format!(
                 "universe snapshot {version:016X} failed content verification"
             )));
@@ -630,12 +767,16 @@ impl UniverseHistoryStore for LocalPersistence {
         &self,
         snapshot: &UniverseSnapshot,
     ) -> Result<UniverseHistoryManifest, ScreenStateError> {
+        let _history_guard = self
+            .screening_history_operation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         snapshot
             .validate()
             .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
         let current = UniverseHistoryStore::load_history(self)?;
         let (next, evicted) = current
-            .record(snapshot)
+            .record_with_limit(snapshot, self.screening_history_retention)
             .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
         if next == current {
             let persisted = UniverseHistoryStore::load_snapshot(self, snapshot.version)?;
@@ -673,12 +814,87 @@ impl UniverseHistoryStore for LocalPersistence {
         FeatureDocumentRepository::save(self, &manifest_document)
             .map_err(screening_persistence_error)?;
 
-        if let Some(evicted) = evicted {
+        for evicted in evicted {
             let id = screening_snapshot_document_id(evicted.version)?;
             FeatureDocumentRepository::delete(self, &feature, &id)
                 .map_err(screening_persistence_error)?;
         }
         Ok(next)
+    }
+
+    fn audit_history(&self) -> Result<UniverseHistoryHealth, ScreenStateError> {
+        let _history_guard = self
+            .screening_history_operation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let manifest = UniverseHistoryStore::load_history(self)?;
+        Ok(self.inspect_universe_history(&manifest)?.health)
+    }
+
+    fn repair_history(&self) -> Result<UniverseHistoryRepair, ScreenStateError> {
+        let _history_guard = self
+            .screening_history_operation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let manifest = UniverseHistoryStore::load_history(self)?;
+        let audit = self.inspect_universe_history(&manifest)?;
+        let mut removed_versions = audit.invalid_references.clone();
+        let retained_after_invalid = manifest
+            .entries
+            .len()
+            .saturating_sub(removed_versions.len());
+        let excess = retained_after_invalid.saturating_sub(self.screening_history_retention);
+        let retention_evictions = manifest
+            .entries
+            .iter()
+            .filter(|entry| !removed_versions.contains(&entry.version))
+            .take(excess)
+            .map(|entry| entry.version)
+            .collect::<Vec<_>>();
+        removed_versions.extend(retention_evictions);
+        let mut repaired_manifest = manifest.clone();
+        repaired_manifest
+            .entries
+            .retain(|entry| !removed_versions.contains(&entry.version));
+        let removed_references = manifest
+            .entries
+            .len()
+            .saturating_sub(repaired_manifest.entries.len());
+        if removed_references > 0 {
+            repaired_manifest.revision = repaired_manifest.revision.saturating_add(1);
+            repaired_manifest
+                .validate()
+                .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+            // Publish a manifest that references only verified payloads before
+            // removing any orphaned or corrupt documents. Re-running this
+            // operation after interruption is therefore safe and idempotent.
+            self.save_universe_history_manifest(&repaired_manifest)?;
+        }
+
+        let feature = screening_feature_key()?;
+        let mut removable_documents = audit.removable_documents;
+        removable_documents.extend(
+            removed_versions
+                .iter()
+                .filter_map(|version| screening_snapshot_document_id(*version).ok()),
+        );
+        removable_documents.sort();
+        removable_documents.dedup();
+        let mut removed_documents = 0;
+        for id in &removable_documents {
+            if FeatureDocumentRepository::delete(self, &feature, id)
+                .map_err(screening_persistence_error)?
+            {
+                removed_documents += 1;
+            }
+        }
+        let after = self.inspect_universe_history(&repaired_manifest)?.health;
+        Ok(UniverseHistoryRepair {
+            before: audit.health,
+            after,
+            removed_references,
+            removed_documents,
+        })
     }
 }
 
@@ -884,6 +1100,13 @@ fn screening_history_document_id() -> Result<DocumentId, ScreenStateError> {
 fn screening_snapshot_document_id(version: u64) -> Result<DocumentId, ScreenStateError> {
     DocumentId::new(format!("snapshot_{version:016x}"))
         .map_err(|error| ScreenStateError::Corrupt(error.to_string()))
+}
+
+fn parse_screening_snapshot_document_id(id: &str) -> Option<u64> {
+    let version = id.strip_prefix("snapshot_")?;
+    (version.len() == 16)
+        .then(|| u64::from_str_radix(version, 16).ok())
+        .flatten()
 }
 
 fn screening_persistence_error(error: PersistenceError) -> ScreenStateError {
@@ -1442,11 +1665,11 @@ mod tests {
 
     #[test]
     fn universe_history_retention_removes_evicted_snapshot_documents() {
-        use crate::features::screening::{UniverseSnapshot, MAX_UNIVERSE_HISTORY};
+        use crate::features::screening::{UniverseSnapshot, DEFAULT_UNIVERSE_HISTORY_RETENTION};
 
         let directory = TestDirectory::new("screening-history-retention");
         let repository = LocalPersistence::new(&directory.0);
-        for version in 1..=MAX_UNIVERSE_HISTORY as u64 + 1 {
+        for version in 1..=DEFAULT_UNIVERSE_HISTORY_RETENTION as u64 + 1 {
             let snapshot = UniverseSnapshot::new(
                 "core",
                 "CORE",
@@ -1460,7 +1683,7 @@ mod tests {
         }
 
         let manifest = UniverseHistoryStore::load_history(&repository).unwrap();
-        assert_eq!(manifest.entries.len(), MAX_UNIVERSE_HISTORY);
+        assert_eq!(manifest.entries.len(), DEFAULT_UNIVERSE_HISTORY_RETENTION);
         assert_eq!(manifest.entries.first().unwrap().version, 2);
         assert!(UniverseHistoryStore::load_snapshot(&repository, 1).is_err());
         assert_eq!(
@@ -1473,6 +1696,191 @@ mod tests {
             .0
             .join("documents/screening/snapshot_0000000000000001.json")
             .exists());
+    }
+
+    #[test]
+    fn universe_history_audit_repairs_dangling_corrupt_and_orphan_documents() {
+        use crate::features::screening::UniverseSnapshot;
+
+        let directory = TestDirectory::new("screening-history-repair");
+        let repository = LocalPersistence::with_screening_history_retention(&directory.0, 4);
+        let snapshot = |version| {
+            UniverseSnapshot::new(
+                "core",
+                "CORE",
+                version,
+                format!("2026-08-29T00:00:{version:02}Z"),
+                "AUDIT FIXTURE",
+                Vec::new(),
+            )
+            .unwrap()
+        };
+        for version in 1..=3 {
+            UniverseHistoryStore::record_snapshot(&repository, &snapshot(version)).unwrap();
+        }
+
+        let feature = screening_feature_key().unwrap();
+        let missing = screening_snapshot_document_id(1).unwrap();
+        FeatureDocumentRepository::delete(&repository, &feature, &missing).unwrap();
+
+        let mut corrupt = snapshot(2);
+        corrupt.source = "MUTATED AFTER PUBLICATION".to_owned();
+        let corrupt_document = FeatureDocument::new(
+            feature.clone(),
+            screening_snapshot_document_id(2).unwrap(),
+            2,
+            serde_json::to_value(corrupt).unwrap(),
+        )
+        .unwrap();
+        FeatureDocumentRepository::save(&repository, &corrupt_document).unwrap();
+
+        let orphan = snapshot(99);
+        let orphan_document = FeatureDocument::new(
+            feature.clone(),
+            screening_snapshot_document_id(99).unwrap(),
+            99,
+            serde_json::to_value(orphan).unwrap(),
+        )
+        .unwrap();
+        FeatureDocumentRepository::save(&repository, &orphan_document).unwrap();
+        let malformed_id = DocumentId::new("snapshot_invalid").unwrap();
+        let malformed_document = FeatureDocument::new(
+            feature.clone(),
+            malformed_id.clone(),
+            1,
+            serde_json::json!({}),
+        )
+        .unwrap();
+        FeatureDocumentRepository::save(&repository, &malformed_document).unwrap();
+
+        let health = UniverseHistoryStore::audit_history(&repository).unwrap();
+        assert_eq!(health.retention_limit, 4);
+        assert_eq!(health.referenced, 3);
+        assert_eq!(health.verified, 1);
+        assert_eq!(health.missing, 1);
+        assert_eq!(health.corrupt, 1);
+        assert_eq!(health.orphaned, 1);
+        assert_eq!(health.malformed, 1);
+        assert!(!health.is_healthy());
+
+        let repair = UniverseHistoryStore::repair_history(&repository).unwrap();
+        assert_eq!(repair.removed_references, 2);
+        assert_eq!(repair.removed_documents, 3);
+        assert!(repair.after.is_healthy());
+        assert_eq!(repair.after.referenced, 1);
+        assert_eq!(repair.after.verified, 1);
+        assert_eq!(
+            UniverseHistoryStore::load_history(&repository)
+                .unwrap()
+                .entries[0]
+                .version,
+            3
+        );
+        assert!(
+            FeatureDocumentRepository::load(&repository, &feature, &malformed_id)
+                .unwrap()
+                .is_none()
+        );
+
+        let repeated = UniverseHistoryStore::repair_history(&repository).unwrap();
+        assert_eq!(repeated.removed_references, 0);
+        assert_eq!(repeated.removed_documents, 0);
+        assert!(repeated.after.is_healthy());
+    }
+
+    #[test]
+    fn universe_history_uses_configured_bounded_retention() {
+        use crate::features::screening::UniverseSnapshot;
+
+        let directory = TestDirectory::new("screening-history-custom-retention");
+        let repository = LocalPersistence::with_screening_history_retention(&directory.0, 3);
+        for version in 1..=4 {
+            let snapshot = UniverseSnapshot::new(
+                "core",
+                "CORE",
+                version,
+                format!("2026-08-29T00:00:{version:02}Z"),
+                "RETENTION FIXTURE",
+                Vec::new(),
+            )
+            .unwrap();
+            UniverseHistoryStore::record_snapshot(&repository, &snapshot).unwrap();
+        }
+        let manifest = UniverseHistoryStore::load_history(&repository).unwrap();
+        assert_eq!(manifest.entries.len(), 3);
+        assert_eq!(manifest.entries.first().unwrap().version, 2);
+        let health = UniverseHistoryStore::audit_history(&repository).unwrap();
+        assert_eq!(health.retention_limit, 3);
+        assert!(health.is_healthy());
+
+        drop(repository);
+        let lowered = LocalPersistence::with_screening_history_retention(&directory.0, 2);
+        let over_policy = UniverseHistoryStore::audit_history(&lowered).unwrap();
+        assert!(!over_policy.is_healthy());
+        assert_eq!(over_policy.referenced, 3);
+        assert_eq!(over_policy.retention_limit, 2);
+        let repaired = UniverseHistoryStore::repair_history(&lowered).unwrap();
+        assert_eq!(repaired.removed_references, 1);
+        assert_eq!(repaired.removed_documents, 1);
+        assert!(repaired.after.is_healthy());
+        assert_eq!(
+            UniverseHistoryStore::load_history(&lowered)
+                .unwrap()
+                .entries
+                .iter()
+                .map(|entry| entry.version)
+                .collect::<Vec<_>>(),
+            vec![3, 4]
+        );
+    }
+
+    #[test]
+    fn universe_history_repair_is_serialized_with_live_publication() {
+        use std::sync::{Arc, Barrier};
+
+        use crate::features::screening::UniverseSnapshot;
+
+        let directory = TestDirectory::new("screening-history-concurrent-repair");
+        let repository = Arc::new(LocalPersistence::with_screening_history_retention(
+            &directory.0,
+            4,
+        ));
+        let snapshot = |version| {
+            UniverseSnapshot::new(
+                "core",
+                "CORE",
+                version,
+                format!("2026-08-29T00:00:{version:02}Z"),
+                "CONCURRENCY FIXTURE",
+                Vec::new(),
+            )
+            .unwrap()
+        };
+        UniverseHistoryStore::record_snapshot(repository.as_ref(), &snapshot(1)).unwrap();
+
+        let barrier = Arc::new(Barrier::new(3));
+        std::thread::scope(|scope| {
+            let publisher_repository = repository.clone();
+            let publisher_barrier = barrier.clone();
+            scope.spawn(move || {
+                publisher_barrier.wait();
+                UniverseHistoryStore::record_snapshot(publisher_repository.as_ref(), &snapshot(2))
+                    .unwrap();
+            });
+            let repair_repository = repository.clone();
+            let repair_barrier = barrier.clone();
+            scope.spawn(move || {
+                repair_barrier.wait();
+                UniverseHistoryStore::repair_history(repair_repository.as_ref()).unwrap();
+            });
+            barrier.wait();
+        });
+
+        let manifest = UniverseHistoryStore::load_history(repository.as_ref()).unwrap();
+        assert!(manifest.entries.iter().any(|entry| entry.version == 2));
+        let health = UniverseHistoryStore::audit_history(repository.as_ref()).unwrap();
+        assert!(health.is_healthy(), "{}", health.label());
+        assert_eq!(health.referenced, manifest.entries.len());
     }
 
     #[test]

@@ -126,15 +126,21 @@ persist provider data.
   inputs remain typed failures. A refresh failure keeps the last valid result
   with a visible failure label rather than substituting gallery data.
 - **Retention:** persistent deployments retain the newest 32 immutable universe
-  snapshots across all universe IDs. Each snapshot is a private, independently
-  bounded feature document referenced by a schema-versioned manifest; it
-  includes only the Screening-owned projection needed to reproduce evaluation,
+  snapshots by default across all universe IDs. The restart-time policy is
+  configurable from 1 to the schema maximum of 256. Each snapshot is a private,
+  independently bounded feature document referenced by a schema-versioned
+  manifest; it includes only the Screening-owned projection needed to reproduce evaluation,
   not credentials or raw provider responses. Snapshot-first/manifest-second
   publication prevents dangling references. The oldest manifest entry is
   removed before its payload is deleted, and exact replay verifies the manifest,
   payload version, domain bounds, and independent content digest. Screen results,
   exclusions, and rank evidence remain derived in memory; definitions and saved
   views remain separate documents.
+- **Integrity operations:** startup and `SCREEN HISTORY AUDIT` verify manifest
+  references, snapshot identity/revision/content, missing and corrupt payloads,
+  orphaned/malformed documents, and retention pressure. Explicit repair is
+  serialized with publication, writes the verified in-policy manifest first,
+  then deletes removable documents, and is safe to repeat.
 
 ## Yahoo Finance chart
 

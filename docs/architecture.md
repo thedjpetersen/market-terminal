@@ -149,8 +149,12 @@ bootstrap ──▶ app kernel
   without consulting the provider.
   Generation checks reject stale evaluations, while a failed refresh retains
   the explicitly labeled last valid result. History uses immutable snapshot
-  documents plus a 32-entry manifest, snapshot-first publication, manifest-first
-  eviction, and an independent content digest checked on replay. Recording
+  documents plus a default-32, maximum-256 policy manifest, snapshot-first
+  publication, manifest-first eviction, and an independent content digest
+  checked on replay. A separate bounded maintenance worker audits every
+  manifest reference plus orphaned/malformed documents and performs only
+  explicit, serialized, manifest-first repair, so it cannot race live
+  publication or delete a newly published frame. Recording
   failure degrades history without hiding a valid live result; missing or mutated
   historical payloads fail closed. Saved views contain only the
   definition and row-anchor identities; the versioned universe and rank

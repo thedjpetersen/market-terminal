@@ -32,7 +32,8 @@ use super::{
     builtin_screen_definitions, evaluate_screen, Comparison, ScreenCatalogState, ScreenClause,
     ScreenDefinition, ScreenDimension, ScreenEvaluation, ScreenExpression, ScreenField,
     ScreenSortDirection, ScreenStateError, ScreenStateStore, ScreeningUniverseQuery,
-    UniverseHistoryManifest, UniverseHistoryStore, ID, MAX_SAVED_SCREENS,
+    UniverseHistoryHealth, UniverseHistoryManifest, UniverseHistoryRepair, UniverseHistoryStore,
+    ID, MAX_SAVED_SCREENS,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,8 +52,19 @@ struct RunResult {
     generation: u64,
     result: Result<ScreenEvaluation, String>,
     history: Option<UniverseHistoryManifest>,
+    history_health: Option<UniverseHistoryHealth>,
     history_warning: Option<String>,
     source: RunSource,
+}
+
+enum HistoryOperation {
+    Audit,
+    Repair,
+}
+
+enum HistoryOperationResult {
+    Audit(Result<UniverseHistoryHealth, ScreenStateError>),
+    Repair(Result<(UniverseHistoryRepair, UniverseHistoryManifest), ScreenStateError>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +120,10 @@ pub struct ScreeningWorkspace {
     definitions: Vec<ScreenDefinition>,
     custom_revision: u64,
     history: UniverseHistoryManifest,
+    history_health: Option<UniverseHistoryHealth>,
+    history_sender: Option<SyncSender<HistoryOperation>>,
+    history_receiver: Option<Receiver<HistoryOperationResult>>,
+    history_worker: Option<JoinHandle<()>>,
     active_screen_id: String,
     replay_version: Option<u64>,
     evaluation: Option<ScreenEvaluation>,
@@ -157,6 +173,7 @@ impl ScreeningWorkspace {
             .spawn(move || {
                 while let Ok(request) = worker_receiver.recv() {
                     let mut history = None;
+                    let mut history_health = None;
                     let mut history_warning = None;
                     let snapshot = match request.source {
                         RunSource::Live => query
@@ -165,7 +182,15 @@ impl ScreeningWorkspace {
                             .inspect(|snapshot| {
                                 if let Some(store) = &worker_history {
                                     match store.record_snapshot(snapshot) {
-                                        Ok(manifest) => history = Some(manifest),
+                                        Ok(manifest) => {
+                                            history = Some(manifest);
+                                            match store.audit_history() {
+                                                Ok(health) => history_health = Some(health),
+                                                Err(error) => {
+                                                    history_warning = Some(error.to_string())
+                                                }
+                                            }
+                                        }
                                         Err(error) => history_warning = Some(error.to_string()),
                                     }
                                 }
@@ -188,6 +213,7 @@ impl ScreeningWorkspace {
                             generation: request.generation,
                             result,
                             history,
+                            history_health,
                             history_warning,
                             source: request.source,
                         })
@@ -224,6 +250,42 @@ impl ScreeningWorkspace {
                     }
                 }
             });
+        let history_health = history_store
+            .as_ref()
+            .and_then(|store| match store.audit_history() {
+                Ok(health) => Some(health),
+                Err(error) => {
+                    status = format!("UNIVERSE HISTORY AUDIT DEGRADED · {error}");
+                    None
+                }
+            });
+        let (history_sender, history_receiver, history_worker) =
+            history_store.as_ref().map_or((None, None, None), |store| {
+                let store = store.clone();
+                let (sender, receiver) = sync_channel(1);
+                let (result_sender, result_receiver) = sync_channel(1);
+                let worker = std::thread::Builder::new()
+                    .name("screening-history-maintenance".to_owned())
+                    .spawn(move || {
+                        while let Ok(operation) = receiver.recv() {
+                            let result = match operation {
+                                HistoryOperation::Audit => {
+                                    HistoryOperationResult::Audit(store.audit_history())
+                                }
+                                HistoryOperation::Repair => HistoryOperationResult::Repair(
+                                    store.repair_history().and_then(|repair| {
+                                        store.load_history().map(|manifest| (repair, manifest))
+                                    }),
+                                ),
+                            };
+                            if result_sender.send(result).is_err() {
+                                break;
+                            }
+                        }
+                    })
+                    .expect("screening history maintenance worker should start");
+                (Some(sender), Some(result_receiver), Some(worker))
+            });
 
         let (persist_sender, persist_receiver, persist_worker) = if let Some(store) = store {
             let (sender, receiver) = sync_channel::<ScreenCatalogState>(1);
@@ -259,6 +321,10 @@ impl ScreeningWorkspace {
             definitions,
             custom_revision,
             history,
+            history_health,
+            history_sender,
+            history_receiver,
+            history_worker,
             active_screen_id,
             replay_version: None,
             evaluation: None,
@@ -327,6 +393,9 @@ impl ScreeningWorkspace {
         while let Ok(result) = self.run_receiver.try_recv() {
             if let Some(history) = result.history {
                 self.history = history;
+            }
+            if let Some(health) = result.history_health {
+                self.history_health = Some(health);
             }
             if result.generation != self.desired_generation {
                 continue;
@@ -507,6 +576,73 @@ impl ScreeningWorkspace {
             "HISTORY {universe_id} · {} FRAME(S) · {summary}",
             entries.len()
         );
+    }
+
+    fn audit_history(&mut self) {
+        let Some(sender) = &self.history_sender else {
+            self.status = "UNIVERSE HISTORY IS NOT CONFIGURED".to_owned();
+            return;
+        };
+        match sender.try_send(HistoryOperation::Audit) {
+            Ok(()) => self.status = "AUDITING UNIVERSE HISTORY…".to_owned(),
+            Err(TrySendError::Full(_)) => {
+                self.status = "UNIVERSE HISTORY MAINTENANCE IS ALREADY RUNNING".to_owned()
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.status = "UNIVERSE HISTORY MAINTENANCE WORKER STOPPED".to_owned()
+            }
+        }
+    }
+
+    fn repair_history(&mut self) {
+        let Some(sender) = &self.history_sender else {
+            self.status = "UNIVERSE HISTORY IS NOT CONFIGURED".to_owned();
+            return;
+        };
+        match sender.try_send(HistoryOperation::Repair) {
+            Ok(()) => self.status = "REPAIRING UNIVERSE HISTORY…".to_owned(),
+            Err(TrySendError::Full(_)) => {
+                self.status = "UNIVERSE HISTORY MAINTENANCE IS ALREADY RUNNING".to_owned()
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.status = "UNIVERSE HISTORY MAINTENANCE WORKER STOPPED".to_owned()
+            }
+        }
+    }
+
+    fn poll_history_maintenance(&mut self) {
+        let Some(receiver) = &self.history_receiver else {
+            return;
+        };
+        while let Ok(result) = receiver.try_recv() {
+            match result {
+                HistoryOperationResult::Audit(Ok(health)) => {
+                    self.status = format!(
+                        "HISTORY AUDIT · {} · RETENTION {}/{}",
+                        health.label(),
+                        health.referenced,
+                        health.retention_limit,
+                    );
+                    self.history_health = Some(health);
+                }
+                HistoryOperationResult::Audit(Err(error)) => {
+                    self.status = format!("HISTORY AUDIT FAILED · {error}")
+                }
+                HistoryOperationResult::Repair(Ok((repair, manifest))) => {
+                    self.history = manifest;
+                    self.status = format!(
+                        "HISTORY REPAIRED · {} REFERENCE(S) · {} DOCUMENT(S) REMOVED · {}",
+                        repair.removed_references,
+                        repair.removed_documents,
+                        repair.after.label(),
+                    );
+                    self.history_health = Some(repair.after);
+                }
+                HistoryOperationResult::Repair(Err(error)) => {
+                    self.status = format!("HISTORY REPAIR FAILED · {error}")
+                }
+            }
+        }
     }
 
     fn replay(&mut self, version: u64, screen_id: Option<&str>) -> bool {
@@ -844,7 +980,17 @@ impl Workspace for ScreeningWorkspace {
                         .join(" · ")
                 );
             }
-            "HISTORY" => self.history_summary(invocation.args.get(1).map(String::as_str)),
+            "HISTORY" => match invocation
+                .args
+                .get(1)
+                .map(|value| value.to_ascii_uppercase())
+            {
+                Some(operation) if operation == "AUDIT" || operation == "HEALTH" => {
+                    self.audit_history()
+                }
+                Some(operation) if operation == "REPAIR" => self.repair_history(),
+                _ => self.history_summary(invocation.args.get(1).map(String::as_str)),
+            },
             "REPLAY" => {
                 let Some(version) = invocation
                     .args
@@ -1004,6 +1150,7 @@ impl Workspace for ScreeningWorkspace {
     fn poll_intents(&mut self) -> Vec<AppIntent> {
         self.poll_run();
         self.poll_persist();
+        self.poll_history_maintenance();
         std::mem::take(&mut self.pending_intents)
     }
 
@@ -1066,8 +1213,15 @@ impl Workspace for ScreeningWorkspace {
                     Span::styled("INPUT  ", AMBER),
                     Span::styled(
                         format!(
-                            "{source} · AS OF {as_of} · {} RETAINED FRAME(S)",
-                            self.history.entries_for(&definition.universe_id).len()
+                            "{source} · AS OF {as_of} · {} RETAINED FRAME(S) · {}",
+                            self.history.entries_for(&definition.universe_id).len(),
+                            self.history_health.as_ref().map_or_else(
+                                || "HEALTH UNKNOWN".to_owned(),
+                                |health| format!(
+                                    "{}/{} VERIFIED · LIMIT {}",
+                                    health.verified, health.referenced, health.retention_limit
+                                ),
+                            )
                         ),
                         MUTED,
                     ),
@@ -1279,6 +1433,11 @@ impl Drop for ScreeningWorkspace {
         }
         self.persist_sender.take();
         if let Some(worker) = self.persist_worker.take() {
+            let _ = worker.join();
+        }
+        self.history_sender.take();
+        self.history_receiver.take();
+        if let Some(worker) = self.history_worker.take() {
             let _ = worker.join();
         }
     }
@@ -1606,7 +1765,7 @@ fn format_volume(value: Option<f64>) -> String {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::BTreeMap,
+        collections::{BTreeMap, BTreeSet},
         sync::{
             atomic::{AtomicUsize, Ordering},
             Mutex,
@@ -1718,11 +1877,69 @@ mod tests {
             } else {
                 snapshots.insert(snapshot.version, snapshot.clone());
             }
-            if let Some(evicted) = evicted {
+            for evicted in evicted {
                 snapshots.remove(&evicted.version);
             }
             *manifest = next.clone();
             Ok(next)
+        }
+
+        fn audit_history(&self) -> Result<UniverseHistoryHealth, ScreenStateError> {
+            let manifest = self.manifest.lock().unwrap();
+            let snapshots = self.snapshots.lock().unwrap();
+            let verified = manifest
+                .entries
+                .iter()
+                .filter(|entry| snapshots.contains_key(&entry.version))
+                .count();
+            Ok(UniverseHistoryHealth {
+                retention_limit: super::super::DEFAULT_UNIVERSE_HISTORY_RETENTION,
+                referenced: manifest.entries.len(),
+                verified,
+                missing: manifest.entries.len().saturating_sub(verified),
+                corrupt: 0,
+                orphaned: snapshots
+                    .keys()
+                    .filter(|version| {
+                        !manifest
+                            .entries
+                            .iter()
+                            .any(|entry| entry.version == **version)
+                    })
+                    .count(),
+                malformed: 0,
+            })
+        }
+
+        fn repair_history(&self) -> Result<UniverseHistoryRepair, ScreenStateError> {
+            let before = self.audit_history()?;
+            let mut manifest = self.manifest.lock().unwrap();
+            let mut snapshots = self.snapshots.lock().unwrap();
+            let before_references = manifest.entries.len();
+            manifest
+                .entries
+                .retain(|entry| snapshots.contains_key(&entry.version));
+            let removed_references = before_references.saturating_sub(manifest.entries.len());
+            let referenced = manifest
+                .entries
+                .iter()
+                .map(|entry| entry.version)
+                .collect::<BTreeSet<_>>();
+            let before_documents = snapshots.len();
+            snapshots.retain(|version, _| referenced.contains(version));
+            if removed_references > 0 {
+                manifest.revision = manifest.revision.saturating_add(1);
+            }
+            let removed_documents = before_documents.saturating_sub(snapshots.len());
+            drop(snapshots);
+            drop(manifest);
+            let after = self.audit_history()?;
+            Ok(UniverseHistoryRepair {
+                before,
+                after,
+                removed_references,
+                removed_documents,
+            })
         }
     }
 
@@ -1964,5 +2181,47 @@ mod tests {
         assert_eq!(restarted.replay_version, None);
         settle(&mut restarted);
         assert_eq!(provider_calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn history_audit_and_repair_commands_report_and_remove_dangling_references() {
+        let history = Arc::new(MemoryHistoryStore::default());
+        let mut workspace = ScreeningWorkspace::persistent_with_history(
+            Arc::new(FixtureQuery),
+            Arc::new(MemoryStore::default()),
+            history.clone(),
+        );
+        settle(&mut workspace);
+        history.snapshots.lock().unwrap().remove(&42);
+
+        workspace.handle_command(&CommandInvocation {
+            function: "SCREEN".to_owned(),
+            args: vec!["HISTORY".to_owned(), "AUDIT".to_owned()],
+        });
+        for _ in 0..100 {
+            workspace.poll_intents();
+            if workspace.status.starts_with("HISTORY AUDIT ·") {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(workspace.status.contains("DEGRADED"));
+        assert!(workspace.status.contains("1 MISSING"));
+
+        workspace.handle_command(&CommandInvocation {
+            function: "SCREEN".to_owned(),
+            args: vec!["HISTORY".to_owned(), "REPAIR".to_owned()],
+        });
+        for _ in 0..100 {
+            workspace.poll_intents();
+            if workspace.status.starts_with("HISTORY REPAIRED") {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(workspace.status.contains("HISTORY REPAIRED"));
+        assert!(workspace.status.contains("1 REFERENCE(S)"));
+        assert!(workspace.history.entries.is_empty());
+        assert!(workspace.history_health.as_ref().unwrap().is_healthy());
     }
 }

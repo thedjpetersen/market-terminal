@@ -12,7 +12,8 @@ pub const MAX_SCREEN_CLAUSES: usize = 8;
 pub const MAX_SCREEN_EXPRESSION_DEPTH: usize = 8;
 pub const MAX_SCREEN_RESULTS: usize = 200;
 pub const MAX_SAVED_SCREENS: usize = 64;
-pub const MAX_UNIVERSE_HISTORY: usize = 32;
+pub const DEFAULT_UNIVERSE_HISTORY_RETENTION: usize = 32;
+pub const MAX_UNIVERSE_HISTORY: usize = 256;
 const MAX_ID_BYTES: usize = 64;
 const MAX_LABEL_BYTES: usize = 96;
 const MAX_MEMBER_TEXT_BYTES: usize = 160;
@@ -669,9 +670,20 @@ impl UniverseHistoryManifest {
     pub fn record(
         &self,
         snapshot: &UniverseSnapshot,
-    ) -> Result<(Self, Option<UniverseHistoryEntry>), ScreenError> {
+    ) -> Result<(Self, Vec<UniverseHistoryEntry>), ScreenError> {
+        self.record_with_limit(snapshot, DEFAULT_UNIVERSE_HISTORY_RETENTION)
+    }
+
+    pub fn record_with_limit(
+        &self,
+        snapshot: &UniverseSnapshot,
+        retention_limit: usize,
+    ) -> Result<(Self, Vec<UniverseHistoryEntry>), ScreenError> {
         self.validate()?;
         snapshot.validate()?;
+        if !(1..=MAX_UNIVERSE_HISTORY).contains(&retention_limit) {
+            return Err(ScreenError::TooManyHistoryEntries);
+        }
         let entry = UniverseHistoryEntry::from_snapshot(snapshot);
         entry.validate()?;
         if let Some(existing) = self
@@ -680,14 +692,15 @@ impl UniverseHistoryManifest {
             .find(|existing| existing.version == entry.version)
         {
             if existing == &entry {
-                return Ok((self.clone(), None));
+                return Ok((self.clone(), Vec::new()));
             }
             return Err(ScreenError::HistoryVersionCollision(entry.version));
         }
 
         let mut entries = self.entries.clone();
         entries.push(entry);
-        let evicted = (entries.len() > MAX_UNIVERSE_HISTORY).then(|| entries.remove(0));
+        let evicted_count = entries.len().saturating_sub(retention_limit);
+        let evicted = entries.drain(..evicted_count).collect();
         let next = Self {
             schema_version: Self::SCHEMA_VERSION,
             revision: self.revision.saturating_add(1),
@@ -1357,7 +1370,7 @@ mod tests {
     #[test]
     fn history_is_bounded_idempotent_and_rejects_version_collisions() {
         let mut manifest = UniverseHistoryManifest::empty();
-        for version in 1..=MAX_UNIVERSE_HISTORY as u64 + 1 {
+        for version in 1..=DEFAULT_UNIVERSE_HISTORY_RETENTION as u64 + 1 {
             let mut snapshot = universe(vec![member(
                 &format!("us:test:{version}"),
                 &format!("T{version}"),
@@ -1367,15 +1380,16 @@ mod tests {
             snapshot.version = version;
             snapshot.as_of = format!("2026-08-29T00:00:{version:02}Z");
             let (next, evicted) = manifest.record(&snapshot).unwrap();
-            if version <= MAX_UNIVERSE_HISTORY as u64 {
-                assert!(evicted.is_none());
+            if version <= DEFAULT_UNIVERSE_HISTORY_RETENTION as u64 {
+                assert!(evicted.is_empty());
             } else {
-                assert_eq!(evicted.unwrap().version, 1);
+                assert_eq!(evicted.len(), 1);
+                assert_eq!(evicted[0].version, 1);
             }
             manifest = next;
         }
 
-        assert_eq!(manifest.entries.len(), MAX_UNIVERSE_HISTORY);
+        assert_eq!(manifest.entries.len(), DEFAULT_UNIVERSE_HISTORY_RETENTION);
         assert_eq!(manifest.entries.first().unwrap().version, 2);
         assert_eq!(manifest.entries.last().unwrap().version, 33);
         assert_eq!(manifest.revision, 33);
@@ -1390,7 +1404,7 @@ mod tests {
         same.as_of = "2026-08-29T00:00:33Z".to_owned();
         let (unchanged, evicted) = manifest.record(&same).unwrap();
         assert_eq!(unchanged, manifest);
-        assert!(evicted.is_none());
+        assert!(evicted.is_empty());
 
         same.source = "DIFFERENT SOURCE".to_owned();
         assert_eq!(

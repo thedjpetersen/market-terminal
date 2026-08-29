@@ -3,6 +3,53 @@ use std::fmt;
 use super::{ScreenCatalogState, UniverseHistoryManifest, UniverseSnapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UniverseHistoryHealth {
+    pub retention_limit: usize,
+    pub referenced: usize,
+    pub verified: usize,
+    pub missing: usize,
+    pub corrupt: usize,
+    pub orphaned: usize,
+    pub malformed: usize,
+}
+
+impl UniverseHistoryHealth {
+    pub const fn is_healthy(&self) -> bool {
+        self.referenced == self.verified
+            && self.referenced <= self.retention_limit
+            && self.missing == 0
+            && self.corrupt == 0
+            && self.orphaned == 0
+            && self.malformed == 0
+    }
+
+    pub fn label(&self) -> String {
+        format!(
+            "{} · {}/{} VERIFIED · {} MISSING · {} CORRUPT · {} ORPHAN · {} MALFORMED",
+            if self.is_healthy() {
+                "HEALTHY"
+            } else {
+                "DEGRADED"
+            },
+            self.verified,
+            self.referenced,
+            self.missing,
+            self.corrupt,
+            self.orphaned,
+            self.malformed,
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UniverseHistoryRepair {
+    pub before: UniverseHistoryHealth,
+    pub after: UniverseHistoryHealth,
+    pub removed_references: usize,
+    pub removed_documents: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScreeningError {
     UniverseNotFound(String),
     TemporarilyUnavailable(String),
@@ -69,4 +116,6 @@ pub trait UniverseHistoryStore: Send + Sync {
         &self,
         snapshot: &UniverseSnapshot,
     ) -> Result<UniverseHistoryManifest, ScreenStateError>;
+    fn audit_history(&self) -> Result<UniverseHistoryHealth, ScreenStateError>;
+    fn repair_history(&self) -> Result<UniverseHistoryRepair, ScreenStateError>;
 }

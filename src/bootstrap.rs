@@ -248,7 +248,10 @@ pub fn persistent_app() -> App {
     if crate::ui::theme::set_theme(&configured_theme).is_none() {
         crate::ui::theme::set_theme("default").expect("built-in default theme");
     }
-    let repository = Arc::new(LocalPersistence::new(default_state_directory()));
+    let repository = Arc::new(LocalPersistence::with_screening_history_retention(
+        default_state_directory(),
+        screening_history_retention(),
+    ));
     let (keymap, keymap_warnings) = Keymap::from_env();
     let portfolio_query: Arc<dyn PortfolioRepository> =
         Arc::new(CsvPortfolioRepository::persistent(repository.clone()));
@@ -371,6 +374,14 @@ fn quote_refresh_interval() -> Duration {
         .map(|seconds| seconds.clamp(5, 3_600))
         .unwrap_or(60);
     Duration::from_secs(seconds)
+}
+
+fn screening_history_retention() -> usize {
+    std::env::var("MARKET_TERMINAL_SCREEN_HISTORY_RETENTION")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .map(|retention| retention.clamp(1, crate::features::screening::MAX_UNIVERSE_HISTORY))
+        .unwrap_or(crate::features::screening::DEFAULT_UNIVERSE_HISTORY_RETENTION)
 }
 
 fn runtime_settings_summary(

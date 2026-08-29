@@ -109,6 +109,8 @@ SCREEN SAVE quality-move core (change_pct >= 1% OR volume >= 20m) AND NOT spread
 SCREEN LIST
 SCREEN DELETE liquid-gainers
 SCREEN HISTORY core
+SCREEN HISTORY AUDIT
+SCREEN HISTORY REPAIR
 SCREEN REPLAY V0123456789ABCDEF momentum
 SCREEN LIVE
 ```
@@ -125,9 +127,15 @@ values and pass/fail evidence for every predicate. Use arrows or `j`/`k` to sele
 `Enter`/`s` for Security, `c` for Chart, `a` for Spreadsheet insertion, `m` for the source
 Monitor universe, `h` for retained input versions, `l` to return to live mode,
 `[`/`]` to cycle definitions, and `r` to rerun the current live or replay input.
-Persistent deployments retain 32 immutable universe frames with independent
-content verification; exact replay never calls the provider or substitutes a
-newer frame. Mouse,
+Persistent deployments retain 32 immutable universe frames by default,
+configurable from 1 to 256 with
+`MARKET_TERMINAL_SCREEN_HISTORY_RETENTION`, with independent content
+verification; exact replay never calls the provider or substitutes a
+newer frame. `SCREEN HISTORY AUDIT` verifies every manifest reference and reports
+missing, corrupt, orphaned, malformed, and over-policy state. Explicit `SCREEN
+HISTORY REPAIR` first publishes a manifest containing only verified, in-policy
+frames and only then removes stale documents; it is serialized against live
+publication and safe to repeat after interruption. Mouse,
 spatial focus, and `F` hints use those same identity-checked actions. See
 [the Screening contract](docs/screening.md) for limits, persistence, and the
 remaining P2/P3 scope.

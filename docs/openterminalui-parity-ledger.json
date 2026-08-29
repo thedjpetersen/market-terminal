@@ -137,7 +137,7 @@
       "upstream_maturity": "substantive",
       "reference_files": ["frontend/src/pages/Hotlists.tsx", "frontend/src/pages/MarketHeatmapPage.tsx", "backend/services/hotlist_service.py", "backend/api/routes/heatmap.py", "frontend/tests/e2e/market-heatmap.spec.ts"],
       "acceptance_tests": ["HOTLIST-STABLE-RANK", "HEATMAP-COVERAGE", "BREADTH-UNIVERSE-VERSION"],
-      "gap": "The versioned point-in-time core universe powers deterministic momentum, liquidity, and tight-spread screens with as-of, provider, quality, coverage, exclusions, and Security/Chart/Monitor/Spreadsheet routing. Successful live inputs publish into a private 32-frame immutable manifest with content-verified exact restart replay. Add history audit/repair, breadth, unusual volume, dedicated hotlists, sector/market heatmaps, and normalized split comparisons."
+      "gap": "The versioned point-in-time core universe powers deterministic momentum, liquidity, and tight-spread screens with as-of, provider, quality, coverage, exclusions, and Security/Chart/Monitor/Spreadsheet routing. Successful live inputs publish into configurable 1-256-frame immutable history with content-verified exact restart replay, health audit, and serialized manifest-first repair. Add breadth, unusual volume, dedicated hotlists, sector/market heatmaps, and normalized split comparisons."
     },
     {
       "id": "OTUI-012",
@@ -181,7 +181,7 @@
       "upstream_maturity": "substantive",
       "reference_files": ["backend/screener/engine.py", "backend/screener/parser.py", "backend/screener/persistence.py", "frontend/src/pages/equity/screener/QueryBuilder.tsx", "frontend/tests/e2e/custom-formula-screener.spec.ts", "frontend/tests/e2e/screener-scanner.spec.ts"],
       "acceptance_tests": ["SCREEN-PIT-REPLAY", "SCREEN-NULL-POLICY", "SCREEN-WHY-RANKED", "SCREEN-PROMOTION"],
-      "gap": "The production SCREEN workspace now has point-in-time versioned universes, a bounded tagged AND/OR/NOT AST with parentheses and conventional precedence, dimension-checked percent/basis-point/scaled-quantity thresholds, tri-state fail-closed nulls, deterministic filters/sorts/ranks, rejection and why-ranked evidence, crash-safe schema-v1 migration, saved-view recovery, content-verified 32-frame PIT history and exact restart replay, and selected-row Security/Chart/Spreadsheet plus universe Monitor routing. Add arithmetic formula nodes and broader field dimensions, history audit/repair, fundamental/factor fields, and atomic whole-result Monitor/typed-range promotion."
+      "gap": "The production SCREEN workspace now has point-in-time versioned universes, a bounded tagged AND/OR/NOT AST with parentheses and conventional precedence, dimension-checked percent/basis-point/scaled-quantity thresholds, tri-state fail-closed nulls, deterministic filters/sorts/ranks, rejection and why-ranked evidence, crash-safe schema-v1 migration, saved-view recovery, configurable content-verified PIT history, exact restart replay, health audit, manifest-first repair, and selected-row Security/Chart/Spreadsheet plus universe Monitor routing. Add arithmetic formula nodes and broader field dimensions, fundamental/factor fields, and atomic whole-result Monitor/typed-range promotion."
     },
     {
       "id": "OTUI-016",

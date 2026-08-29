@@ -288,16 +288,19 @@ move to its own crate later without changing its public vocabulary.
   promotion, Monitor universe routing, and saved-view recovery by stable screen
   and row identities. Deterministic engine, adapter, persistence, stale-action,
   restart-state, three-size semantic, and 2,000-member performance evidence lock
-  the slice. The follow-on history increment now retains 32 immutable input
-  frames with content verification and exact offline replay across restart. The
+  the slice. The follow-on history increment now retains 1-256 immutable input
+  frames (32 by default) with content verification and exact offline replay
+  across restart. Startup and explicit audit expose verified, missing, corrupt,
+  orphaned, malformed, and over-policy state; explicit repair is serialized
+  against publication, manifest-first, bounded, and idempotent. The
   expression follow-on replaces flat custom predicates with a tagged, bounded
   boolean AST: nested `AND`/`OR`/`NOT`, parentheses, conventional precedence,
   complete leaf evidence, and tri-state missing propagation are deterministic
   and restart-safe. Percent, basis-point, and scaled-quantity suffixes are
   dimension-checked, legacy definitions migrate as implicit `AND`, and selected
   rows route directly to Chart. Arithmetic formulas, broader field dimensions,
-  factors, heatmaps, history repair, and whole-result promotion remain.
-- **Next:** deepen P2/P3 universe storage, hotlists/breadth/heatmaps, Screening
+  factors, heatmaps, and whole-result promotion remain.
+- **Next:** add P2/P3 hotlists/breadth/heatmaps, Screening
   arithmetic and whole-result promotion, factor research, and compound alert
   families. Provider availability
   extends the deployment surface; deterministic fixtures remain the acceptance
@@ -382,10 +385,10 @@ continues.
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
 | Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
 | Snapshot/streaming data and provider fallback | Partial | Yahoo, Alpha Vantage, Alpaca, Finnhub, bounded workers, coalescing, LKG cache, replay | Add capability-aware provider waterfall, durable bar cache, session calendars, health routing, and cross-provider provenance. |
-| DOM, time and sales, hotlists, heatmaps | Missing | Listed-instrument monitor and quote stream only | Add entitlement-aware depth/tape models, movers, breadth, sector/market heatmaps, and replay fixtures without synthesizing unavailable order-book data. |
+| DOM, time and sales, hotlists, heatmaps | Missing | Listed-instrument monitor, quote stream, and audited versioned Screening universe history only | Add entitlement-aware depth/tape models, movers, breadth, sector/market heatmaps, and replay fixtures without synthesizing unavailable order-book data. |
 | Multi-panel technical chart workstation | Partial | OHLC/line charts, comparisons, volume, SMA/EMA, RSI, periods, cursor | Add up to nine linked panes, multi-timeframe layouts, indicator registry, annotations, volume profile, historical replay, alternate chart types, and image/data export. |
 | Security Hub and equity research | Partial | Profile, financials, filings, SEC Form 4, news, basic peer/estimate states | Add statements/trends, estimates/revisions, earnings, ESG, corporate actions, dividends, shareholding history, richer peers, and multi-market identity. |
-| Advanced screener and factor dashboard | Partial | Production `SCREEN` workspace over versioned point-in-time Watchlist/Market Data universes, bounded nested `AND`/`OR`/`NOT` AST, dimension-checked thresholds, tri-state fail-closed nulls, deterministic ranking/ties, coverage/exclusion/why-ranked evidence, crash-safe migration-safe definitions, 32-frame immutable history with verified exact replay, saved views, and Security/Chart/Monitor/Spreadsheet routing | Add arithmetic formula nodes and broader field dimensions, history audit/repair, whole-result atomic promotion, fundamentals and factors, neutralized composites, and factor history/IC/turnover. |
+| Advanced screener and factor dashboard | Partial | Production `SCREEN` workspace over versioned point-in-time Watchlist/Market Data universes, bounded nested `AND`/`OR`/`NOT` AST, dimension-checked thresholds, tri-state fail-closed nulls, deterministic ranking/ties, coverage/exclusion/why-ranked evidence, crash-safe migration-safe definitions, configurable 1-256-frame immutable history with verified exact replay, health audit, manifest-first repair, saved views, and Security/Chart/Monitor/Spreadsheet routing | Add arithmetic formula nodes and broader field dimensions, whole-result atomic promotion, fundamentals and factors, neutralized composites, and factor history/IC/turnover. |
 | Tool-using AI research | Partial | Codex/OpenRouter chat, validated UI intents, bounded article reading | Add screen-aware read tools, research retrieval, cited artifacts, provider routing, debate, bounded strategy research, and local-model fallback. |
 | Futures and options suite | Missing | Stage 3 domain placeholder only | Add chains, Greeks/IV, OI/PCR/flow, strategies, futures basis/curve, expiry calendar, scenario tools, and delayed/entitled data states. |
 | Portfolio accounting and attribution | Partial | Exact positions, cash/activity, valuations/TWR, lots, realized gains, fills, single/multi-period attribution | Add portfolio CRUD/transaction truth, allocation views, benchmark history, dividends, multi-portfolio comparison, and rebalance evidence. |
@@ -740,16 +743,19 @@ data foundation for screening, derivatives, risk, and backtesting.
     liquidity, and tight-spread rankings are deterministic under equal values and
     survive saved-view restart by identity. Persistent deployments now publish
     successful live inputs snapshot-first into immutable private documents and
-    then a schema-versioned 32-entry manifest. Exact `SCREEN REPLAY` verifies the
+    then a schema-versioned policy manifest (32 entries by default, configurable
+    to 256). Exact `SCREEN REPLAY` verifies the
     manifest reference, version, domain bounds, and independent content digest;
     missing or post-publication-mutated payloads fail closed. Publication is
     idempotent, retention removes the oldest payload only after publishing the
     new manifest, and restart replay produces the identical evaluation without a
-    provider call.
-  - **Still required:** orphan audit/repair and retention health metrics,
-    broader classifications and field coverage, breadth/advance-decline, unusual
-    volume, dedicated hotlists, sector/market heatmaps, normalized split
-    comparison. Direct selected-result Chart promotion is complete.
+    provider call. Startup and `SCREEN HISTORY AUDIT` report verified, missing,
+    corrupt, orphaned, malformed, and over-policy state. Explicit repair is
+    serialized with live publication, publishes a verified in-policy manifest
+    before deletion, and is idempotent across interruption.
+  - **Still required:** broader classifications and field coverage,
+    breadth/advance-decline, unusual volume, dedicated hotlists, sector/market
+    heatmaps, normalized split comparison. Direct selected-result Chart promotion is complete.
 - Evolve Chart into a one-to-nine-pane workstation with linked crosshairs,
   canonical selection, independent/synchronized periods, multi-timeframe layouts,
   pane focus, saved layouts, and graceful narrow-terminal tabbing.
@@ -803,10 +809,13 @@ loop before adding more asset classes.
     precedence, complete predicate evidence, tri-state missing propagation, and
     compatible percent/basis-point/scaled-quantity threshold inference. Selected
     results route directly to Chart.
+  - **History integrity follow-on delivered:** restart-configurable 1-256 frame
+    retention, startup/operator health metrics, bounded orphan and malformed
+    discovery, and explicit manifest-first idempotent repair are serialized with
+    live publication and execute on a maintenance worker.
   - **Still required:** arithmetic formula nodes and dimensions beyond the
-    closed field catalog, historical point-in-time
-    audit/repair and longer policy-driven retention, fundamental/event/factor
-    fields, direct Chart routing, transactional whole-result Monitor and typed
+    closed field catalog, fundamental/event/factor
+    fields, transactional whole-result Monitor and typed
     Spreadsheet-range promotion, result-set persistence/export, and richer
     definition management.
 - Add factor research for value, momentum, quality, size, and low-volatility with
