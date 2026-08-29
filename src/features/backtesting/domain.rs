@@ -1,11 +1,13 @@
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 pub const DEFAULT_INITIAL_CASH_MICROS: i64 = 100_000_000_000;
 pub const MAX_BACKTEST_BARS: usize = 20_000;
 pub const MAX_MOVING_AVERAGE_WINDOW: usize = 500;
 const BPS_SCALE: i128 = 10_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BacktestBar {
     pub timestamp: i64,
     pub open_micros: i64,
@@ -15,7 +17,7 @@ pub struct BacktestBar {
     pub volume: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BacktestConfig {
     pub instrument_id: String,
     pub symbol: String,
@@ -44,7 +46,7 @@ impl BacktestConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TradeSide {
     Buy,
     Sell,
@@ -59,7 +61,7 @@ impl TradeSide {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BacktestTrade {
     pub side: TradeSide,
     pub signal_timestamp: i64,
@@ -70,22 +72,23 @@ pub struct BacktestTrade {
     pub commission_micros: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BacktestDecision {
     pub observed_at: i64,
     pub executes_at: i64,
     pub target_long: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EquityPoint {
     pub timestamp: i64,
     pub equity_micros: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BacktestArtifact {
     pub schema_version: u16,
+    pub config: BacktestConfig,
     pub strategy: String,
     pub instrument_id: String,
     pub symbol: String,
@@ -95,6 +98,7 @@ pub struct BacktestArtifact {
     pub config_digest: String,
     pub data_digest: String,
     pub run_digest: String,
+    pub artifact_digest: String,
     pub bars: usize,
     pub first_timestamp: i64,
     pub last_timestamp: i64,
@@ -116,6 +120,68 @@ pub enum BacktestError {
     InvalidConfig(String),
     InvalidBars(String),
     Arithmetic(String),
+}
+
+impl BacktestArtifact {
+    pub fn validate(&self) -> Result<(), BacktestError> {
+        if self.schema_version != 1 {
+            return Err(BacktestError::InvalidBars(format!(
+                "unsupported artifact schema {}",
+                self.schema_version
+            )));
+        }
+        validate_config(&self.config)?;
+        if self.config_digest != config_digest(&self.config)
+            || self.instrument_id != self.config.instrument_id
+            || self.symbol != self.config.symbol
+            || self.initial_cash_micros != self.config.initial_cash_micros
+        {
+            return Err(BacktestError::InvalidBars(
+                "artifact configuration evidence does not reconcile".to_owned(),
+            ));
+        }
+        if [
+            &self.strategy,
+            &self.instrument_id,
+            &self.symbol,
+            &self.source,
+            &self.quality,
+            &self.input_version,
+            &self.config_digest,
+            &self.data_digest,
+            &self.run_digest,
+            &self.artifact_digest,
+            &self.methodology,
+        ]
+        .iter()
+        .any(|value| value.trim().is_empty() || value.len() > 1_024)
+        {
+            return Err(BacktestError::InvalidBars(
+                "artifact metadata is empty or oversized".to_owned(),
+            ));
+        }
+        if self.bars == 0
+            || self.bars > MAX_BACKTEST_BARS
+            || self.equity.len() != self.bars
+            || self.decisions.len() > self.bars
+            || self.trades.len() > self.bars
+            || self.disclosures.len() > 32
+            || self.disclosures.iter().any(|value| value.len() > 1_024)
+            || self.equity.first().map(|point| point.timestamp) != Some(self.first_timestamp)
+            || self.equity.last().map(|point| point.timestamp) != Some(self.last_timestamp)
+            || self.first_timestamp >= self.last_timestamp
+        {
+            return Err(BacktestError::InvalidBars(
+                "artifact dimensions or chronology are invalid".to_owned(),
+            ));
+        }
+        if self.artifact_digest != artifact_digest(self) {
+            return Err(BacktestError::InvalidBars(
+                "artifact integrity digest does not match content".to_owned(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl fmt::Display for BacktestError {
@@ -274,8 +340,9 @@ pub fn run_backtest(
         &trades,
     );
 
-    Ok(BacktestArtifact {
+    let mut artifact = BacktestArtifact {
         schema_version: 1,
+        config: config.clone(),
         strategy: format!("SMA {}/{} NEXT-OPEN LONG-ONLY", config.fast_window, config.slow_window),
         instrument_id: config.instrument_id.clone(),
         symbol: config.symbol.clone(),
@@ -285,6 +352,7 @@ pub fn run_backtest(
         config_digest,
         data_digest,
         run_digest,
+        artifact_digest: String::new(),
         bars: bars.len(),
         first_timestamp: bars[0].timestamp,
         last_timestamp: bars[bars.len() - 1].timestamp,
@@ -304,7 +372,70 @@ pub fn run_backtest(
             "NO BORROW · LEVERAGE · PARTIAL FILLS · IMPACT · DIVIDENDS · TAXES".to_owned(),
             "RESEARCH REPLAY ONLY · NOT A PERFORMANCE PROMISE OR LIVE ORDER PATH".to_owned(),
         ],
-    })
+    };
+    artifact.artifact_digest = artifact_digest(&artifact);
+    artifact.validate()?;
+    Ok(artifact)
+}
+
+fn artifact_digest(artifact: &BacktestArtifact) -> String {
+    let mut hash = Fnv64::new();
+    hash.u64(u64::from(artifact.schema_version));
+    hash.text(&artifact.config.instrument_id);
+    hash.text(&artifact.config.symbol);
+    hash.usize(artifact.config.fast_window);
+    hash.usize(artifact.config.slow_window);
+    hash.u64(u64::from(artifact.config.execution_cost_bps));
+    hash.i64(artifact.config.commission_micros);
+    hash.i64(artifact.config.initial_cash_micros);
+    for value in [
+        &artifact.strategy,
+        &artifact.instrument_id,
+        &artifact.symbol,
+        &artifact.source,
+        &artifact.quality,
+        &artifact.input_version,
+        &artifact.config_digest,
+        &artifact.data_digest,
+        &artifact.run_digest,
+        &artifact.methodology,
+    ] {
+        hash.text(value);
+    }
+    hash.usize(artifact.bars);
+    hash.i64(artifact.first_timestamp);
+    hash.i64(artifact.last_timestamp);
+    hash.i64(artifact.initial_cash_micros);
+    hash.i64(artifact.final_equity_micros);
+    hash.i64(i64::from(artifact.total_return_bps));
+    hash.u64(u64::from(artifact.max_drawdown_bps));
+    hash.u64(u64::from(artifact.turnover_bps));
+    hash.u64(artifact.open_quantity);
+    for decision in &artifact.decisions {
+        hash.i64(decision.observed_at);
+        hash.i64(decision.executes_at);
+        hash.u64(u64::from(decision.target_long));
+    }
+    for trade in &artifact.trades {
+        hash.u64(match trade.side {
+            TradeSide::Buy => 1,
+            TradeSide::Sell => 2,
+        });
+        hash.i64(trade.signal_timestamp);
+        hash.i64(trade.execution_timestamp);
+        hash.u64(trade.quantity);
+        hash.i64(trade.reference_price_micros);
+        hash.i64(trade.execution_price_micros);
+        hash.i64(trade.commission_micros);
+    }
+    for point in &artifact.equity {
+        hash.i64(point.timestamp);
+        hash.i64(point.equity_micros);
+    }
+    for disclosure in &artifact.disclosures {
+        hash.text(disclosure);
+    }
+    hash.finish("ART")
 }
 
 fn validate_config(config: &BacktestConfig) -> Result<(), BacktestError> {
@@ -555,6 +686,20 @@ mod tests {
         let first = run_backtest(&config(), &input, "FIXTURE", "REPLAY", "V1").unwrap();
         let second = run_backtest(&config(), &input, "FIXTURE", "REPLAY", "V1").unwrap();
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn complete_artifact_digest_rejects_result_mutation() {
+        let input = bars(&[
+            10_000_000, 10_000_000, 11_000_000, 12_000_000, 13_000_000, 14_000_000,
+        ]);
+        let mut artifact = run_backtest(&config(), &input, "FIXTURE", "REPLAY", "V1").unwrap();
+        assert!(artifact.validate().is_ok());
+        artifact.equity[2].equity_micros += 1;
+        assert!(matches!(
+            artifact.validate(),
+            Err(BacktestError::InvalidBars(message)) if message.contains("integrity digest")
+        ));
     }
 
     #[test]

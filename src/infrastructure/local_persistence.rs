@@ -13,6 +13,10 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use super::alert_state::{decode_alert_rules, encode_alert_rules};
 use crate::features::alerts::{AlertRulesState, AlertStateError, AlertStateStore};
+use crate::features::backtesting::{
+    BacktestArtifact, BacktestArtifactError, BacktestArtifactStore, BacktestArtifactSummary,
+    MAX_SAVED_BACKTEST_ARTIFACTS,
+};
 use crate::features::launchpad::{
     LaunchpadState, LaunchpadStateError, LaunchpadStateStore, LaunchpadTile,
     LAUNCHPAD_SCHEMA_VERSION,
@@ -576,6 +580,97 @@ impl ScreenStateStore for LocalPersistence {
     }
 }
 
+impl BacktestArtifactStore for LocalPersistence {
+    fn save_artifact(&self, artifact: &BacktestArtifact) -> Result<bool, BacktestArtifactError> {
+        artifact
+            .validate()
+            .map_err(|error| BacktestArtifactError::Corrupt(error.to_string()))?;
+        let encoded = serde_json::to_vec(artifact)
+            .map_err(|error| BacktestArtifactError::Corrupt(error.to_string()))?;
+        if encoded.len() > MAX_DOCUMENT_BYTES {
+            return Err(BacktestArtifactError::TooLarge);
+        }
+        let feature = backtest_feature_key()?;
+        let id = backtest_artifact_document_id(&artifact.run_digest)?;
+        if let Some(existing) = FeatureDocumentRepository::load(self, &feature, &id)
+            .map_err(backtest_persistence_error)?
+        {
+            let stored = decode_backtest_artifact(&existing)?;
+            if stored == *artifact {
+                return Ok(false);
+            }
+            return Err(BacktestArtifactError::ImmutableConflict(
+                artifact.run_digest.clone(),
+            ));
+        }
+        let documents =
+            FeatureDocumentRepository::list(self, &feature).map_err(backtest_persistence_error)?;
+        if documents.len() >= MAX_SAVED_BACKTEST_ARTIFACTS {
+            return Err(BacktestArtifactError::Capacity);
+        }
+        let payload = serde_json::to_value(artifact)
+            .map_err(|error| BacktestArtifactError::Corrupt(error.to_string()))?;
+        let document =
+            FeatureDocument::new(feature, id, u64::from(artifact.schema_version), payload)
+                .map_err(|error| BacktestArtifactError::Corrupt(error.to_string()))?;
+        FeatureDocumentRepository::save(self, &document).map_err(backtest_persistence_error)?;
+        Ok(true)
+    }
+
+    fn load_artifact(&self, run_digest: &str) -> Result<BacktestArtifact, BacktestArtifactError> {
+        let feature = backtest_feature_key()?;
+        let id = backtest_artifact_document_id(run_digest)?;
+        let document = FeatureDocumentRepository::load(self, &feature, &id)
+            .map_err(backtest_persistence_error)?
+            .ok_or_else(|| BacktestArtifactError::NotFound(run_digest.to_owned()))?;
+        decode_backtest_artifact(&document)
+    }
+
+    fn list_artifacts(&self) -> Result<Vec<BacktestArtifactSummary>, BacktestArtifactError> {
+        let feature = backtest_feature_key()?;
+        let mut artifacts = FeatureDocumentRepository::list(self, &feature)
+            .map_err(backtest_persistence_error)?
+            .into_iter()
+            .map(|id| {
+                let document = FeatureDocumentRepository::load(self, &feature, &id)
+                    .map_err(backtest_persistence_error)?
+                    .ok_or_else(|| BacktestArtifactError::NotFound(id.as_str().to_owned()))?;
+                decode_backtest_artifact(&document)
+                    .map(|artifact| BacktestArtifactSummary::from(&artifact))
+            })
+            .collect::<Result<Vec<BacktestArtifactSummary>, BacktestArtifactError>>()?;
+        artifacts.sort_by(|left, right| {
+            right
+                .last_timestamp
+                .cmp(&left.last_timestamp)
+                .then_with(|| left.run_digest.cmp(&right.run_digest))
+        });
+        Ok(artifacts)
+    }
+
+    fn delete_artifact(&self, run_digest: &str) -> Result<bool, BacktestArtifactError> {
+        let feature = backtest_feature_key()?;
+        let id = backtest_artifact_document_id(run_digest)?;
+        FeatureDocumentRepository::delete(self, &feature, &id).map_err(backtest_persistence_error)
+    }
+}
+
+fn decode_backtest_artifact(
+    document: &FeatureDocument,
+) -> Result<BacktestArtifact, BacktestArtifactError> {
+    let artifact: BacktestArtifact = serde_json::from_value(document.payload().clone())
+        .map_err(|error| BacktestArtifactError::Corrupt(error.to_string()))?;
+    if document.revision() != u64::from(artifact.schema_version) {
+        return Err(BacktestArtifactError::Corrupt(
+            "document and artifact schema versions differ".to_owned(),
+        ));
+    }
+    artifact
+        .validate()
+        .map_err(|error| BacktestArtifactError::Corrupt(error.to_string()))?;
+    Ok(artifact)
+}
+
 struct UniverseHistoryAuditDetails {
     health: UniverseHistoryHealth,
     invalid_references: BTreeSet<u64>,
@@ -1020,6 +1115,26 @@ fn spreadsheet_document_id(id: &str) -> Result<DocumentId, SpreadsheetFileError>
 
 fn spreadsheet_persistence_error(error: PersistenceError) -> SpreadsheetFileError {
     SpreadsheetFileError::Io(error.to_string())
+}
+
+fn backtest_feature_key() -> Result<FeatureKey, BacktestArtifactError> {
+    FeatureKey::new("backtesting")
+        .map_err(|error| BacktestArtifactError::Corrupt(error.to_string()))
+}
+
+fn backtest_artifact_document_id(run_digest: &str) -> Result<DocumentId, BacktestArtifactError> {
+    DocumentId::new(run_digest.trim())
+        .map_err(|error| BacktestArtifactError::Corrupt(error.to_string()))
+}
+
+fn backtest_persistence_error(error: PersistenceError) -> BacktestArtifactError {
+    match error {
+        PersistenceError::UnsupportedVersion { schema, version } => {
+            BacktestArtifactError::Unsupported(format!("{schema} version {version}"))
+        }
+        PersistenceError::Corrupt(message) => BacktestArtifactError::Corrupt(message),
+        error => BacktestArtifactError::Io(error.to_string()),
+    }
 }
 
 fn portfolio_feature_key() -> Result<FeatureKey, PortfolioError> {
@@ -1478,6 +1593,104 @@ mod tests {
             BTreeMap::from([("density".to_owned(), "compact".to_owned())]),
         )
         .unwrap()
+    }
+
+    fn backtest_artifact() -> BacktestArtifact {
+        backtest_artifact_from("FIXTURE")
+    }
+
+    fn backtest_artifact_from(source: &str) -> BacktestArtifact {
+        use crate::features::backtesting::{run_backtest, BacktestBar, BacktestConfig};
+        let mut config = BacktestConfig::moving_average_cross("test:aapl", "AAPL");
+        config.fast_window = 2;
+        config.slow_window = 3;
+        let bars = (0..8)
+            .map(|index| {
+                let close = 10_000_000 + i64::from(index) * 100_000;
+                BacktestBar {
+                    timestamp: 1_700_000_000 + i64::from(index) * 86_400,
+                    open_micros: close,
+                    high_micros: close + 100_000,
+                    low_micros: close - 100_000,
+                    close_micros: close,
+                    volume: 1_000_000,
+                }
+            })
+            .collect::<Vec<_>>();
+        run_backtest(&config, &bars, source, "REPLAY", "V1").unwrap()
+    }
+
+    #[test]
+    fn immutable_backtest_artifacts_round_trip_idempotently_and_delete_explicitly() {
+        let directory = TestDirectory::new("backtest-artifacts");
+        let repository = LocalPersistence::new(&directory.0);
+        let artifact = backtest_artifact();
+
+        assert!(BacktestArtifactStore::save_artifact(&repository, &artifact).unwrap());
+        assert!(!BacktestArtifactStore::save_artifact(&repository, &artifact).unwrap());
+        assert_eq!(
+            BacktestArtifactStore::load_artifact(&repository, &artifact.run_digest).unwrap(),
+            artifact
+        );
+        let summaries = BacktestArtifactStore::list_artifacts(&repository).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].artifact_digest, artifact.artifact_digest);
+
+        let document = directory
+            .0
+            .join("documents/backtesting")
+            .join(format!("{}.json", artifact.run_digest));
+        assert!(document.is_file());
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(document).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        assert!(BacktestArtifactStore::delete_artifact(&repository, &artifact.run_digest).unwrap());
+        assert!(
+            !BacktestArtifactStore::delete_artifact(&repository, &artifact.run_digest).unwrap()
+        );
+    }
+
+    #[test]
+    fn persisted_backtest_mutation_fails_integrity_validation() {
+        let directory = TestDirectory::new("backtest-artifact-corruption");
+        let repository = LocalPersistence::new(&directory.0);
+        let artifact = backtest_artifact();
+        BacktestArtifactStore::save_artifact(&repository, &artifact).unwrap();
+
+        let feature = backtest_feature_key().unwrap();
+        let id = backtest_artifact_document_id(&artifact.run_digest).unwrap();
+        let existing = FeatureDocumentRepository::load(&repository, &feature, &id)
+            .unwrap()
+            .unwrap();
+        let mut payload = existing.payload().clone();
+        payload["final_equity_micros"] = serde_json::json!(1);
+        let corrupt = FeatureDocument::new(feature, id, 1, payload).unwrap();
+        FeatureDocumentRepository::save(&repository, &corrupt).unwrap();
+
+        assert!(matches!(
+            BacktestArtifactStore::load_artifact(&repository, &artifact.run_digest),
+            Err(BacktestArtifactError::Corrupt(message)) if message.contains("integrity digest")
+        ));
+    }
+
+    #[test]
+    fn same_run_digest_cannot_overwrite_different_valid_artifact_content() {
+        let directory = TestDirectory::new("backtest-artifact-conflict");
+        let repository = LocalPersistence::new(&directory.0);
+        let original = backtest_artifact();
+        let alternate = backtest_artifact_from("ALTERNATE-SOURCE");
+        assert!(alternate.validate().is_ok());
+        assert_eq!(alternate.run_digest, original.run_digest);
+        assert_ne!(alternate.artifact_digest, original.artifact_digest);
+
+        BacktestArtifactStore::save_artifact(&repository, &original).unwrap();
+        assert!(matches!(
+            BacktestArtifactStore::save_artifact(&repository, &alternate),
+            Err(BacktestArtifactError::ImmutableConflict(id)) if id == original.run_digest
+        ));
     }
 
     #[test]

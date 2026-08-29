@@ -26,8 +26,8 @@ use crate::{
 };
 
 use super::{
-    run_backtest, BacktestArtifact, BacktestConfig, BacktestHistoryQuery, BacktestHistoryRequest,
-    ID,
+    run_backtest, BacktestArtifact, BacktestArtifactFileStore, BacktestArtifactStore,
+    BacktestConfig, BacktestHistoryQuery, BacktestHistoryRequest, ID,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,10 +74,28 @@ pub struct BacktestWorkspace {
     request_sender: SyncSender<RunRequest>,
     result_receiver: Receiver<RunResult>,
     pending_intents: Vec<AppIntent>,
+    artifact_store: Option<Arc<dyn BacktestArtifactStore>>,
+    artifact_files: Option<Arc<dyn BacktestArtifactFileStore>>,
 }
 
 impl BacktestWorkspace {
     pub fn new(query: Arc<dyn BacktestHistoryQuery>) -> Self {
+        Self::configured(query, None, None)
+    }
+
+    pub fn persistent(
+        query: Arc<dyn BacktestHistoryQuery>,
+        artifact_store: Arc<dyn BacktestArtifactStore>,
+        artifact_files: Arc<dyn BacktestArtifactFileStore>,
+    ) -> Self {
+        Self::configured(query, Some(artifact_store), Some(artifact_files))
+    }
+
+    fn configured(
+        query: Arc<dyn BacktestHistoryQuery>,
+        artifact_store: Option<Arc<dyn BacktestArtifactStore>>,
+        artifact_files: Option<Arc<dyn BacktestArtifactFileStore>>,
+    ) -> Self {
         let (request_sender, worker_receiver) = sync_channel::<RunRequest>(1);
         let (worker_sender, result_receiver) = sync_channel::<RunResult>(1);
         std::thread::Builder::new()
@@ -136,9 +154,117 @@ impl BacktestWorkspace {
             request_sender,
             result_receiver,
             pending_intents: Vec::new(),
+            artifact_store,
+            artifact_files,
         };
         workspace.queue_run();
         workspace
+    }
+
+    fn save_artifact(&mut self) {
+        let Some(artifact) = self.artifact.as_ref() else {
+            self.status = "SAVE REQUIRES A COMPLETED BACKTEST".to_owned();
+            return;
+        };
+        let Some(store) = &self.artifact_store else {
+            self.status = "BACKTEST ARTIFACT PERSISTENCE IS DISABLED".to_owned();
+            return;
+        };
+        self.status = match store.save_artifact(artifact) {
+            Ok(true) => format!(
+                "SAVED IMMUTABLE RUN {} · {}",
+                artifact.run_digest, artifact.artifact_digest
+            ),
+            Ok(false) => format!("RUN {} ALREADY SAVED · IDENTICAL", artifact.run_digest),
+            Err(error) => format!("BACKTEST SAVE FAILED · {error}"),
+        };
+    }
+
+    fn list_artifacts(&mut self) {
+        let Some(store) = &self.artifact_store else {
+            self.status = "BACKTEST ARTIFACT PERSISTENCE IS DISABLED".to_owned();
+            return;
+        };
+        self.status = match store.list_artifacts() {
+            Ok(artifacts) if artifacts.is_empty() => "NO SAVED BACKTEST RUNS".to_owned(),
+            Ok(artifacts) => format!(
+                "SAVED RUNS · {}",
+                artifacts
+                    .iter()
+                    .map(|artifact| format!("{} {}", artifact.symbol, artifact.run_digest))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            ),
+            Err(error) => format!("BACKTEST LIST FAILED · {error}"),
+        };
+    }
+
+    fn open_artifact(&mut self, run_digest: Option<&String>) {
+        let Some(run_digest) = run_digest else {
+            self.status = "BACKTEST OPEN REQUIRES A RUN DIGEST".to_owned();
+            return;
+        };
+        let Some(store) = &self.artifact_store else {
+            self.status = "BACKTEST ARTIFACT PERSISTENCE IS DISABLED".to_owned();
+            return;
+        };
+        match store.load_artifact(run_digest) {
+            Ok(artifact) => {
+                self.config = artifact.config.clone();
+                self.selected_trade = 0;
+                self.status = format!(
+                    "OPENED VERIFIED RUN {} · {}",
+                    artifact.run_digest, artifact.artifact_digest
+                );
+                self.artifact = Some(artifact);
+            }
+            Err(error) => self.status = format!("BACKTEST OPEN FAILED · {error}"),
+        }
+    }
+
+    fn delete_artifact(&mut self, run_digest: Option<&String>) {
+        let Some(run_digest) = run_digest else {
+            self.status = "BACKTEST DELETE REQUIRES A RUN DIGEST".to_owned();
+            return;
+        };
+        let Some(store) = &self.artifact_store else {
+            self.status = "BACKTEST ARTIFACT PERSISTENCE IS DISABLED".to_owned();
+            return;
+        };
+        self.status = match store.delete_artifact(run_digest) {
+            Ok(true) => format!("DELETED SAVED RUN {run_digest}"),
+            Ok(false) => format!("SAVED RUN {run_digest} WAS NOT FOUND"),
+            Err(error) => format!("BACKTEST DELETE FAILED · {error}"),
+        };
+    }
+
+    fn export_artifact(&mut self, location: Option<&String>, overwrite: bool) {
+        let Some(location) = location else {
+            self.status = "BACKTEST EXPORT REQUIRES A JSON PATH".to_owned();
+            return;
+        };
+        let Some(artifact) = self.artifact.as_ref() else {
+            self.status = "EXPORT REQUIRES A COMPLETED BACKTEST".to_owned();
+            return;
+        };
+        let Some(files) = &self.artifact_files else {
+            self.status = "BACKTEST ARTIFACT EXPORT IS DISABLED".to_owned();
+            return;
+        };
+        let document = match serde_json::to_string_pretty(artifact) {
+            Ok(document) => format!("{document}\n"),
+            Err(error) => {
+                self.status = format!("BACKTEST EXPORT FAILED · {error}");
+                return;
+            }
+        };
+        self.status = match files.write_artifact(location, &document, overwrite) {
+            Ok(()) => format!(
+                "EXPORTED VERIFIED RUN {} · {}",
+                artifact.run_digest, artifact.artifact_digest
+            ),
+            Err(error) => format!("BACKTEST EXPORT FAILED · {error}"),
+        };
     }
 
     fn queue_run(&mut self) {
@@ -303,6 +429,35 @@ impl Workspace for BacktestWorkspace {
     }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
+        if let Some(operation) = invocation.args.first() {
+            match operation.to_ascii_uppercase().as_str() {
+                "SAVE" => {
+                    self.save_artifact();
+                    return true;
+                }
+                "LIST" => {
+                    self.list_artifacts();
+                    return true;
+                }
+                "OPEN" | "LOAD" => {
+                    self.open_artifact(invocation.args.get(1));
+                    return true;
+                }
+                "DELETE" | "DROP" => {
+                    self.delete_artifact(invocation.args.get(1));
+                    return true;
+                }
+                "EXPORT" => {
+                    self.export_artifact(invocation.args.get(1), false);
+                    return true;
+                }
+                "EXPORT!" => {
+                    self.export_artifact(invocation.args.get(1), true);
+                    return true;
+                }
+                _ => {}
+            }
+        }
         match self.parse_command(invocation) {
             Ok(config) => {
                 self.config = config;
@@ -790,10 +945,11 @@ mod tests {
     use super::*;
     use crate::app::Workspace;
     use crate::features::backtesting::{
-        BacktestBar, BacktestHistoryError, BacktestHistorySnapshot,
+        BacktestArtifactError, BacktestArtifactSummary, BacktestBar, BacktestHistoryError,
+        BacktestHistorySnapshot,
     };
     use ratatui::{backend::TestBackend, Terminal};
-    use std::{thread, time::Duration};
+    use std::{collections::HashMap, sync::Mutex, thread, time::Duration};
 
     struct Fixture;
     impl BacktestHistoryQuery for Fixture {
@@ -827,8 +983,89 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct MemoryArtifacts(Mutex<HashMap<String, BacktestArtifact>>);
+
+    impl BacktestArtifactStore for MemoryArtifacts {
+        fn save_artifact(
+            &self,
+            artifact: &BacktestArtifact,
+        ) -> Result<bool, BacktestArtifactError> {
+            let mut artifacts = self.0.lock().unwrap();
+            match artifacts.get(&artifact.run_digest) {
+                Some(existing) if existing == artifact => Ok(false),
+                Some(_) => Err(BacktestArtifactError::ImmutableConflict(
+                    artifact.run_digest.clone(),
+                )),
+                None => {
+                    artifacts.insert(artifact.run_digest.clone(), artifact.clone());
+                    Ok(true)
+                }
+            }
+        }
+
+        fn load_artifact(
+            &self,
+            run_digest: &str,
+        ) -> Result<BacktestArtifact, BacktestArtifactError> {
+            self.0
+                .lock()
+                .unwrap()
+                .get(run_digest)
+                .cloned()
+                .ok_or_else(|| BacktestArtifactError::NotFound(run_digest.to_owned()))
+        }
+
+        fn list_artifacts(&self) -> Result<Vec<BacktestArtifactSummary>, BacktestArtifactError> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .values()
+                .map(BacktestArtifactSummary::from)
+                .collect())
+        }
+
+        fn delete_artifact(&self, run_digest: &str) -> Result<bool, BacktestArtifactError> {
+            Ok(self.0.lock().unwrap().remove(run_digest).is_some())
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryFiles(Mutex<Vec<(String, String, bool)>>);
+
+    impl BacktestArtifactFileStore for MemoryFiles {
+        fn write_artifact(
+            &self,
+            location: &str,
+            document: &str,
+            overwrite: bool,
+        ) -> Result<(), BacktestArtifactError> {
+            self.0
+                .lock()
+                .unwrap()
+                .push((location.to_owned(), document.to_owned(), overwrite));
+            Ok(())
+        }
+    }
+
     fn ready_workspace() -> BacktestWorkspace {
         let mut workspace = BacktestWorkspace::new(Arc::new(Fixture));
+        for _ in 0..100 {
+            workspace.poll_intents();
+            if workspace.artifact.is_some() {
+                return workspace;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        panic!("fixture backtest did not complete")
+    }
+
+    fn ready_persistent_workspace(
+        artifacts: Arc<MemoryArtifacts>,
+        files: Arc<MemoryFiles>,
+    ) -> BacktestWorkspace {
+        let mut workspace = BacktestWorkspace::persistent(Arc::new(Fixture), artifacts, files);
         for _ in 0..100 {
             workspace.poll_intents();
             if workspace.artifact.is_some() {
@@ -877,6 +1114,56 @@ mod tests {
         assert_eq!(workspace.artifact.as_ref().unwrap().run_digest, digest);
         assert_eq!(workspace.config, config);
         assert!(workspace.status.contains("COMMAND ERROR"));
+    }
+
+    #[test]
+    fn commands_save_reopen_list_export_and_delete_verified_artifacts() {
+        let artifacts = Arc::new(MemoryArtifacts::default());
+        let files = Arc::new(MemoryFiles::default());
+        let mut workspace = ready_persistent_workspace(artifacts.clone(), files.clone());
+        let expected = workspace.artifact.clone().unwrap();
+
+        workspace.handle_command(&CommandInvocation {
+            function: "BACKTEST".to_owned(),
+            args: vec!["SAVE".to_owned()],
+        });
+        assert!(workspace.status.contains("SAVED IMMUTABLE RUN"));
+        workspace.handle_command(&CommandInvocation {
+            function: "BACKTEST".to_owned(),
+            args: vec!["SAVE".to_owned()],
+        });
+        assert!(workspace.status.contains("ALREADY SAVED · IDENTICAL"));
+
+        workspace.artifact = None;
+        workspace.handle_command(&CommandInvocation {
+            function: "BACKTEST".to_owned(),
+            args: vec!["OPEN".to_owned(), expected.run_digest.clone()],
+        });
+        assert_eq!(workspace.artifact.as_ref(), Some(&expected));
+        assert!(workspace.status.contains("OPENED VERIFIED RUN"));
+
+        workspace.handle_command(&CommandInvocation {
+            function: "BACKTEST".to_owned(),
+            args: vec!["EXPORT".to_owned(), "run.json".to_owned()],
+        });
+        let exports = files.0.lock().unwrap();
+        assert_eq!(exports.len(), 1);
+        assert_eq!(exports[0].0, "run.json");
+        assert!(!exports[0].2);
+        let decoded: BacktestArtifact = serde_json::from_str(&exports[0].1).unwrap();
+        assert_eq!(decoded, expected);
+        drop(exports);
+
+        workspace.handle_command(&CommandInvocation {
+            function: "BACKTEST".to_owned(),
+            args: vec!["LIST".to_owned()],
+        });
+        assert!(workspace.status.contains(&expected.run_digest));
+        workspace.handle_command(&CommandInvocation {
+            function: "BACKTEST".to_owned(),
+            args: vec!["DELETE".to_owned(), expected.run_digest.clone()],
+        });
+        assert!(artifacts.0.lock().unwrap().is_empty());
     }
 
     #[test]

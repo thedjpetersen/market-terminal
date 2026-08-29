@@ -7,7 +7,9 @@ pub use domain::{
     BacktestTrade, TradeSide, DEFAULT_INITIAL_CASH_MICROS,
 };
 pub use port::{
-    BacktestHistoryError, BacktestHistoryQuery, BacktestHistoryRequest, BacktestHistorySnapshot,
+    BacktestArtifactError, BacktestArtifactFileStore, BacktestArtifactStore,
+    BacktestArtifactSummary, BacktestHistoryError, BacktestHistoryQuery, BacktestHistoryRequest,
+    BacktestHistorySnapshot, MAX_BACKTEST_EXPORT_BYTES, MAX_SAVED_BACKTEST_ARTIFACTS,
 };
 pub use workspace::BacktestWorkspace;
 

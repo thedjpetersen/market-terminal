@@ -1021,10 +1021,16 @@ Match the reference's research lifecycle with stronger reproducibility controls.
     digests. Backtesting consumes history through its own port and a
     composition-root Chart translator, runs asynchronously with stale-result
     rejection, restores typed configuration, and has no broker or order intent.
+    Explicitly saved runs now enter a bounded 64-item immutable catalog keyed by
+    run digest. Identical saves are idempotent, conflicting content fails closed,
+    and every load revalidates a second digest over configuration, metrics,
+    decisions, fills, equity, methodology, and disclosures. Deterministic JSON
+    export preserves the complete verified artifact with private permissions,
+    refusal-by-default overwrite, and explicit atomic replacement.
   - **Still required:** point-in-time universe membership, session calendars,
     corporate actions, shorts/borrow/leverage, order lifecycle, partial fills,
     spread/slippage/latency/impact decomposition, seeded stochastic execution,
-    persistence, export, and paper promotion.
+    paper promotion, plus input-bar retention when exact offline rerun is required.
 - Ship representative trend, mean-reversion, breakout, momentum, RSI/MACD/
   Bollinger/VWAP and allocation templates as tested examples, not performance
   promises. Every template identifies assumptions and has a no-leakage test.

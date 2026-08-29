@@ -28,7 +28,11 @@ requires the returned canonical identity to match, validates every OHLC value,
 and converts prices to integer millionths before research evaluation. It retains
 the exact source and quality labels and derives a content-addressed input version;
 it does not replace missing history, join providers, infer corporate actions, or
-send any order.
+send any order. Explicitly saved and exported artifacts retain those labels and
+the input version but do not persist the provider bars themselves. Opening or
+exporting a saved run performs no provider call and first verifies a second
+digest over the complete configuration, result, audit, equity, methodology, and
+disclosure content.
 
 Options currently consumes no provider data. Its spot, strike, calendar days,
 annual volatility, continuously compounded rates/dividends, right, and multiplier

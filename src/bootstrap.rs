@@ -5,7 +5,7 @@ use crate::{
     features::{
         alerts::{AlertStateStore, AlertsQuery, AlertsWorkspace},
         assistant::{AssistantContextQuery, AssistantGateway, AssistantWorkspace},
-        backtesting::BacktestWorkspace,
+        backtesting::{BacktestArtifactFileStore, BacktestArtifactStore, BacktestWorkspace},
         charting::{ChartHistoryQuery, ChartInstrument, ChartingWorkspace},
         chat::{ChatGateway, ChatWorkspace},
         fixed_income::FixedIncomeWorkspace,
@@ -30,9 +30,10 @@ use crate::{
         DemoInstrumentSearch, DemoMarketDataReplay, DemoSpreadsheetMarketData,
         DemoWatchlistCatalog, FinnhubMarketData, IrcChatGateway, LiveAlertsQuery, LiveMarketsQuery,
         LiveNewsFeed, LiveOverviewQuery, LiveSecurityQuery, LiveSpreadsheetMarketData,
-        LocalLaunchpadFiles, LocalPersistence, LocalSpreadsheetFiles, MarketScreeningUniverseQuery,
-        OpenRouterConfig, OpenRouterGateway, PortfolioAssistantContextQuery, PortfolioRiskQuery,
-        SecInstrumentSearch, SystemNewsArticleOpener, YahooMarketData,
+        LocalBacktestArtifactFiles, LocalLaunchpadFiles, LocalPersistence, LocalSpreadsheetFiles,
+        MarketScreeningUniverseQuery, OpenRouterConfig, OpenRouterGateway,
+        PortfolioAssistantContextQuery, PortfolioRiskQuery, SecInstrumentSearch,
+        SystemNewsArticleOpener, YahooMarketData,
     },
 };
 
@@ -68,6 +69,8 @@ pub fn demo_app() -> App {
         launchpad_state_store: None,
         screen_state_store: None,
         screen_history_store: None,
+        backtest_artifact_store: None,
+        backtest_artifact_files: None,
         snapshot_refresh_interval: Duration::from_secs(60),
         runtime_settings: RuntimeSettingsSummary::demo(),
     })
@@ -97,6 +100,8 @@ struct AppProviders {
     launchpad_state_store: Option<Arc<dyn LaunchpadStateStore>>,
     screen_state_store: Option<Arc<dyn ScreenStateStore>>,
     screen_history_store: Option<Arc<dyn UniverseHistoryStore>>,
+    backtest_artifact_store: Option<Arc<dyn BacktestArtifactStore>>,
+    backtest_artifact_files: Option<Arc<dyn BacktestArtifactFileStore>>,
     snapshot_refresh_interval: Duration,
     runtime_settings: RuntimeSettingsSummary,
 }
@@ -126,6 +131,8 @@ fn build_app(providers: AppProviders) -> App {
         launchpad_state_store,
         screen_state_store,
         screen_history_store,
+        backtest_artifact_store,
+        backtest_artifact_files,
         snapshot_refresh_interval,
         runtime_settings,
     } = providers;
@@ -218,7 +225,12 @@ fn build_app(providers: AppProviders) -> App {
             (Some(store), None) => ScreeningWorkspace::persistent(screening_query, store),
             (None, _) => ScreeningWorkspace::new(screening_query),
         }),
-        Box::new(BacktestWorkspace::new(backtest_history)),
+        Box::new(match (backtest_artifact_store, backtest_artifact_files) {
+            (Some(store), Some(files)) => {
+                BacktestWorkspace::persistent(backtest_history, store, files)
+            }
+            _ => BacktestWorkspace::new(backtest_history),
+        }),
         Box::new(ChartingWorkspace::with_primary(
             chart_history,
             chart_primary,
@@ -322,6 +334,8 @@ pub fn persistent_app() -> App {
         launchpad_state_store: Some(repository.clone()),
         screen_state_store: Some(repository.clone()),
         screen_history_store: Some(repository.clone()),
+        backtest_artifact_store: Some(repository.clone()),
+        backtest_artifact_files: Some(Arc::new(LocalBacktestArtifactFiles)),
         snapshot_refresh_interval,
         runtime_settings,
     })

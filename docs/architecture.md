@@ -169,7 +169,14 @@ bootstrap ──▶ app kernel
   time boundary visible in both types and terminal output. A capacity-one worker
   coalesces history and calculation work away from input/rendering and rejects
   stale generations; failures retain a clearly labeled last valid artifact.
-  Saved views keep bounded research configuration, never bars or results. See
+  Saved views keep bounded research configuration, never bars or results. An
+  independent Backtesting-owned artifact port stores explicitly saved runs by
+  deterministic run digest with a 64-document cap, idempotent identical saves,
+  immutable-conflict rejection, and full-content integrity validation on load.
+  The local adapter uses crash-safe private feature documents. A separate file
+  port emits deterministic verified JSON, refuses implicit overwrite, and uses
+  atomic replacement only for the explicit overwrite command. Neither boundary
+  can fetch data, rerun a strategy, promote an order, or mutate a saved run. See
   `docs/backtesting.md`.
   Options is a separate P5 bounded context with no provider dependency in its
   first slice. Its pure domain validates typed contract/model inputs, evaluates
