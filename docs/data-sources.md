@@ -15,6 +15,13 @@ events, or substitute gallery values. Ranked items are deterministic rules over
 missing, partial, loading, unavailable, and triggered states. Launchpad and
 Alert documents are sampled at startup so rendering performs no filesystem I/O.
 
+Screening is another consumer-owned projection. Its current `core` universe is
+Watchlist-owned membership resolved into canonical instrument IDs, then sampled
+through one Market Data quote batch. The adapter retains provider attribution,
+observation time, quality, missing values, and a deterministic input version;
+it does not forward-fill fields, join observations from different calls, or
+persist provider data.
+
 ## Local shell, navigation, and presentation state
 
 - **Surfaces:** command routing and Help, workspace/panel focus, follow hints,
@@ -60,6 +67,14 @@ Alert documents are sampled at startup so rendering performs no filesystem I/O.
   pending IDs until the asynchronous register arrives, then rematches by rule ID.
   Missing or malformed IDs degrade independently without changing durable rule
   content.
+  Screening view fields include the saved screen ID plus optional selected and
+  top-visible canonical instrument IDs. Custom screen definitions are stored in
+  a separate private `screening/saved_screens` feature document with schema,
+  revision, predicate, sort, limit, and universe identity. Saved views and
+  screen definitions exclude universe members, quote values, provider
+  timestamps, evaluation results, exclusions, and rank evidence; those are
+  recomputed from the current point-in-time snapshot. Missing definitions or row
+  identities degrade independently.
   Spreadsheet view fields include the local workbook ID, worksheet name and
   ordinal fallback, selected cell, and viewport origin; cell content remains in
   the separately versioned workbook document. Saved views do not persist
@@ -78,6 +93,29 @@ Alert documents are sampled at startup so rendering performs no filesystem I/O.
   routing behavior is deterministic under the checked-in fixtures. No command
   text, focus history, terminal frame, ranking result, or user interaction is
   transmitted by these capabilities.
+
+## Screening universe projection
+
+- **Surface:** `SCREEN` built-ins and saved definitions, explainable result rows,
+  Security/Spreadsheet row routing, and Monitor universe routing.
+- **Membership:** the requested Watchlist definition supplies at most 2,000
+  unique canonical instrument IDs. `core` and `default` resolve to the configured
+  default Watchlist when no exact named definition exists.
+- **Observations:** one Market Data batch supplies last price, change percent,
+  volume, bid/ask, day low/high, currency, quality, provider, and as-of when
+  available. Spread and day-range percentages are derived only from fields in
+  that same observation.
+- **Version/provenance:** an immutable snapshot version hashes universe ID,
+  observation time, provider set, canonical identity, field availability,
+  values, and quality. Displayed results retain this version, as-of, source,
+  coverage, exclusions, and clause-level actual values.
+- **Null/failure policy:** missing predicate or sort fields fail closed. Provider
+  denial, unavailable data, unknown universes, duplicate members, and oversized
+  inputs remain typed failures. A refresh failure keeps the last valid result
+  with a visible failure label rather than substituting gallery data.
+- **Retention:** observations, universes, results, and rank evidence are
+  in-memory only. Only validated custom definitions and saved-view identities
+  are persisted; credentials and provider responses are never included.
 
 ## Yahoo Finance chart
 

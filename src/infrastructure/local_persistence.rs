@@ -21,6 +21,7 @@ use crate::features::persistence::{
     SessionState, SessionStateRepository, MAX_DOCUMENT_BYTES,
 };
 use crate::features::portfolio::{PortfolioError, PortfolioImportStateStore};
+use crate::features::screening::{ScreenCatalogState, ScreenStateError, ScreenStateStore};
 use crate::features::spreadsheet::{
     SpreadsheetFileError, SpreadsheetWorkbookStore, StoredWorkbook,
 };
@@ -518,6 +519,45 @@ impl AlertStateStore for LocalPersistence {
     }
 }
 
+impl ScreenStateStore for LocalPersistence {
+    fn load_screens(&self) -> Result<Option<ScreenCatalogState>, ScreenStateError> {
+        let feature = screening_feature_key()?;
+        let id = screening_catalog_document_id()?;
+        FeatureDocumentRepository::load(self, &feature, &id)
+            .map_err(screening_persistence_error)?
+            .map(|document| {
+                let state: ScreenCatalogState = serde_json::from_value(document.payload().clone())
+                    .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+                state
+                    .validate()
+                    .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+                if state.revision != document.revision() {
+                    return Err(ScreenStateError::Corrupt(
+                        "document and screen catalog revisions do not match".to_owned(),
+                    ));
+                }
+                Ok(state)
+            })
+            .transpose()
+    }
+
+    fn save_screens(&self, state: &ScreenCatalogState) -> Result<(), ScreenStateError> {
+        state
+            .validate()
+            .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+        let payload = serde_json::to_value(state)
+            .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+        let document = FeatureDocument::new(
+            screening_feature_key()?,
+            screening_catalog_document_id()?,
+            state.revision,
+            payload,
+        )
+        .map_err(|error| ScreenStateError::Corrupt(error.to_string()))?;
+        FeatureDocumentRepository::save(self, &document).map_err(screening_persistence_error)
+    }
+}
+
 impl LaunchpadStateStore for LocalPersistence {
     fn load_launchpad(&self) -> Result<Option<LaunchpadState>, LaunchpadStateError> {
         let feature = launchpad_feature_key()?;
@@ -701,6 +741,24 @@ fn alerts_persistence_error(error: PersistenceError) -> AlertStateError {
             AlertStateError::Unsupported(format!("{schema} version {version}"))
         }
         error => AlertStateError::Io(error.to_string()),
+    }
+}
+
+fn screening_feature_key() -> Result<FeatureKey, ScreenStateError> {
+    FeatureKey::new("screening").map_err(|error| ScreenStateError::Corrupt(error.to_string()))
+}
+
+fn screening_catalog_document_id() -> Result<DocumentId, ScreenStateError> {
+    DocumentId::new("saved_screens").map_err(|error| ScreenStateError::Corrupt(error.to_string()))
+}
+
+fn screening_persistence_error(error: PersistenceError) -> ScreenStateError {
+    match error {
+        PersistenceError::Corrupt(message) => ScreenStateError::Corrupt(message),
+        PersistenceError::UnsupportedVersion { schema, version } => {
+            ScreenStateError::Unsupported(format!("{schema} version {version}"))
+        }
+        error => ScreenStateError::Io(error.to_string()),
     }
 }
 
@@ -1105,6 +1163,55 @@ mod tests {
                 &DocumentId::new("tiles").unwrap()
             )
             .exists());
+    }
+
+    #[test]
+    fn saved_screens_round_trip_through_private_feature_state() {
+        use crate::features::screening::{
+            Comparison, ScreenClause, ScreenDefinition, ScreenField, ScreenSortDirection,
+        };
+
+        let directory = TestDirectory::new("screening");
+        let repository = LocalPersistence::new(&directory.0);
+        let definition = ScreenDefinition::new(
+            "liquid-gainers",
+            "LIQUID GAINERS",
+            "core",
+            vec![
+                ScreenClause::new(ScreenField::ChangePercent, Comparison::GreaterThan, 1.0)
+                    .unwrap(),
+                ScreenClause::new(
+                    ScreenField::Volume,
+                    Comparison::GreaterThanOrEqual,
+                    1_000_000.0,
+                )
+                .unwrap(),
+            ],
+            ScreenField::ChangePercent,
+            ScreenSortDirection::Descending,
+            25,
+            false,
+        )
+        .unwrap();
+        let expected = ScreenCatalogState::new(7, vec![definition]).unwrap();
+
+        ScreenStateStore::save_screens(&repository, &expected).unwrap();
+
+        assert_eq!(
+            ScreenStateStore::load_screens(&repository).unwrap(),
+            Some(expected)
+        );
+        let document = directory
+            .0
+            .join("documents")
+            .join("screening")
+            .join("saved_screens.json");
+        assert!(document.is_file());
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(document).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]

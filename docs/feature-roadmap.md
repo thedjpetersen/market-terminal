@@ -271,8 +271,25 @@ move to its own crate later without changing its public vocabulary.
   including a pending identity when restore precedes asynchronous rule loading,
   over a real shared viewport. Typed capture adoption is complete across every
   current workspace; unified discovery remains.
-- **Next:** execute the P1 unified-discovery package before the remaining Stage 2 risk,
-  screening, and alert-rule families. Provider availability
+- **Complete:** first cross-cutting P2/P3 Screening slice. A new bounded context
+  consumes a composition-root projection of Watchlist membership and one Market
+  Data quote batch as a capped, immutable point-in-time universe with canonical
+  identities, deterministic version, as-of, provider set, field quality, and
+  explicit coverage. Its closed field catalog and one-to-eight typed `AND`
+  clauses fail closed on missing predicate or sort values; stable sorting uses
+  canonical identity as the final tie-breaker and retains clause-level actual,
+  pass/fail, exclusion, coverage, and truncation evidence. Built-in and up to 64
+  crash-safe custom definitions run asynchronously in the new `SCREEN`
+  workspace with last-valid-result failure behavior, bounded scrolling,
+  identity-checked pointer/spatial/follow actions, Security and Spreadsheet row
+  promotion, Monitor universe routing, and saved-view recovery by stable screen
+  and row identities. Deterministic engine, adapter, persistence, stale-action,
+  restart-state, three-size semantic, and 2,000-member performance evidence lock
+  the slice. Full formula grouping/unit inference, historical universe storage,
+  factors, heatmaps, and whole-result promotion remain.
+- **Next:** finish P1 unified discovery while deepening P2/P3 universe storage,
+  hotlists/breadth/heatmaps, Screening expressions and result promotion, factor
+  research, and compound alert families. Provider availability
   extends the deployment surface; deterministic fixtures remain the acceptance
   baseline and opt-in live contracts verify real provider behavior.
 
@@ -358,7 +375,7 @@ continues.
 | DOM, time and sales, hotlists, heatmaps | Missing | Listed-instrument monitor and quote stream only | Add entitlement-aware depth/tape models, movers, breadth, sector/market heatmaps, and replay fixtures without synthesizing unavailable order-book data. |
 | Multi-panel technical chart workstation | Partial | OHLC/line charts, comparisons, volume, SMA/EMA, RSI, periods, cursor | Add up to nine linked panes, multi-timeframe layouts, indicator registry, annotations, volume profile, historical replay, alternate chart types, and image/data export. |
 | Security Hub and equity research | Partial | Profile, financials, filings, SEC Form 4, news, basic peer/estimate states | Add statements/trends, estimates/revisions, earnings, ESG, corporate actions, dividends, shareholding history, richer peers, and multi-market identity. |
-| Advanced screener and factor dashboard | Missing | Search and spreadsheet formulas are reusable foundations | Add versioned universes, typed filters/formulas, stable ranking, factor composites, why-ranked evidence, saved screens, and promotion to Monitor/Sheet. |
+| Advanced screener and factor dashboard | Partial | Production `SCREEN` workspace over versioned point-in-time Watchlist/Market Data universes, closed typed `AND` predicates, fail-closed nulls, deterministic ranking/ties, coverage/exclusion/why-ranked evidence, crash-safe saved definitions, saved views, and Security/Monitor/Spreadsheet routing | Add nested `AND`/`OR` formula AST with unit inference, historical universe storage/replay, whole-result atomic promotion, fundamentals and factors, neutralized composites, and factor history/IC/turnover. |
 | Tool-using AI research | Partial | Codex/OpenRouter chat, validated UI intents, bounded article reading | Add screen-aware read tools, research retrieval, cited artifacts, provider routing, debate, bounded strategy research, and local-model fallback. |
 | Futures and options suite | Missing | Stage 3 domain placeholder only | Add chains, Greeks/IV, OI/PCR/flow, strategies, futures basis/curve, expiry calendar, scenario tools, and delayed/entitled data states. |
 | Portfolio accounting and attribution | Partial | Exact positions, cash/activity, valuations/TWR, lots, realized gains, fills, single/multi-period attribution | Add portfolio CRUD/transaction truth, allocation views, benchmark history, dividends, multi-portfolio comparison, and rebalance evidence. |
@@ -686,6 +703,16 @@ data foundation for screening, derivatives, risk, and backtesting.
 - Add hotlists, breadth, movers, unusual volume, sector/market heatmaps, and
   normalized split comparison over versioned universes. Results must expose
   universe time, coverage, exclusions, and stable ranking.
+  - **Delivered foundation:** Screening's `core` point-in-time universe projects
+    Watchlist membership and one Market Data batch into a capped consumer-owned
+    snapshot with canonical member identity, deterministic version, as-of,
+    provider/quality fields, coverage and exclusions. The built-in momentum,
+    liquidity, and tight-spread rankings are deterministic under equal values and
+    survive saved-view restart by identity.
+  - **Still required:** durable historical universe manifests, repair/audit,
+    broader classifications and field coverage, breadth/advance-decline, unusual
+    volume, dedicated hotlists, sector/market heatmaps, normalized split
+    comparison, and direct Chart promotion.
 - Evolve Chart into a one-to-nine-pane workstation with linked crosshairs,
   canonical selection, independent/synchronized periods, multi-timeframe layouts,
   pane focus, saved layouts, and graceful narrow-terminal tabbing.
@@ -721,6 +748,22 @@ loop before adding more asset classes.
   ranks, point-in-time inputs, saved presets, and explainable rejection/rank
   evidence. Results route to Security/Chart and promote atomically to Monitor or
   a typed Spreadsheet range.
+  - **Delivered foundation:** the new bounded context owns a closed numeric field
+    catalog, typed comparisons, one-to-eight `AND` predicates, an explicit
+    fail-closed null policy, deterministic sort/rank/truncation, clause-level
+    accepted and rejected evidence, three protected built-ins, 64 bounded custom
+    definitions, schema/revision validation, private crash-safe persistence,
+    capacity-one evaluation and persistence workers, generation-based stale-run
+    rejection, and last-valid-result refresh failure behavior. `SCREEN` renders
+    input version/as-of/source/coverage and selected-row reasons, shares geometry
+    across mouse/spatial/follow routing, revalidates row identity, opens Security,
+    inserts the selected symbol into Spreadsheet, routes its universe to Monitor,
+    and restores screen/selection/viewport identities from saved views.
+  - **Still required:** nested `AND`/`OR`/`NOT` expression trees, dimension and
+    unit inference beyond the closed field catalog, historical point-in-time
+    universe storage and replay, fundamental/event/factor fields, direct Chart
+    routing, transactional whole-result Monitor and typed Spreadsheet-range
+    promotion, result-set persistence/export, and richer definition management.
 - Add factor research for value, momentum, quality, size, and low-volatility with
   winsorization, sector neutralization, z-scores, weights, coverage, exposure,
   return history, information coefficient, turnover, and why-ranked components.

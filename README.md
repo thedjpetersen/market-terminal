@@ -40,12 +40,15 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 - Chart — comparative performance, zero baselines, inspection cursor, market
   profile statistics, half-block OHLC candlesticks, volume histograms, SMA/EMA
   overlays, and Wilder RSI
+- Screening — versioned point-in-time universes, typed multi-clause filters,
+  deterministic ranking, explicit null/coverage handling, saved definitions,
+  and explainable row evidence
 - Chat — TLS-capable IRC market rooms with bounded queues, background reconnect,
   participant presence, notices, actions, and an inline composer
 - Alerts — idempotent, debounced local rules with acknowledgement and audit state
 
 Use the labeled navigation keys, click a visible workspace tab, or type a
-function such as `MON`, `CHART`, `SHEET`, `CHAT`, `FIND`, or `ASK` into the
+function such as `MON`, `CHART`, `SCREEN`, `SHEET`, `CHAT`, `FIND`, or `ASK` into the
 command bar. Exact functions always take precedence; otherwise the configured
 AI command plane infers one command through a bounded, background request.
 Cashtags such as `$META`, company names, and requests such as `show me Meta`
@@ -94,6 +97,28 @@ and refresh. The three-row control strip is packed responsively without partial
 controls; its render rectangles are also its mouse targets, arrow-focus targets,
 and `F`-hint anchors. The selected period restores focus, unavailable inspection
 directions are excluded, and every activation rechecks current chart state.
+
+`SCREEN` opens a point-in-time ranked universe. Built-in `momentum`,
+`liquidity`, and `tight-spread` definitions are immutable; custom definitions
+are versioned and persisted privately:
+
+```text
+SCREEN momentum
+SCREEN SAVE liquid-gainers core change_pct >= 1 AND volume >= 1000000 SORT change_pct DESC LIMIT 25
+SCREEN LIST
+SCREEN DELETE liquid-gainers
+```
+
+Predicates are typed over last price, percent change, volume, bid/ask spread,
+and day-range percent. Missing fields fail closed, ties resolve by canonical
+instrument identity, and the header reports input version, as-of, source,
+coverage, matches, and exclusions. The detail pane shows actual values and
+pass/fail evidence for every clause. Use arrows or `j`/`k` to select rows,
+`Enter`/`s` for Security, `a` for Spreadsheet insertion, `m` for the source
+Monitor universe, `[`/`]` to cycle definitions, and `r` to refresh. Mouse,
+spatial focus, and `F` hints use those same identity-checked actions. See
+[the Screening contract](docs/screening.md) for limits, persistence, and the
+remaining P2/P3 scope.
 
 `DESK` (aliases `SPLIT` and `DASHBOARD`) opens the combined workspace adapted
 from `alphai-tui`. Press `Tab`/`Shift+Tab` or `1`/`2`/`3` to focus Monitor,
@@ -193,7 +218,10 @@ hints, and a saved identity can wait safely for the asynchronous rule register
 to arrive. Thresholds, observations, trigger/debounce state, delivery, and audit
 history remain in Alerts' independently durable rule register rather than being
 duplicated in layout storage. Restores report `EXACT` only when every applicable
-field was accepted. A
+field was accepted. Screening views retain only a saved definition ID plus
+selected and top-visible canonical instrument identities. Universe members,
+provider quotes, evaluation rows, and predicate evidence are recomputed from a
+new versioned snapshot rather than copied into layout storage. A
 retired workspace, missing workbook or story, renamed worksheet, malformed
 instrument or filing identity, unsupported field, or future capability produces
 an explicit `DEGRADED` result while the remaining valid layout is recovered.
@@ -808,6 +836,9 @@ real command, Help entry, implementation file, semantic golden, deterministic
 contract test, data-source declaration, and performance case. The 50 ms p95
 gate independently measures exact command dispatch, visible-action routing, a
 full 160 × 48 themed render, and spreadsheet edits with 10,000 populated cells.
+The gate also evaluates a deterministic 2,000-member, two-clause screen so
+ranking, evidence construction, and bounded truncation remain independently
+budgeted.
 CI also renders every `covered` capability in loading, populated, empty,
 delayed, stale, denied, partial, and failed states at 80 × 24, 120 × 36, and
 160 × 48. Inapplicable states must render a visible reason instead of inventing

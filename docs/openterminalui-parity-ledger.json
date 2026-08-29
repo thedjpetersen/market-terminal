@@ -133,11 +133,11 @@
       "capability": "Hotlists, breadth, movers, and market heatmaps",
       "owner": "Screening & Analytics",
       "priority": "P2",
-      "market_status": "missing",
+      "market_status": "partial",
       "upstream_maturity": "substantive",
       "reference_files": ["frontend/src/pages/Hotlists.tsx", "frontend/src/pages/MarketHeatmapPage.tsx", "backend/services/hotlist_service.py", "backend/api/routes/heatmap.py", "frontend/tests/e2e/market-heatmap.spec.ts"],
       "acceptance_tests": ["HOTLIST-STABLE-RANK", "HEATMAP-COVERAGE", "BREADTH-UNIVERSE-VERSION"],
-      "gap": "Add versioned universe breadth, movers, unusual volume, sector and market heatmaps with coverage, exclusions, stable ranking, provenance, and Security/Chart promotion."
+      "gap": "The first versioned point-in-time core universe now powers deterministic momentum, liquidity, and tight-spread screens with as-of, provider, quality, coverage, exclusions, and Security/Monitor/Spreadsheet routing. Add durable universe history, breadth, unusual volume, dedicated hotlists, sector/market heatmaps, normalized split comparisons, and direct Chart promotion."
     },
     {
       "id": "OTUI-012",
@@ -177,11 +177,11 @@
       "capability": "Point-in-time screener, formula builder, and saved screens",
       "owner": "Screening & Analytics",
       "priority": "P3",
-      "market_status": "missing",
+      "market_status": "partial",
       "upstream_maturity": "substantive",
       "reference_files": ["backend/screener/engine.py", "backend/screener/parser.py", "backend/screener/persistence.py", "frontend/src/pages/equity/screener/QueryBuilder.tsx", "frontend/tests/e2e/custom-formula-screener.spec.ts", "frontend/tests/e2e/screener-scanner.spec.ts"],
       "acceptance_tests": ["SCREEN-PIT-REPLAY", "SCREEN-NULL-POLICY", "SCREEN-WHY-RANKED", "SCREEN-PROMOTION"],
-      "gap": "Implement versioned universes, typed and unit-checked formula AST, explicit nulls, deterministic filter/sort/rank, rejection evidence, saved screens, and atomic Monitor/Sheet promotion."
+      "gap": "The production SCREEN workspace now has point-in-time versioned universes, a closed typed multi-clause AND grammar, fail-closed nulls, deterministic filters/sorts/ranks, rejection and why-ranked evidence, crash-safe saved definitions, saved-view recovery, and selected-row Security/Spreadsheet plus universe Monitor routing. Add nested boolean/formula AST and unit inference, historical PIT storage/replay, fundamental/factor fields, direct Chart routing, and atomic whole-result Monitor/typed-range promotion."
     },
     {
       "id": "OTUI-016",

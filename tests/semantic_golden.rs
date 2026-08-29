@@ -44,14 +44,19 @@ const GOLDENS: &[Golden] = &[
         hashes: [0x71f625791ea64bac, 0x023bef0fa9a381d4, 0x7f41ce0bff731b20],
     },
     Golden {
+        name: "screening",
+        prepare: prepare_screening,
+        hashes: [0x7067b728428c06ee, 0x800236565347d821, 0x9af15961fc492197],
+    },
+    Golden {
         name: "help",
         prepare: prepare_help,
-        hashes: [0x14055b2667c88df3, 0xf3e5c9807260781f, 0x5032f11ee2437987],
+        hashes: [0x6d6e31bf7c4557b5, 0x4ad341dacfc9db91, 0x5da183fb05a96f59],
     },
     Golden {
         name: "workspace-preset-preview",
         prepare: prepare_workspace_preset_preview,
-        hashes: [0x7a04494f6250d87a, 0xe69eff31457179ee, 0xf344b282141f4221],
+        hashes: [0x198bbffce0964ae2, 0x66f1733875c43a3a, 0x613989da1719f885],
     },
     Golden {
         name: "launchpad",
@@ -407,6 +412,14 @@ fn prepare_spreadsheet(app: &mut App) {
 
 fn prepare_find(app: &mut App) {
     dispatch(app, "FIND US");
+}
+
+fn prepare_screening(app: &mut App) {
+    dispatch(app, "SCREEN momentum");
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        app.advance_tick();
+    }
 }
 
 fn prepare_help(app: &mut App) {

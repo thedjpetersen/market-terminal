@@ -2316,6 +2316,7 @@ mod tests {
                 PersistenceError, SessionState,
             },
             portfolio::ID as PORTFOLIO,
+            screening::ID as SCREENING,
             security::ID as SECURITY,
             spreadsheet::ID as SPREADSHEET,
             watchlist::ID as MONITOR,
@@ -4191,6 +4192,71 @@ mod tests {
         assert!(restarted
             .command_feedback()
             .is_some_and(|message| message.contains("VIEW RESTORED") && message.contains("EXACT")));
+    }
+
+    #[test]
+    fn typed_screening_view_survives_restart_with_result_identity() {
+        let session = Arc::new(MemorySessionRepository::default());
+        let documents = Arc::new(MemoryFeatureRepository::default());
+        let mut app = bootstrap::demo_app()
+            .with_saved_view_repository(documents.clone())
+            .with_session_repository(session.clone());
+        app.settings_visible = false;
+        app.settings_first_run = false;
+
+        app.command = "SCREEN liquidity".to_owned();
+        app.execute_command();
+        for _ in 0..50 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            app.advance_tick();
+            if app
+                .workspaces
+                .capture_view(SCREENING)
+                .is_some_and(|state| state.fields.contains_key("selected_instrument_id"))
+            {
+                break;
+            }
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.command = "VIEW SAVE Liquid Leaders".to_owned();
+        app.execute_command();
+
+        let expected = app.saved_views.views[0].workspace_state.clone();
+        assert_eq!(expected.workspace, SCREENING.as_str());
+        assert_eq!(
+            expected.fields.get("screen_id"),
+            Some(&ViewValue::Text("liquidity".to_owned()))
+        );
+        assert!(expected.fields.contains_key("selected_instrument_id"));
+
+        let mut restarted = bootstrap::demo_app()
+            .with_saved_view_repository(documents)
+            .with_session_repository(session);
+        restarted.settings_visible = false;
+        restarted.settings_first_run = false;
+        restarted.command = "VIEW RESTORE Liquid Leaders".to_owned();
+        restarted.execute_command();
+
+        assert_eq!(restarted.active_workspace(), SCREENING);
+        assert_eq!(
+            restarted.workspaces.capture_view(SCREENING).unwrap(),
+            expected
+        );
+        assert!(restarted
+            .command_feedback()
+            .is_some_and(|message| message.contains("VIEW RESTORED") && message.contains("EXACT")));
+
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            restarted.advance_tick();
+            if restarted.workspaces.capture_view(SCREENING).unwrap() == expected {
+                break;
+            }
+        }
+        assert_eq!(
+            restarted.workspaces.capture_view(SCREENING).unwrap(),
+            expected
+        );
     }
 
     #[test]

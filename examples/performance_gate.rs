@@ -3,10 +3,17 @@ use std::{error::Error, time::Instant};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use market_terminal::{
     bootstrap,
-    features::spreadsheet::{
-        domain::{CellAddress, Workbook, Worksheet},
-        Spreadsheet,
+    features::{
+        screening::{
+            evaluate_screen, Comparison, ScreenClause, ScreenDefinition, ScreenField,
+            ScreenSortDirection, UniverseMember, UniverseSnapshot, MAX_UNIVERSE_MEMBERS,
+        },
+        spreadsheet::{
+            domain::{CellAddress, Workbook, Worksheet},
+            Spreadsheet,
+        },
     },
+    foundation::InstrumentId,
     runtime,
 };
 use ratatui::{backend::TestBackend, layout::Rect, Terminal};
@@ -26,6 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         command_dispatch_case()?,
         visible_action_routing_case()?,
         responsive_theme_render_case()?,
+        screening_evaluation_case()?,
         spreadsheet_edit_case()?,
     ];
 
@@ -115,6 +123,63 @@ fn spreadsheet_edit_case() -> Result<CaseResult, Box<dyn Error>> {
         context: format!(
             "populated_cells={}",
             SHEETS * usize::from(COLUMNS) * usize::from(ROWS)
+        ),
+    })
+}
+
+fn screening_evaluation_case() -> Result<CaseResult, Box<dyn Error>> {
+    let definition = ScreenDefinition::new(
+        "performance",
+        "PERFORMANCE",
+        "performance",
+        vec![
+            ScreenClause::new(ScreenField::ChangePercent, Comparison::GreaterThan, 0.0)?,
+            ScreenClause::new(
+                ScreenField::Volume,
+                Comparison::GreaterThanOrEqual,
+                1_000_000.0,
+            )?,
+        ],
+        ScreenField::ChangePercent,
+        ScreenSortDirection::Descending,
+        200,
+        false,
+    )?;
+    let universe = UniverseSnapshot::new(
+        "performance",
+        "PERFORMANCE",
+        1,
+        "2026-08-29T00:00:00Z",
+        "DETERMINISTIC PERFORMANCE FIXTURE",
+        (0..MAX_UNIVERSE_MEMBERS)
+            .map(|index| UniverseMember {
+                instrument_id: InstrumentId::new(format!("test:listed:t{index:04}")),
+                symbol: format!("T{index:04}"),
+                description: format!("PERFORMANCE MEMBER {index}"),
+                currency: "USD".to_owned(),
+                last: Some(10.0 + index as f64 / 10.0),
+                change_percent: Some((index % 41) as f64 - 20.0),
+                volume: Some(750_000.0 + index as f64 * 25_000.0),
+                spread_bps: Some((index % 17) as f64 / 2.0),
+                day_range_percent: Some((index % 11) as f64 / 3.0),
+                quality: "DETERMINISTIC".to_owned(),
+                provider: "PERFORMANCE FIXTURE".to_owned(),
+            })
+            .collect(),
+    )?;
+    evaluate_screen(&definition, universe.clone())?;
+    let p95_ms = measure(|_| {
+        evaluate_screen(&definition, universe.clone())?;
+        Ok(())
+    })?;
+    Ok(CaseResult {
+        name: "screening_evaluation",
+        p95_ms,
+        context: format!(
+            "universe_members={} clauses={} limit={}",
+            universe.members.len(),
+            definition.clauses.len(),
+            definition.limit
         ),
     })
 }

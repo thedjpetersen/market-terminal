@@ -118,6 +118,19 @@ bootstrap ──▶ app kernel
   local documents are sampled during startup; render and input paths consume
   only memory. The News port exposes provider-backed events separately so the
   deterministic gallery calendar cannot appear in the live daily surface.
+  Screening follows the same consumer-owned projection rule. Its domain owns
+  universe snapshots, typed clauses, null policy, deterministic ranking,
+  evidence, and saved-definition validation. A composition-root
+  `MarketScreeningUniverseQuery` translates Watchlist membership plus one
+  Market Data quote batch into Screening DTOs; Screening never imports either
+  peer feature's types. The translation emits one immutable input version,
+  provider set, as-of, field availability, and canonical identities without
+  blending observations. Evaluation and persistence each use a separate
+  capacity-one worker, so provider and disk I/O never enter input or rendering.
+  Generation checks reject stale evaluations, while a failed refresh retains
+  the explicitly labeled last valid result. Saved views contain only the
+  definition and row-anchor identities; the versioned universe and rank
+  evidence remain derived feature state. See `docs/screening.md`.
 - `foundation` contains only stable, narrowly shared value objects. Canonical
   instrument identity lives here; provider quote schemas and feature state do
   not.

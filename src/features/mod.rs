@@ -11,6 +11,7 @@ pub mod overview;
 pub mod persistence;
 pub mod portfolio;
 pub mod risk;
+pub mod screening;
 pub mod security;
 pub mod spreadsheet;
 pub mod watchlist;
