@@ -290,6 +290,17 @@ move to its own crate later without changing its public vocabulary.
   a malicious adapter cannot leak another tenant's metadata. The production API
   binary still mounts no artifact route until a concrete repository is supplied;
   multi-user credentials and durable tenant repositories remain future work.
+- **Complete:** first concrete tenant-owned repository adapter. The independent
+  `market-terminal-artifact-store` crate implements the application port with a
+  private canonical root, hex-encoded tenant/artifact paths, symlink rejection,
+  4,096-document tenant and 1 MiB document ceilings, deterministic cursor
+  pagination, and fail-closed corruption handling. The production API composes
+  it only when an operator supplies both a root and the exact read-only flag;
+  default routes remain absent. Architecture and adversarial tests preserve
+  `API library -> application port <- adapter`, prove tenant isolation, and
+  reject malformed, oversized, misnamed, shared-permission, and symlinked data.
+  Transactional ingestion, service storage, and multi-user sessions remain
+  future work.
 - **Complete:** P1 saved workspace experience. Five versioned Trader, Quant,
   PM, Risk, and Ops seeds now project through the live registry, disclose
   missing destinations, and require an explicit modal confirmation. The first

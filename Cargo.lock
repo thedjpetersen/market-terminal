@@ -1313,6 +1313,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "market-terminal-application",
+ "market-terminal-artifact-store",
  "serde",
  "serde_json",
  "tokio",
@@ -1327,6 +1328,14 @@ version = "0.1.0"
 dependencies = [
  "market-terminal-engine",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "market-terminal-artifact-store"
+version = "0.1.0"
+dependencies = [
+ "market-terminal-application",
  "serde_json",
 ]
 

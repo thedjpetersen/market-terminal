@@ -33,6 +33,8 @@ Optional configuration:
 | `MARKET_TERMINAL_API_OPERATIONS` | all four | Comma-separated exact names from `run_backtest`, `compare_backtests`, `price_option`, and `analyze_bond`. At least one is required. |
 | `MARKET_TERMINAL_API_MAX_BACKTEST_BARS` | `20000` | Per-principal bar ceiling, inclusive range 1-20000. |
 | `MARKET_TERMINAL_API_MAX_COMPARISON_POINTS` | `120000` | Per-principal combined decision/trade/equity ceiling, inclusive range 1-120000. |
+| `MARKET_TERMINAL_API_ARTIFACT_ROOT` | unset | Private local research-artifact directory. Requires the independent read flag; routes are absent when unset. |
+| `MARKET_TERMINAL_API_ARTIFACT_READ` | unset | Exact `1` enables read-only artifact capability when a root is configured. Any other pairing fails startup. |
 | `RUST_LOG` | subscriber default | Standard tracing filter; request bodies and bearer tokens are never logged. |
 
 The process handles Ctrl-C and SIGTERM with graceful Axum shutdown.
@@ -108,8 +110,11 @@ The request never contains a tenant field. Both repository keys are constructed
 from the server-owned authenticated context, and returned pages/documents are
 revalidated for tenant, schema, kind, bounded identity, provenance, digest
 envelope, and size. A cross-tenant ID therefore returns the same generic 404 as
-a missing ID. The default binary uses `router`, so these routes do not exist
-until a reviewed adapter and explicit read capability are composed by a host.
+a missing ID. The production binary composes the local read-only adapter only
+when both `MARKET_TERMINAL_API_ARTIFACT_ROOT` and
+`MARKET_TERMINAL_API_ARTIFACT_READ=1` are set; otherwise these routes do not
+exist. The adapter uses private, symlink-free, hex-keyed tenant directories and
+bounded documents as specified in [`artifact-store.md`](artifact-store.md).
 
 ## Failure contract
 
@@ -137,16 +142,19 @@ authentication resolves to a validated server-owned tenant/principal context;
 clients cannot submit or replace that identity. Application services reject
 missing capabilities and over-budget work before engine dispatch. The default
 binary cannot execute terminal commands, read environment-selected provider
-credentials, load or save user artifacts, inspect portfolios, or mutate external
-state. The API library's optional artifact surface is read-only and adapter-
-injected; it cannot save or delete. `tests/architecture_boundaries.rs` enforces
-`API -> application -> engine` and rejects native package, feature,
-infrastructure, provider-client, terminal,
-runtime, clock, environment, filesystem, and network boundary violations.
+credentials, inspect portfolios, or mutate external state. With default
+configuration it cannot load user artifacts; with the explicit local adapter it
+can only list and retrieve the authenticated tenant's documents. The reusable
+API library remains adapter-injected and cannot save or delete. The binary's
+concrete store is selected only at the composition root and refuses insecure
+Unix roots or symlinked catalog entries. `tests/architecture_boundaries.rs`
+enforces `API library -> application port <- adapter` and rejects native
+package, feature, provider-client, terminal, runtime, and network boundary
+violations in reusable layers.
 
 Before a multi-user web launch, replace the single configured credential mapping
-with an encrypted credential/session store, implement tenant-owned repository
-adapters with integration isolation tests, and add aggregate
+with an encrypted credential/session store, add transactional ingestion and a
+service-backed tenant repository for horizontally scaled deployments, and add aggregate
 rate accounting, deadlines, metrics/distributed tracing, audited read-only
 provider/persistence services, TLS termination, and cross-language contract
 fixtures. Those belong around the engine, never inside its deterministic domains.

@@ -285,6 +285,68 @@ fn web_api_depends_on_application_services_without_importing_the_native_product(
 }
 
 #[test]
+fn local_artifact_store_implements_the_application_port_at_the_host_edge() {
+    let root = manifest_root();
+    let application = root.join("crates/market-terminal-application");
+    let store = root.join("crates/market-terminal-artifact-store");
+    let api = root.join("crates/market-terminal-api");
+    let manifest = fs::read_to_string(store.join("Cargo.toml")).expect("artifact store manifest");
+    assert!(
+        manifest.contains("market-terminal-application"),
+        "the concrete artifact adapter must implement the application-owned port"
+    );
+    for dependency in [
+        "market-terminal =",
+        "market-terminal-engine",
+        "market-terminal-api",
+        "axum",
+        "tokio",
+        "reqwest",
+        "ratatui",
+        "crossterm",
+    ] {
+        assert_absent(
+            &store.join("Cargo.toml"),
+            &manifest,
+            dependency,
+            "the local artifact adapter may depend only on the application contract and serialization",
+        );
+    }
+
+    let store_source = production_source(&store.join("src/lib.rs"));
+    for required in [
+        "impl ResearchArtifactQuery for LocalArtifactQuery",
+        "symlink_metadata",
+        "MAX_ARTIFACT_DOCUMENT_BYTES",
+        "MAX_ARTIFACTS_PER_TENANT",
+    ] {
+        assert!(
+            store_source.contains(required),
+            "the local adapter must retain its fail-closed boundary `{required}`"
+        );
+    }
+    let application_source = production_source(&application.join("src/lib.rs"));
+    assert_absent(
+        &application.join("src/lib.rs"),
+        &application_source,
+        "market_terminal_artifact_store",
+        "the application contract cannot depend on a concrete repository",
+    );
+    let api_library = production_source(&api.join("src/lib.rs"));
+    assert_absent(
+        &api.join("src/lib.rs"),
+        &api_library,
+        "market_terminal_artifact_store",
+        "the reusable API router must remain adapter-injected",
+    );
+    let api_binary = production_source(&api.join("src/main.rs"));
+    assert!(
+        api_binary.contains("market_terminal_artifact_store::LocalArtifactQuery"),
+        "only the API composition root should select the concrete local adapter"
+    );
+}
+
+#[test]
 fn bounded_contexts_do_not_import_adapters_or_each_other() {
     let features = manifest_root().join("src/features");
     let mut contexts = fs::read_dir(&features)

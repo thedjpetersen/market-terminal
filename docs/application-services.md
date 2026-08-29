@@ -59,13 +59,14 @@ resolve many actors, but it must produce the same validated `ExecutionContext`.
 Tenant-owned artifact and future provider services expose narrow application
 ports; they are not added to the deterministic engine. The artifact port has no
 concrete storage implementation in this crate, so local files, PostgreSQL, and
-remote document services can implement the same ownership contract.
+remote document services can implement the same ownership contract. The first
+local implementation lives in the independent `market-terminal-artifact-store`
+crate; only the API binary composition root imports it.
 
 ## Next web extraction
 
-1. Implement local and service persistence adapters outside this crate. The HTTP
-   library already exposes injectable list/get routes; the production binary
-   intentionally leaves them unmounted until an adapter is configured.
+1. Add a transactional ingestion writer or service-backed adapter outside this
+   crate. The local read adapter and HTTP routes are deliberately mutation-free.
 2. Add credential/session resolution with adversarial cross-tenant integration
    tests against each concrete repository.
 3. Add deadline, cancellation, and aggregate rate-budget contracts at the host

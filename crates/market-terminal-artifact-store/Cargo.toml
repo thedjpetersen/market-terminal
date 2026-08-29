@@ -1,0 +1,11 @@
+[package]
+name = "market-terminal-artifact-store"
+version = "0.1.0"
+edition = "2021"
+description = "Tenant-isolated local research artifact adapter for Market Terminal hosts"
+license = "MIT"
+repository = "https://github.com/thedjpetersen/market-terminal"
+
+[dependencies]
+market-terminal-application = { path = "../market-terminal-application" }
+serde_json = "1"

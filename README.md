@@ -1132,6 +1132,7 @@ crates/
 │                           and a versioned request/response API
 ├── market-terminal-application/ tenant identity, capabilities, budgets, analytical
 │                               use cases, and read-only research-artifact ports
+├── market-terminal-artifact-store/ tenant-isolated local read-only adapter
 └── market-terminal-api/    authenticated HTTP adapter over application services
 src/
 ├── app/             lifecycle, input modes, workspace contract and registry
@@ -1178,12 +1179,15 @@ MARKET_TERMINAL_API_TOKEN="replace-with-a-random-token-at-least-32-characters" \
 `GET /v1/capabilities` discloses the server-owned tenant/principal identity,
 capability allowlist, body limit, and analytical workload ceilings;
 `POST /v1/engine` accepts the versioned engine envelope. There is no CORS,
-provider, concrete persistence, arbitrary-command, or mutation surface in the
-production binary. Host compositions may inject the application-owned artifact
-query port to mount read-only `GET /v1/artifacts` routes; tenant identity always
-comes from the authenticated actor, never a request parameter.
+provider, arbitrary-command, or mutation surface in the production binary. A
+private local artifact root plus an independent explicit read flag composes the
+application-owned query port and mounts read-only `GET /v1/artifacts` routes;
+tenant identity always comes from the authenticated actor, never a request
+parameter. The routes remain absent with default configuration.
 See [`docs/web-api.md`](docs/web-api.md) for request examples, status contracts,
-configuration, and deployment constraints.
+configuration, and deployment constraints, and
+[`docs/artifact-store.md`](docs/artifact-store.md) for the repository layout and
+fail-closed rules.
 
 ## License
 

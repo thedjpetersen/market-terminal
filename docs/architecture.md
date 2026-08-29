@@ -39,6 +39,13 @@ native bootstrap ──▶ app kernel
   execution here rather than call the engine directly. Every artifact key is
   constructed from authenticated context and every adapter result is revalidated
   for ownership, schema, provenance, digest envelope, and size before release.
+- `crates/market-terminal-artifact-store` is a replaceable outer adapter for
+  that read-only port. It owns local filesystem access, canonical path checks,
+  private-root enforcement, hex-encoded tenant/document paths, bounded catalog
+  scans, and JSON decoding. It depends on the application contract but not the
+  engine, API, native product, runtime, providers, or UI. Architecture checks
+  ensure neither the application nor reusable API library imports it; only a
+  host composition root may select it.
 - `crates/market-terminal-api` is an HTTP host adapter over the application
   service crate. It
   does not depend on the native product, feature modules, infrastructure, or
@@ -47,8 +54,10 @@ native bootstrap ──▶ app kernel
   applies body limits before JSON deserialization, and owns transport-safe error
   mapping, request correlation, security headers, loopback-safe binding, and
   graceful shutdown. Its library can mount authenticated read-only artifact
-  list/get routes when a host supplies the application port; the default binary
-  exposes no provider or concrete persistence path. See
+  list/get routes when a host supplies the application port. Its binary selects
+  the local read-only adapter only when both an artifact root and exact read
+  capability are configured; the default exposes no provider or persistence
+  path. See
   `docs/web-api.md`. See `docs/application-services.md` for the shared actor,
   capability, and budget contract.
 

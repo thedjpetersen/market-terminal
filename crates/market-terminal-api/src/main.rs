@@ -1,8 +1,10 @@
-use std::{env, net::SocketAddr};
+use std::{env, net::SocketAddr, sync::Arc};
 
 use market_terminal_api::{
-    router, ApiConfig, ExecutionBudget, OperationPolicy, DEFAULT_MAX_BODY_BYTES,
+    router, router_with_artifact_query, ApiConfig, ArtifactReadPolicy, ExecutionBudget,
+    OperationPolicy, DEFAULT_MAX_BODY_BYTES,
 };
+use market_terminal_artifact_store::LocalArtifactQuery;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -53,10 +55,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         default_budget.max_comparison_points(),
     )?;
     let execution_budget = ExecutionBudget::new(max_backtest_bars, max_comparison_points)?;
-    let config = ApiConfig::for_principal(token, tenant_id, principal_id)?
+    let mut config = ApiConfig::for_principal(token, tenant_id, principal_id)?
         .with_max_body_bytes(max_body_bytes)?
         .with_operation_policy(policy)
         .with_execution_budget(execution_budget);
+    let artifact_root = configured_artifact_root()?;
+    if artifact_root.is_some() {
+        config = config.with_artifact_policy(ArtifactReadPolicy::read_only());
+    }
+    let artifact_query = artifact_root
+        .as_ref()
+        .map(LocalArtifactQuery::open)
+        .transpose()?;
     let listener = tokio::net::TcpListener::bind(bind).await?;
     info!(
         bind = %bind,
@@ -66,12 +76,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         principal_id = %config.execution_context().principal_id(),
         max_backtest_bars = config.execution_context().budget().max_backtest_bars(),
         max_comparison_points = config.execution_context().budget().max_comparison_points(),
+        artifact_read = artifact_root.is_some(),
         "market terminal API listening"
     );
-    axum::serve(listener, router(config))
+    let app = match artifact_query {
+        Some(query) => router_with_artifact_query(config, Arc::new(query)),
+        None => router(config),
+    };
+    axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+fn configured_artifact_root() -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let root = env::var("MARKET_TERMINAL_API_ARTIFACT_ROOT");
+    let read_enabled = env::var("MARKET_TERMINAL_API_ARTIFACT_READ");
+    match (root, read_enabled) {
+        (Err(env::VarError::NotPresent), Err(env::VarError::NotPresent)) => Ok(None),
+        (Ok(root), Ok(value)) if value == "1" && !root.is_empty() => Ok(Some(root)),
+        (Ok(_), Err(env::VarError::NotPresent)) => Err(
+            "MARKET_TERMINAL_API_ARTIFACT_ROOT requires MARKET_TERMINAL_API_ARTIFACT_READ=1".into(),
+        ),
+        (Err(env::VarError::NotPresent), Ok(_)) => Err(
+            "MARKET_TERMINAL_API_ARTIFACT_READ requires MARKET_TERMINAL_API_ARTIFACT_ROOT".into(),
+        ),
+        (Ok(_), Ok(_)) => Err("MARKET_TERMINAL_API_ARTIFACT_READ must equal 1".into()),
+        (Err(error), _) | (_, Err(error)) => Err(error.into()),
+    }
 }
 
 fn parse_optional_usize(
