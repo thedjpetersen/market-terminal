@@ -14,8 +14,8 @@ use reqwest::{blocking::Client, Url};
 
 use crate::{
     features::news::{
-        ArticleBodyState, Headline, NewsFeed, NewsFreshness, NewsProvenance, NewsSnapshot,
-        NewsStory, NewsWorkbench,
+        analyze_news_sentiment, ArticleBodyState, Headline, NewsFeed, NewsFreshness,
+        NewsProvenance, NewsSnapshot, NewsStory, NewsWorkbench,
     },
     foundation::InstrumentId,
 };
@@ -401,6 +401,7 @@ fn preserve_downloaded_articles(stories: &mut [TimestampedStory], previous: &[Ne
                     .language
                     .clone_from(&previous.provenance.language);
             }
+            refresh_sentiment(story);
         }
     }
 }
@@ -483,6 +484,21 @@ fn merge_story(primary: &mut NewsStory, duplicate: NewsStory) {
     if duplicate.summary.len() > primary.summary.len() {
         primary.summary = duplicate.summary;
     }
+    refresh_sentiment(primary);
+}
+
+fn refresh_sentiment(story: &mut NewsStory) {
+    let observed_at = story
+        .provenance
+        .published_at
+        .as_deref()
+        .unwrap_or(&story.provenance.retrieved_at);
+    story.sentiment = analyze_news_sentiment(
+        &story.headline.title,
+        &story.summary,
+        &story.provenance.categories,
+        observed_at,
+    );
 }
 
 fn extend_unique(values: &mut Vec<String>, additions: Vec<String>, limit: usize) {
@@ -614,6 +630,14 @@ fn story_from_entry(
         .map(|symbol| InstrumentId::new(format!("us:listed:{}", symbol.to_ascii_lowercase())))
         .collect();
     let id = stable_story_id(url.as_deref(), &entry.id, source, &title, published);
+    let published_at = published.map(|value| value.to_rfc3339());
+    let retrieved_at = retrieved_at.to_rfc3339();
+    let sentiment = analyze_news_sentiment(
+        &title,
+        &summary,
+        &category_labels,
+        published_at.as_deref().unwrap_or(&retrieved_at),
+    );
     Some((
         published,
         NewsStory {
@@ -639,11 +663,12 @@ fn story_from_entry(
             related_symbols,
             instruments,
             url,
+            sentiment,
             provenance: NewsProvenance {
                 sources: vec![source.to_owned()],
                 feed_urls: vec![feed_url.to_owned()],
-                published_at: published.map(|value| value.to_rfc3339()),
-                retrieved_at: retrieved_at.to_rfc3339(),
+                published_at,
+                retrieved_at,
                 categories: category_labels,
                 language: language.map(ToOwned::to_owned),
                 freshness: NewsFreshness::Fresh,
@@ -681,6 +706,7 @@ fn fetch_and_store_article(client: &Client, state: &RwLock<FeedState>, story_id:
                 if let Some(site_name) = article.site_name {
                     extend_unique(&mut story.provenance.sources, vec![site_name], 8);
                 }
+                refresh_sentiment(story);
             }
         }
         Err(error) => set_article_unavailable(state, story_id, &error),
@@ -1268,6 +1294,10 @@ mod tests {
             Some("2026-08-25T20:15:00+00:00")
         );
         assert_eq!(story.provenance.freshness, NewsFreshness::Fresh);
+        assert_eq!(story.sentiment.label.label(), "POSITIVE");
+        assert!(story.sentiment.score_bps > 0);
+        assert_eq!(story.sentiment.method_version, "MT-LEXICON-1");
+        assert!(story.sentiment.calibration.contains("UNCALIBRATED"));
     }
 
     #[test]
@@ -1360,6 +1390,16 @@ mod tests {
         assert_eq!(stories[0].provenance.sources, ["Wire One", "Wire Two"]);
         assert_eq!(stories[0].related_symbols, ["AAPL"]);
         assert!(stories[0].summary.contains("longer syndicated report"));
+        assert_eq!(
+            stories[0].sentiment.input_digest,
+            analyze_news_sentiment(
+                &stories[0].headline.title,
+                &stories[0].summary,
+                &stories[0].provenance.categories,
+                stories[0].provenance.published_at.as_deref().unwrap()
+            )
+            .input_digest
+        );
     }
 
     #[test]

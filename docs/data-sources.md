@@ -299,7 +299,14 @@ endorsed by, or sponsored by Yahoo.
   publication/retrieval timestamps, categories, language, and source freshness
   remain attached as explicit provenance. Deterministic topic, region, and
   related-symbol labels are derived from bounded publisher text/category inputs;
-  they are not provider sentiment. On explicit reader activation, the background
+  they are not provider sentiment. A separate versioned lexical-tone artifact is
+  derived only from title, summary, and categories. It retains a content digest,
+  observation time, signed weighted evidence (including negation), and explicit
+  `UNCALIBRATED`/non-probability disclosure. Its evidence-strength percentage is
+  lexical coverage/agreement, never outcome probability, objective truth, or a
+  provider/model field. Syndication merges and metadata enrichment recompute the
+  artifact from the resulting inputs. Licensed sentiment, training data,
+  predictive calibration, and emotion remain unavailable. On explicit reader activation, the background
   worker may fetch the publisher page and apply readability extraction. It does
   not bypass access controls; unavailable full text stays visibly excerpt-only.
   Opening the web source passes a validated `http(s)` URL to the system browser.

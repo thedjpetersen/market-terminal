@@ -111,12 +111,12 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "news",
         prepare: prepare_news,
-        hashes: [0x805d8a9df1bfbe74, 0x0cefd4486b60eda1, 0x0e1fcc7df2b034b9],
+        hashes: [0x805d8a9df1bfbe74, 0xc9a20431e57f29fc, 0x4f3d2ce8ff400262],
     },
     Golden {
         name: "news-reader",
         prepare: prepare_news_reader,
-        hashes: [0x6650e9f729a16d2f, 0xe04944b2d7d8f1f9, 0x1c722e75288cb335],
+        hashes: [0x2d742792b90131a8, 0x98c4b126e67a4f3d, 0x88f0dfd13dc4ecce],
     },
     Golden {
         name: "alerts",

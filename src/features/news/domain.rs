@@ -1,5 +1,7 @@
 use crate::foundation::InstrumentId;
 
+use super::{analyze_news_sentiment, NewsSentiment};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Headline {
     pub time: String,
@@ -31,6 +33,7 @@ pub struct NewsStory {
     pub instruments: Vec<InstrumentId>,
     pub url: Option<String>,
     pub provenance: NewsProvenance,
+    pub sentiment: NewsSentiment,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,9 +221,16 @@ impl NewsWorkbench {
             let instruments = related_symbols.iter().map(|symbol| {
                 InstrumentId::new(format!("us:listed:{}", symbol.to_ascii_lowercase()))
             }).collect();
+            let sentiment = analyze_news_sentiment(
+                &headline.title,
+                summary,
+                std::slice::from_ref(&headline.topic),
+                "REPLAY",
+            );
             NewsStory {
                 id: headline.story_id(),
                 provenance: NewsProvenance::deterministic(&headline.topic),
+                sentiment,
                 headline,
                 byline: byline.to_owned(),
                 summary: summary.to_owned(),

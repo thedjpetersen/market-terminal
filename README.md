@@ -399,6 +399,16 @@ and related-symbol labels are deterministic enrichments over publisher title,
 summary, categories, cashtags, and a bounded company-name map; they are not
 provider sentiment or undisclosed model output.
 
+Every story also carries a replayable `MT-LEXICON-1` tone artifact derived only
+from its bounded title, summary, and category inputs. News displays the signed
+score, contributing weighted terms (including negation), evidence strength,
+observation time, method version, and input digest. `EVIDENCE CONF` describes
+lexical coverage and agreement—not predictive confidence—and the artifact is
+always marked uncalibrated, non-probabilistic, and not a fact, forecast, or
+investment signal. It recomputes when syndicated summaries or readability
+metadata change. Licensed provider sentiment and calibrated model output remain
+unavailable until separately entitled and validated.
+
 Select a story and press Enter or `V`—or click `READ HERE`—to open the
 full-workspace reader. MarketTerm first displays publisher-provided feed content
 and, when the feed contains only an excerpt, downloads and extracts the readable

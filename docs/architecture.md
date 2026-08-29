@@ -212,8 +212,13 @@ independent timeouts, canonicalizes and merges syndicated identities, and retain
 failed-source rows with explicit stale provenance while healthy sources advance.
 It performs explicit on-demand readability and metadata extraction and exposes
 cloned provider-neutral workbench snapshots. Article requests are revalidated
-against the story's current canonical URL before leaving the process. The root
-also uses `CsvPortfolioRepository`, which owns the last successfully validated user
+against the story's current canonical URL before leaving the process.
+`LiveNewsFeed` invokes News's pure `MT-LEXICON-1` analyzer whenever feed parsing,
+syndication merging, or readability enrichment changes their bounded
+title/summary/category inputs. The artifact carries its method, observation time,
+input digest, signed term evidence, and uncalibrated/non-probability disclosure;
+no provider sentiment, model confidence, or infrastructure type crosses into the
+feature. The root also uses `CsvPortfolioRepository`, which owns the last successfully validated user
 positions import. The repository emits a versioned, typed snapshot with
 exact money, fixed-scale quantities, anonymized account identities,
 per-currency reconciliation, and explicit unpriced holdings. Only the selected

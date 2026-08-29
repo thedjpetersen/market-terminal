@@ -64,6 +64,11 @@ move to its own crate later without changing its public vocabulary.
   loaded-sample log-value/weekly activity visualization,
   filters, read/bookmark state, story detail, economic calendar, and validated
   cross-workspace intents.
+- **Complete:** replayable evidence-backed News lexical tone over bounded
+  title/summary/category inputs, with negation, signed weighted terms, observation
+  time, method/input digests, explicit unavailable state, responsive disclosure,
+  and an uncalibrated non-probability boundary. Licensed/model sentiment remains
+  separate future work.
 - **Complete:** workbook-scoped spreadsheet evaluation with qualified and quoted
   cross-sheet references, cross-sheet cycle detection, mixed absolute axes, and
   atomic translated copy, paste, and directional fill controls.
@@ -331,7 +336,8 @@ move to its own crate later without changing its public vocabulary.
   richer immutable backtest artifacts and experiment tracking, and screen-aware
   evidence-bound AI research; continue P2/P3 hotlists/breadth/heatmaps,
   Screening arithmetic and whole-result promotion, factor research, and compound
-  alert families. Provider availability
+  alert families, plus licensed/calibrated sentiment beyond the delivered
+  deterministic lexical artifact. Provider availability
   extends the deployment surface; deterministic fixtures remain the acceptance
   baseline and opt-in live contracts verify real provider behavior.
 
@@ -866,6 +872,17 @@ loop before adding more asset classes.
     readability enriches missing attribution metadata, while deterministic
     topic/region/symbol inference remains labeled separately from still-missing
     licensed sentiment and model calibration.
+  - **Evidence-backed lexical follow-on delivered:** every story now owns a
+    deterministic `MT-LEXICON-1` artifact over bounded title, summary, and
+    category inputs. Weighted positive/negative evidence, three-token negation,
+    signed tone, evidence coverage/agreement, observation time, and an input
+    digest reproduce across refresh and restart fixtures. Syndication and
+    readability enrichment recompute the artifact. No-hit text is explicitly
+    unavailable, conflicting evidence is visible, and every surface states that
+    the result is uncalibrated, non-probabilistic, and not fact, forecast, or an
+    investment signal. A 2,000-story performance case locks the pure analyzer.
+    Licensed/provider sentiment, outcome calibration, and model emotion remain
+    separate unavailable capabilities.
 - Generalize Alerts to typed AND/OR expression trees over price, move, volume,
   indicators, news/topic, portfolio thresholds, calendar events, and spreadsheet
   expressions. Add preview, cooldown, expiry, maximum triggers, schedules,

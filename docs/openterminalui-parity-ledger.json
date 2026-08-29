@@ -203,7 +203,7 @@
       "upstream_maturity": "mixed",
       "reference_files": ["frontend/src/pages/ResearchPage.tsx", "frontend/src/pages/InsiderActivityPage.tsx", "frontend/src/pages/DividendDashboardPage.tsx", "frontend/src/pages/IntelligenceTimelinePage.tsx", "backend/services/news_ingestor.py", "backend/services/sentiment_engine.py"],
       "acceptance_tests": ["RESEARCH-SOURCE-TIMELINE", "SENTIMENT-MODEL-DISCLOSURE", "EVENT-DEDUPE"],
-      "gap": "Unify permitted source events chronologically; add dividends, revisions, catalysts, relative strength, sector rotation, and model/lexical sentiment with calibration and missing-source disclosure."
+      "gap": "Unify permitted source events chronologically; add dividends, revisions, catalysts, relative strength, sector rotation, and licensed/model sentiment with outcome calibration. Versioned lexical tone with evidence and missing-source disclosure is delivered."
     },
     {
       "id": "OTUI-018",

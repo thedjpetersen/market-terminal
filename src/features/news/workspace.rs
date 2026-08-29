@@ -463,7 +463,8 @@ impl NewsWorkspace {
             return;
         };
         let (width, height) = self.detail_viewport.get();
-        let maximum = wrapped_height(&story_detail_lines(story), width).saturating_sub(height);
+        let maximum =
+            wrapped_height(&story_detail_lines(story, height < 28), width).saturating_sub(height);
         self.detail_scroll = if direction.is_negative() {
             self.detail_scroll
                 .saturating_sub(direction.unsigned_abs() as u16)
@@ -1261,6 +1262,7 @@ fn render_story(frame: &mut Frame, area: Rect, story: &NewsStory, article_status
         AMBER,
     )];
     lines.extend(story_provenance_lines(story));
+    lines.extend(story_sentiment_lines(story, area.height < 28));
     lines.extend([
         Line::styled(format!("BY {}", story.byline), MUTED),
         Line::raw(""),
@@ -1391,7 +1393,7 @@ fn render_expanded_story(
     let rows = Layout::vertical([Constraint::Min(3), Constraint::Length(2)]).split(inner);
     viewport.set((rows[0].width, rows[0].height));
     frame.render_widget(
-        Paragraph::new(story_detail_lines(story))
+        Paragraph::new(story_detail_lines(story, rows[0].height < 28))
             .wrap(Wrap { trim: false })
             .scroll((scroll, 0)),
         rows[0],
@@ -1420,7 +1422,7 @@ fn render_expanded_story(
     );
 }
 
-fn story_detail_lines(story: &NewsStory) -> Vec<Line<'_>> {
+fn story_detail_lines(story: &NewsStory, compact: bool) -> Vec<Line<'_>> {
     let mut lines = vec![
         Line::styled(
             story.headline.title.as_str(),
@@ -1438,6 +1440,7 @@ fn story_detail_lines(story: &NewsStory) -> Vec<Line<'_>> {
         ),
     ];
     lines.extend(story_provenance_lines(story));
+    lines.extend(story_sentiment_lines(story, compact));
     lines.extend([
         Line::styled(format!("BY {}", story.byline), MUTED),
         Line::raw(""),
@@ -1501,6 +1504,65 @@ fn story_provenance_lines(story: &NewsStory) -> Vec<Line<'static>> {
     ];
     if !categories.is_empty() {
         lines.push(Line::styled(format!("TAGS    {categories}"), MUTED));
+    }
+    lines
+}
+
+fn story_sentiment_lines(story: &NewsStory, compact: bool) -> Vec<Line<'static>> {
+    let sentiment = &story.sentiment;
+    let evidence = if sentiment.evidence.is_empty() {
+        "NONE IN BOUNDED LEXICON".to_owned()
+    } else {
+        sentiment
+            .evidence
+            .iter()
+            .take(6)
+            .map(|item| {
+                let negated = if item.negated { " NOT" } else { "" };
+                format!(
+                    "{}{}{}({})",
+                    item.polarity.label(),
+                    negated,
+                    item.term,
+                    item.weight
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("  ")
+    };
+    let mut lines = vec![
+        Line::styled(
+            format!(
+                "TONE    {} · SCORE {} · EVIDENCE CONF {}{}",
+                sentiment.label.label(),
+                sentiment.score_label(),
+                sentiment.evidence_confidence_label(),
+                if compact { " · UNCALIBRATED" } else { "" }
+            ),
+            YELLOW,
+        ),
+        Line::styled(format!("EVID    {evidence}"), MUTED),
+    ];
+    if compact {
+        lines.push(Line::styled(
+            format!(
+                "METHOD  {} · NOT FACT/FORECAST/SIGNAL",
+                sentiment.method_version
+            ),
+            MUTED,
+        ));
+    } else {
+        lines.extend([
+            Line::styled(
+                format!(
+                    "METHOD  {} · {} · OBS {}",
+                    sentiment.method_version, sentiment.input_scope, sentiment.observed_at
+                ),
+                MUTED,
+            ),
+            Line::styled(format!("CAL     {}", sentiment.calibration), MUTED),
+            Line::styled(format!("NOTE    {}", sentiment.disclosure), MUTED),
+        ]);
     }
     lines
 }

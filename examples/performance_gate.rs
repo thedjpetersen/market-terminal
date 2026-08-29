@@ -6,6 +6,7 @@ use market_terminal::{
     features::{
         backtesting::{run_backtest, BacktestBar, BacktestConfig},
         fixed_income::{analyze_bond, BondModelInput},
+        news::analyze_news_sentiment,
         options::{price_option, OptionModelInput},
         screening::{
             evaluate_screen, universe_content_digest, Comparison, ScreenClause, ScreenDefinition,
@@ -41,6 +42,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         backtest_replay_case()?,
         option_scenario_case()?,
         fixed_income_scenario_case()?,
+        news_sentiment_enrichment_case()?,
         screening_evaluation_case()?,
         spreadsheet_edit_case()?,
     ];
@@ -59,6 +61,36 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+fn news_sentiment_enrichment_case() -> Result<CaseResult, Box<dyn Error>> {
+    let categories = vec!["EARNINGS".to_owned(), "TECHNOLOGY".to_owned()];
+    let expected = analyze_news_sentiment(
+        "Shares surge after earnings beat",
+        "Management raised guidance as growth improved despite a weak prior quarter.",
+        &categories,
+        "2026-08-29T12:00:00Z",
+    )
+    .input_digest;
+    let p95_ms = measure(|_| {
+        for _ in 0..2_000 {
+            let sentiment = analyze_news_sentiment(
+                "Shares surge after earnings beat",
+                "Management raised guidance as growth improved despite a weak prior quarter.",
+                &categories,
+                "2026-08-29T12:00:00Z",
+            );
+            if sentiment.input_digest != expected || sentiment.evidence.is_empty() {
+                return Err("news sentiment enrichment artifact changed".into());
+            }
+        }
+        Ok(())
+    })?;
+    Ok(CaseResult {
+        name: "news_sentiment_enrichment",
+        p95_ms,
+        context: "stories=2000 lexical=true evidence=true digest=verified".to_owned(),
+    })
 }
 
 fn fixed_income_scenario_case() -> Result<CaseResult, Box<dyn Error>> {
