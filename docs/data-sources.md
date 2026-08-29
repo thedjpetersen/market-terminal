@@ -24,8 +24,14 @@ Alert documents are sampled at startup so rendering performs no filesystem I/O.
   feature-owned action descriptors, built-in theme definitions, and the local
   session document.
 - **Persistence:** the selected theme, workspace order, active workspace,
-  preset return point, keymap preferences, recent commands, and bounded
-  Launchpad tile document are eligible for crash-safe local persistence.
+  preset return point, keymap preferences, recent commands, bounded saved-view
+  catalog, and bounded Launchpad tile document are eligible for crash-safe
+  local persistence. Saved views contain user-authored labels, stable local
+  IDs/revisions, workspace identifiers/order, and typed feature-owned view
+  fields. Desk/Chart fields can include canonical instrument identity, periods,
+  studies, comparisons, cursor/viewport positions, and display modes. They do
+  not persist provider responses, chart bars, portfolio holdings, article text,
+  credentials, or terminal frames.
   Launchpad stores only user-authored labels, exact terminal commands, stable
   local tile IDs, and a revision. Visible-action rectangles, selections, delete
   confirmation, and follow labels are derived in process and never persisted.

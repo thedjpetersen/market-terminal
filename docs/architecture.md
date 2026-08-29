@@ -29,8 +29,18 @@ bootstrap ──▶ app kernel
   return point inside the existing session preferences. Presets therefore do
   not import feature state, hard-code registry indices, or erase layouts when a
   workspace is added or retired.
+  Saved views use a shell-owned typed envelope rather than importing feature
+  domain structs. Each workspace owns a bounded field schema behind
+  `capture_view`/`restore_view`; composed workspaces nest child envelopes. The
+  shell validates depth, field, list, text, workspace, and catalog bounds,
+  persists a versioned catalog through the opaque feature-document repository,
+  and reports skipped or unavailable capabilities on restore. Desk and Chart
+  are the first rich adopters. Unknown fields remain inert data, so a newer
+  snapshot can degrade on an older binary without coupling migrations to the
+  registry or panicking at startup. Session and saved-view documents remain
+  independent failure domains.
   It snapshots its shell state through the persistence context's narrow
-  repository port.
+  repository ports.
 - `features/<name>` is a bounded context. It owns its domain types, outbound
   query port, local UI state, and terminal workspace adapter.
   Launchpad follows this rule: its bounded tile aggregate owns validation,
@@ -335,8 +345,9 @@ The next structural steps are intentionally additive:
   decorators around feature ports;
 - move bounded contexts into workspace crates when build times or team
   ownership justify a Cargo workspace;
-- migrate individual saved watchlists, workbooks, and charts onto
-  the opaque feature-document repository as their domain contracts stabilize.
+- extend the typed saved-view contract from Desk and Chart into watchlists,
+  workbooks, research tabs, filters, sorting, columns, and scroll positions as
+  those feature-owned schemas stabilize.
 
 The current boundary is deliberately a modular monolith. It gives strong
 ownership and test seams without paying the operational cost of services or a

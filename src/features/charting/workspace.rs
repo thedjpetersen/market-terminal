@@ -23,7 +23,8 @@ use ratatui::{
 
 use crate::{
     app::{
-        AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor,
+        AppIntent, CommandInvocation, ViewRestoreReport, ViewValue, Workspace, WorkspaceAction,
+        WorkspaceDescriptor, WorkspaceViewState,
     },
     ui::{
         components::terminal_block,
@@ -545,9 +546,11 @@ impl ChartingWorkspace {
                 self.specification.normalization == Normalization::PercentChange
             }
             ChartControl::MovingAverages => self.has_moving_averages(),
-            ChartControl::AverageKind => self.specification.studies.iter().any(
-                |study| matches!(study, Study::ExponentialMovingAverage { .. }),
-            ),
+            ChartControl::AverageKind => self
+                .specification
+                .studies
+                .iter()
+                .any(|study| matches!(study, Study::ExponentialMovingAverage { .. })),
             ChartControl::Rsi => self
                 .specification
                 .has_study(Study::RelativeStrengthIndex { period: RSI_PERIOD }),
@@ -595,18 +598,23 @@ impl ChartingWorkspace {
             ChartControl::InspectBack => "Inspect previous observation".to_owned(),
             ChartControl::InspectForward => "Inspect next observation".to_owned(),
             ChartControl::Latest => "Inspect latest observation".to_owned(),
-            ChartControl::DisplayMode => format!(
-                "Toggle chart style from {}",
-                self.display_mode.label()
-            ),
+            ChartControl::DisplayMode => {
+                format!("Toggle chart style from {}", self.display_mode.label())
+            }
             ChartControl::LineMode => {
                 format!("Toggle line rendering from {}", self.line_mode.label())
             }
             ChartControl::InsertSheet => {
-                format!("Insert {} into Spreadsheet", self.specification.primary.symbol)
+                format!(
+                    "Insert {} into Spreadsheet",
+                    self.specification.primary.symbol
+                )
             }
             ChartControl::Refresh => {
-                format!("Refresh {} chart history", self.specification.primary.symbol)
+                format!(
+                    "Refresh {} chart history",
+                    self.specification.primary.symbol
+                )
             }
         }
     }
@@ -1306,9 +1314,7 @@ impl Workspace for ChartingWorkspace {
                 true
             }
             KeyCode::Char('n') => self.activate_control(ChartControl::Normalization),
-            KeyCode::Char('v') | KeyCode::Char('b') => {
-                self.activate_control(ChartControl::Volume)
-            }
+            KeyCode::Char('v') | KeyCode::Char('b') => self.activate_control(ChartControl::Volume),
             KeyCode::Char('s') | KeyCode::Char('m') => {
                 self.activate_control(ChartControl::MovingAverages)
             }
@@ -1443,8 +1449,7 @@ impl Workspace for ChartingWorkspace {
         if id == "control:refresh-header" {
             return self.activate_control(ChartControl::Refresh);
         }
-        ChartControl::from_action_id(id)
-            .is_some_and(|control| self.activate_control(control))
+        ChartControl::from_action_id(id).is_some_and(|control| self.activate_control(control))
     }
 
     fn poll_intents(&mut self) -> Vec<AppIntent> {
@@ -1501,6 +1506,277 @@ impl Workspace for ChartingWorkspace {
                 control_area,
             );
         }
+    }
+
+    fn capture_view(&self) -> WorkspaceViewState {
+        WorkspaceViewState::new(ID.as_str())
+            .with_field(
+                "primary_id",
+                ViewValue::Text(self.specification.primary.canonical_id.to_string()),
+            )
+            .with_field(
+                "primary_symbol",
+                ViewValue::Text(self.specification.primary.symbol.clone()),
+            )
+            .with_field(
+                "period",
+                ViewValue::Text(self.specification.period.label().to_owned()),
+            )
+            .with_field(
+                "normalized",
+                ViewValue::Boolean(
+                    self.specification.normalization == Normalization::PercentChange,
+                ),
+            )
+            .with_field(
+                "comparison_ids",
+                ViewValue::TextList(
+                    self.specification
+                        .comparisons
+                        .iter()
+                        .map(|instrument| instrument.canonical_id.to_string())
+                        .collect(),
+                ),
+            )
+            .with_field(
+                "comparison_symbols",
+                ViewValue::TextList(
+                    self.specification
+                        .comparisons
+                        .iter()
+                        .map(|instrument| instrument.symbol.clone())
+                        .collect(),
+                ),
+            )
+            .with_field(
+                "studies",
+                ViewValue::TextList(
+                    self.specification
+                        .studies
+                        .iter()
+                        .map(|study| study.label())
+                        .collect(),
+                ),
+            )
+            .with_field(
+                "cursor_offset",
+                ViewValue::Unsigned(self.cursor_offset as u64),
+            )
+            .with_field(
+                "visible_observations",
+                ViewValue::Unsigned(self.viewport.visible_observations.unwrap_or(0) as u64),
+            )
+            .with_field(
+                "pan_offset",
+                ViewValue::Unsigned(self.viewport.pan_offset as u64),
+            )
+            .with_field(
+                "display_mode",
+                ViewValue::Text(self.display_mode.label().to_owned()),
+            )
+            .with_field(
+                "line_mode",
+                ViewValue::Text(self.line_mode.label().to_owned()),
+            )
+    }
+
+    fn restore_view(&mut self, state: &WorkspaceViewState) -> ViewRestoreReport {
+        if !state.workspace.eq_ignore_ascii_case(ID.as_str()) {
+            return ViewRestoreReport::warning(format!(
+                "saved state belongs to {}, not charting",
+                state.workspace
+            ));
+        }
+        let mut report = ViewRestoreReport::default();
+        let previous_primary = self.specification.primary.clone();
+        let previous_period = self.specification.period;
+        let previous_comparisons = self.specification.comparisons.clone();
+
+        let primary_id = state.fields.get("primary_id").and_then(ViewValue::as_text);
+        let primary_symbol = state
+            .fields
+            .get("primary_symbol")
+            .and_then(ViewValue::as_text);
+        if let (Some(id), Some(symbol)) = (primary_id, primary_symbol) {
+            if id.trim().is_empty() || symbol.trim().is_empty() {
+                report.skipped_fields += 2;
+                report
+                    .warnings
+                    .push("chart primary instrument is invalid".to_owned());
+            } else {
+                self.specification
+                    .set_primary(ChartInstrument::new(id, symbol));
+                report.restored_fields += 2;
+            }
+        }
+        if let Some(value) = state.fields.get("period") {
+            match value.as_text().and_then(ChartPeriod::parse) {
+                Some(period) => {
+                    self.specification.period = period;
+                    report.restored_fields += 1;
+                }
+                None => report.skipped_fields += 1,
+            }
+        }
+        if let Some(normalized) = state
+            .fields
+            .get("normalized")
+            .and_then(ViewValue::as_boolean)
+        {
+            self.specification.normalization = if normalized {
+                Normalization::PercentChange
+            } else {
+                Normalization::Price
+            };
+            report.restored_fields += 1;
+        }
+
+        let comparison_ids = state
+            .fields
+            .get("comparison_ids")
+            .and_then(ViewValue::as_text_list);
+        let comparison_symbols = state
+            .fields
+            .get("comparison_symbols")
+            .and_then(ViewValue::as_text_list);
+        if let (Some(ids), Some(symbols)) = (comparison_ids, comparison_symbols) {
+            self.specification.comparisons.clear();
+            if ids.len() != symbols.len() {
+                report.skipped_fields += 2;
+                report
+                    .warnings
+                    .push("chart comparison identities are incomplete".to_owned());
+            } else {
+                for (id, symbol) in ids.iter().zip(symbols) {
+                    if self
+                        .specification
+                        .add_comparison(ChartInstrument::new(id, symbol))
+                        .is_err()
+                    {
+                        report.skipped_fields += 1;
+                    } else {
+                        report.restored_fields += 1;
+                    }
+                }
+            }
+        }
+        if let Some(studies) = state
+            .fields
+            .get("studies")
+            .and_then(ViewValue::as_text_list)
+        {
+            let parsed = studies
+                .iter()
+                .filter_map(|study| parse_saved_study(study))
+                .collect::<Vec<_>>();
+            report.restored_fields += parsed.len();
+            report.skipped_fields += studies.len().saturating_sub(parsed.len());
+            self.specification.studies = parsed;
+        }
+        if let Some(cursor) = state
+            .fields
+            .get("cursor_offset")
+            .and_then(ViewValue::as_unsigned)
+            .and_then(|value| usize::try_from(value).ok())
+        {
+            self.cursor_offset = cursor.min(10_000);
+            report.restored_fields += 1;
+        }
+        if let Some(visible) = state
+            .fields
+            .get("visible_observations")
+            .and_then(ViewValue::as_unsigned)
+            .and_then(|value| usize::try_from(value).ok())
+        {
+            self.viewport.visible_observations = (visible > 0).then_some(visible);
+            report.restored_fields += 1;
+        }
+        if let Some(offset) = state
+            .fields
+            .get("pan_offset")
+            .and_then(ViewValue::as_unsigned)
+            .and_then(|value| usize::try_from(value).ok())
+        {
+            self.viewport.pan_offset = offset.min(10_000);
+            report.restored_fields += 1;
+        }
+        if let Some(mode) = state
+            .fields
+            .get("display_mode")
+            .and_then(ViewValue::as_text)
+        {
+            match mode {
+                "CANDLES" => self.display_mode = ChartDisplayMode::Candlesticks,
+                "LINE" => self.display_mode = ChartDisplayMode::Line,
+                _ => report.skipped_fields += 1,
+            }
+            if matches!(mode, "CANDLES" | "LINE") {
+                report.restored_fields += 1;
+            }
+        }
+        if let Some(mode) = state.fields.get("line_mode").and_then(ViewValue::as_text) {
+            match mode {
+                "SMOOTH" => self.line_mode = ChartLineMode::Smooth,
+                "COMPAT" => self.line_mode = ChartLineMode::Compatible,
+                _ => report.skipped_fields += 1,
+            }
+            if matches!(mode, "SMOOTH" | "COMPAT") {
+                report.restored_fields += 1;
+            }
+        }
+
+        const KNOWN_FIELDS: [&str; 12] = [
+            "primary_id",
+            "primary_symbol",
+            "period",
+            "normalized",
+            "comparison_ids",
+            "comparison_symbols",
+            "studies",
+            "cursor_offset",
+            "visible_observations",
+            "pan_offset",
+            "display_mode",
+            "line_mode",
+        ];
+        let unknown = state
+            .fields
+            .keys()
+            .filter(|field| !KNOWN_FIELDS.contains(&field.as_str()))
+            .count();
+        if unknown > 0 {
+            report.skipped_fields += unknown;
+            report
+                .warnings
+                .push(format!("ignored {unknown} future chart field(s)"));
+        }
+        if self.specification.primary != previous_primary
+            || self.specification.period != previous_period
+            || self.specification.comparisons != previous_comparisons
+        {
+            self.queue_history();
+        } else {
+            self.constrain_view_to_history();
+        }
+        self.status = format!(
+            "SAVED VIEW RESTORED · {} FIELD(S) · {} SKIPPED",
+            report.restored_fields, report.skipped_fields
+        );
+        report
+    }
+}
+
+fn parse_saved_study(value: &str) -> Option<Study> {
+    if value == "VOLUME" {
+        return Some(Study::Volume);
+    }
+    let (kind, parameter) = value.split_once(' ')?;
+    let parameter = parameter.parse::<usize>().ok()?;
+    match kind {
+        "SMA" if parameter > 1 => Some(Study::SimpleMovingAverage { window: parameter }),
+        "EMA" if parameter > 1 => Some(Study::ExponentialMovingAverage { window: parameter }),
+        "RSI" if parameter > 1 => Some(Study::RelativeStrengthIndex { period: parameter }),
+        _ => None,
     }
 }
 
@@ -2629,9 +2905,9 @@ mod tests {
         assert!(!workspace.activate_action("control:clear-comparisons"));
 
         let narrow = workspace.actions(Rect::new(0, 0, 42, 18));
-        assert!(narrow.iter().all(|action| {
-            action.area.right() <= 42 && action.area.bottom() <= 18
-        }));
+        assert!(narrow
+            .iter()
+            .all(|action| { action.area.right() <= 42 && action.area.bottom() <= 18 }));
     }
 
     #[test]

@@ -3,6 +3,8 @@ use std::collections::{HashMap, HashSet};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{layout::Rect, Frame};
 
+use super::{ViewRestoreReport, WorkspaceViewState};
+
 pub(super) const MAX_COMMAND_BYTES: usize = 4_096;
 const MAX_COMMAND_TOKENS: usize = 64;
 const MAX_COMMAND_TOKEN_BYTES: usize = 512;
@@ -349,6 +351,30 @@ pub trait Workspace: Send {
     /// Supplies a read-only snapshot of shell focus and layout. Features may
     /// use this as model/view context but cannot mutate it directly.
     fn update_shell_context(&mut self, _context: &ShellContext) {}
+
+    /// Captures provider-neutral, feature-owned view state for durable saved
+    /// views. The default preserves workspace identity while allowing gradual
+    /// adoption of richer field schemas.
+    fn capture_view(&self) -> WorkspaceViewState {
+        WorkspaceViewState::new(self.descriptor().id.as_str())
+    }
+
+    /// Restores a snapshot produced by this workspace. Implementations must
+    /// ignore unknown fields and report degradation instead of panicking.
+    fn restore_view(&mut self, state: &WorkspaceViewState) -> ViewRestoreReport {
+        if state
+            .workspace
+            .eq_ignore_ascii_case(self.descriptor().id.as_str())
+        {
+            ViewRestoreReport::default()
+        } else {
+            ViewRestoreReport::warning(format!(
+                "saved state belongs to {}, not {}",
+                state.workspace,
+                self.descriptor().id.as_str()
+            ))
+        }
+    }
 }
 
 pub struct WorkspaceRegistry {
@@ -538,6 +564,27 @@ impl WorkspaceRegistry {
         for workspace in &mut self.entries {
             workspace.update_shell_context(&context);
         }
+    }
+
+    pub fn capture_view(&self, id: WorkspaceId) -> Option<WorkspaceViewState> {
+        self.entries
+            .iter()
+            .find(|entry| entry.descriptor().id == id)
+            .map(|workspace| workspace.capture_view())
+    }
+
+    pub fn restore_view(
+        &mut self,
+        id: WorkspaceId,
+        state: &WorkspaceViewState,
+    ) -> ViewRestoreReport {
+        self.entries
+            .iter_mut()
+            .find(|entry| entry.descriptor().id == id)
+            .map_or_else(
+                || ViewRestoreReport::warning(format!("workspace {} is unavailable", id.as_str())),
+                |workspace| workspace.restore_view(state),
+            )
     }
 
     /// Resolves a model/user-facing target against IDs, labels, and exact

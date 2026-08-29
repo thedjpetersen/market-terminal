@@ -20,8 +20,8 @@ use crate::ui::{
 
 use super::{
     workspace::{sanitize_actions, MAX_WORKSPACE_ACTIONS},
-    AppIntent, CommandInvocation, ShellContext, Workspace, WorkspaceAction, WorkspaceDescriptor,
-    WorkspaceId,
+    AppIntent, CommandInvocation, ShellContext, ViewRestoreReport, ViewValue, Workspace,
+    WorkspaceAction, WorkspaceDescriptor, WorkspaceId, WorkspaceViewState,
 };
 
 pub const DESK_ID: WorkspaceId = WorkspaceId::new("desk");
@@ -71,6 +71,12 @@ impl DeskPane {
             Self::Chart => "Chart",
             Self::News => "News",
         }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|pane| pane.label().eq_ignore_ascii_case(value))
     }
 
     fn child_action_prefix(self) -> String {
@@ -357,6 +363,63 @@ impl Workspace for DeskWorkspace {
                 ),
             );
         }
+    }
+
+    fn capture_view(&self) -> WorkspaceViewState {
+        WorkspaceViewState::new(DESK_ID.as_str())
+            .with_field(
+                "focused_pane",
+                ViewValue::Text(self.focused.label().to_owned()),
+            )
+            .with_child(self.monitor.capture_view())
+            .with_child(self.chart.capture_view())
+            .with_child(self.news.capture_view())
+    }
+
+    fn restore_view(&mut self, state: &WorkspaceViewState) -> ViewRestoreReport {
+        if !state.workspace.eq_ignore_ascii_case(DESK_ID.as_str()) {
+            return ViewRestoreReport::warning(format!(
+                "saved state belongs to {}, not desk",
+                state.workspace
+            ));
+        }
+        let mut report = ViewRestoreReport::default();
+        if let Some(value) = state.fields.get("focused_pane") {
+            match value.as_text().and_then(DeskPane::parse) {
+                Some(pane) => {
+                    self.select(pane);
+                    report.restored_fields += 1;
+                }
+                None => {
+                    report.skipped_fields += 1;
+                    report
+                        .warnings
+                        .push("desk focus target is unavailable".to_owned());
+                }
+            }
+        }
+        for child in &state.children {
+            let child_report = DeskPane::ALL
+                .into_iter()
+                .find(|pane| {
+                    self.workspace(*pane)
+                        .descriptor()
+                        .id
+                        .as_str()
+                        .eq_ignore_ascii_case(&child.workspace)
+                })
+                .map_or_else(
+                    || {
+                        ViewRestoreReport::warning(format!(
+                            "desk child {} is unavailable",
+                            child.workspace
+                        ))
+                    },
+                    |pane| self.workspace_mut(pane).restore_view(child),
+                );
+            report.merge(child_report);
+        }
+        report
     }
 }
 

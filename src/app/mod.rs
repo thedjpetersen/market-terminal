@@ -3,6 +3,7 @@ mod desk;
 mod events;
 mod input;
 mod keymap;
+mod saved_views;
 mod settings;
 mod workspace;
 mod workspace_presets;
@@ -17,9 +18,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use ratatui::layout::Rect;
 
 use crate::{
-    features::persistence::{SessionState, SessionStateRepository},
+    features::persistence::{FeatureDocumentRepository, SessionState, SessionStateRepository},
     ui::{self, ShellClickTarget},
 };
+use saved_views::{SavedViewCatalog, SavedViewPersistence};
 use workspace_presets::{
     WorkspacePreset, WorkspacePresetCatalog, WorkspacePresetPreview, WorkspaceReturnPoint,
 };
@@ -34,6 +36,7 @@ pub use events::{
 };
 pub use input::{CommandEditMode, InputMode};
 pub(crate) use keymap::{Keymap, ShellAction};
+pub use saved_views::{ViewRestoreReport, ViewValue, WorkspaceViewState};
 pub use settings::RuntimeSettingsSummary;
 pub use workspace::{
     AppIntent, CommandArgument, CommandInvocation, CommandParseError, ShellChrome, ShellContext,
@@ -126,6 +129,8 @@ pub struct App {
     pending_command_inference: Option<PendingCommandInference>,
     command_feedback: Option<String>,
     persistence: Option<Arc<dyn SessionStateRepository>>,
+    saved_view_persistence: Option<SavedViewPersistence>,
+    saved_views: SavedViewCatalog,
     persistence_error: Option<String>,
     recent_commands: Vec<String>,
     preferences: BTreeMap<String, String>,
@@ -168,6 +173,8 @@ impl App {
             pending_command_inference: None,
             command_feedback: None,
             persistence: None,
+            saved_view_persistence: None,
+            saved_views: SavedViewCatalog::default(),
             persistence_error: None,
             recent_commands: Vec::new(),
             preferences: BTreeMap::new(),
@@ -217,6 +224,22 @@ impl App {
         }
         self.persistence = Some(repository);
         self.workspaces.update_shell_context(self.active_workspace);
+        self
+    }
+
+    /// Attaches the independent saved-view catalog. A corrupt or future
+    /// generation never prevents startup; the shell reports the error and
+    /// retains an empty in-memory catalog until the operator repairs it.
+    pub fn with_saved_view_repository(
+        mut self,
+        repository: Arc<dyn FeatureDocumentRepository>,
+    ) -> Self {
+        let persistence = SavedViewPersistence::new(repository);
+        match persistence.load() {
+            Ok(catalog) => self.saved_views = catalog,
+            Err(error) => self.persistence_error = Some(error.to_string()),
+        }
+        self.saved_view_persistence = Some(persistence);
         self
     }
 
@@ -289,6 +312,11 @@ impl App {
                 "PRESET",
                 &["PRESET"][..],
                 "Preview, apply, or return from a versioned role workspace preset.",
+            ),
+            (
+                "VIEW",
+                &["VIEW"][..],
+                "Save, list, restore, or delete a durable typed workspace view.",
             ),
         ];
         commands.extend(
@@ -963,6 +991,11 @@ impl App {
             .filter(|invocation| invocation.function == "PRESET")
         {
             self.apply_workspace_preset_command(invocation);
+        } else if let Some(invocation) = invocation
+            .as_ref()
+            .filter(|invocation| invocation.function == "VIEW")
+        {
+            self.apply_saved_view_command(invocation);
         } else if self.workspaces.resolve_command(&command).is_some() {
             command_target = self.dispatch_workspace_command(&command);
         } else if !command.is_empty() {
@@ -1679,6 +1712,157 @@ impl App {
         self.stage_workspace_preset_preview(&preset);
     }
 
+    fn apply_saved_view_command(&mut self, invocation: &CommandInvocation) {
+        let Some(operation) = invocation.args.first() else {
+            self.describe_saved_views();
+            return;
+        };
+        let reference = invocation.args[1..].join(" ");
+        match operation.to_ascii_uppercase().as_str() {
+            "LIST" if reference.is_empty() => self.describe_saved_views(),
+            "SAVE" if !reference.is_empty() => self.save_current_view(&reference),
+            "RESTORE" | "OPEN" if !reference.is_empty() => self.restore_saved_view(&reference),
+            "DELETE" | "REMOVE" if !reference.is_empty() => self.delete_saved_view(&reference),
+            _ => {
+                self.command_feedback = Some(
+                    "USAGE · VIEW LIST | VIEW SAVE <NAME> | VIEW RESTORE <ID|NAME> | VIEW DELETE <ID|NAME>"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+
+    fn describe_saved_views(&mut self) {
+        self.command_feedback = Some(if self.saved_views.views.is_empty() {
+            "SAVED VIEWS · NONE · USE VIEW SAVE <NAME>".to_owned()
+        } else {
+            let views = self
+                .saved_views
+                .views
+                .iter()
+                .map(|view| format!("{} {}@R{}", view.id, view.label, view.revision))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            format!("SAVED VIEWS · {views}")
+        });
+    }
+
+    fn save_current_view(&mut self, label: &str) {
+        let Some(state) = self.workspaces.capture_view(self.active_workspace) else {
+            self.command_feedback =
+                Some("VIEW SAVE FAILED · ACTIVE WORKSPACE IS UNAVAILABLE".to_owned());
+            return;
+        };
+        let mut catalog = self.saved_views.clone();
+        let saved = catalog.save(
+            label,
+            self.active_workspace.as_str(),
+            self.workspace_order_strings(),
+            state,
+        );
+        let (id, revision, label) = match saved {
+            Ok(saved) => (saved.id, saved.revision, saved.label.clone()),
+            Err(error) => {
+                self.command_feedback = Some(format!("VIEW SAVE FAILED · {error}"));
+                return;
+            }
+        };
+        if let Err(error) = self.persist_saved_view_catalog(&catalog) {
+            self.command_feedback = Some(format!("VIEW SAVE FAILED · {error}"));
+            return;
+        }
+        self.saved_views = catalog;
+        self.command_feedback = Some(format!(
+            "VIEW SAVED · {id} {label} · REVISION {revision} · {}",
+            self.active_workspace.as_str().to_ascii_uppercase()
+        ));
+    }
+
+    fn restore_saved_view(&mut self, reference: &str) {
+        let Some(saved) = self.saved_views.find(reference).cloned() else {
+            self.command_feedback = Some(format!("SAVED VIEW NOT FOUND · {reference}"));
+            return;
+        };
+        let previous = self.active_workspace;
+        self.workspaces
+            .apply_workspace_order(&saved.workspace_order);
+        let requested = self.workspaces.resolve_target(&saved.active_workspace);
+        let target = requested.unwrap_or_else(|| {
+            self.workspaces
+                .workspace_order()
+                .first()
+                .copied()
+                .unwrap_or(previous)
+        });
+        if previous != target {
+            self.workspaces.on_blur(previous);
+            self.active_workspace = target;
+            self.workspaces.on_focus(target);
+            self.publish_workspace_activation(previous);
+        }
+        let mut report = if requested.is_some()
+            && saved
+                .workspace_state
+                .workspace
+                .eq_ignore_ascii_case(target.as_str())
+        {
+            self.workspaces.restore_view(target, &saved.workspace_state)
+        } else {
+            ViewRestoreReport::warning(format!(
+                "saved workspace {} is unavailable; restored remaining layout",
+                saved.active_workspace
+            ))
+        };
+        self.workspaces.update_shell_context(self.active_workspace);
+        self.focused_action = None;
+        self.persist_session();
+        let warning_count = report.warnings.len();
+        let state_summary = if warning_count == 0 && report.skipped_fields == 0 {
+            "EXACT".to_owned()
+        } else {
+            report.warnings.truncate(2);
+            format!(
+                "DEGRADED · {} SKIPPED · {}",
+                report.skipped_fields,
+                report.warnings.join("; ")
+            )
+        };
+        self.command_feedback = Some(format!(
+            "VIEW RESTORED · {} {} · {} FIELD(S) · {state_summary}",
+            saved.id, saved.label, report.restored_fields
+        ));
+    }
+
+    fn delete_saved_view(&mut self, reference: &str) {
+        let mut catalog = self.saved_views.clone();
+        let Some(removed) = catalog.delete(reference) else {
+            self.command_feedback = Some(format!("SAVED VIEW NOT FOUND · {reference}"));
+            return;
+        };
+        if let Err(error) = self.persist_saved_view_catalog(&catalog) {
+            self.command_feedback = Some(format!("VIEW DELETE FAILED · {error}"));
+            return;
+        }
+        self.saved_views = catalog;
+        self.command_feedback = Some(format!("VIEW DELETED · {} {}", removed.id, removed.label));
+    }
+
+    fn persist_saved_view_catalog(
+        &mut self,
+        catalog: &SavedViewCatalog,
+    ) -> Result<(), saved_views::SavedViewError> {
+        let Some(persistence) = &self.saved_view_persistence else {
+            return Err(saved_views::SavedViewError::Invalid(
+                "saved view persistence is not configured",
+            ));
+        };
+        let result = persistence.save(catalog);
+        if let Err(error) = &result {
+            self.persistence_error = Some(error.to_string());
+        }
+        result
+    }
+
     fn stage_workspace_preset_preview(&mut self, preset: &WorkspacePreset) {
         let current_order = self.workspace_order_strings();
         let projected = self
@@ -2112,7 +2296,10 @@ mod tests {
             launchpad::ID as LAUNCHPAD,
             news::ID as NEWS,
             overview::ID as OVERVIEW,
-            persistence::{PersistenceError, SessionState},
+            persistence::{
+                DocumentId, FeatureDocument, FeatureDocumentRepository, FeatureKey,
+                PersistenceError, SessionState,
+            },
             portfolio::ID as PORTFOLIO,
             security::ID as SECURITY,
             spreadsheet::ID as SPREADSHEET,
@@ -3670,6 +3857,59 @@ mod tests {
         state: Mutex<Option<SessionState>>,
     }
 
+    #[derive(Default)]
+    struct MemoryFeatureRepository {
+        documents: Mutex<BTreeMap<(String, String), FeatureDocument>>,
+    }
+
+    impl FeatureDocumentRepository for MemoryFeatureRepository {
+        fn load(
+            &self,
+            feature: &FeatureKey,
+            id: &DocumentId,
+        ) -> Result<Option<FeatureDocument>, PersistenceError> {
+            Ok(self
+                .documents
+                .lock()
+                .expect("feature documents lock")
+                .get(&(feature.as_str().to_owned(), id.as_str().to_owned()))
+                .cloned())
+        }
+
+        fn save(&self, document: &FeatureDocument) -> Result<(), PersistenceError> {
+            self.documents
+                .lock()
+                .expect("feature documents lock")
+                .insert(
+                    (
+                        document.feature().as_str().to_owned(),
+                        document.id().as_str().to_owned(),
+                    ),
+                    document.clone(),
+                );
+            Ok(())
+        }
+
+        fn list(&self, feature: &FeatureKey) -> Result<Vec<DocumentId>, PersistenceError> {
+            self.documents
+                .lock()
+                .expect("feature documents lock")
+                .keys()
+                .filter(|(candidate, _)| candidate == feature.as_str())
+                .map(|(_, id)| DocumentId::new(id.clone()).map_err(PersistenceError::from))
+                .collect()
+        }
+
+        fn delete(&self, feature: &FeatureKey, id: &DocumentId) -> Result<bool, PersistenceError> {
+            Ok(self
+                .documents
+                .lock()
+                .expect("feature documents lock")
+                .remove(&(feature.as_str().to_owned(), id.as_str().to_owned()))
+                .is_some())
+        }
+    }
+
     #[test]
     fn a_missing_session_opens_first_run_setup_once_and_close_creates_state() {
         let repository = Arc::new(MemorySessionRepository::default());
@@ -3811,6 +4051,75 @@ mod tests {
         assert_eq!(saved.workspace_order(), custom_order);
         assert_eq!(saved.active_workspace(), Some(PORTFOLIO.as_str()));
         assert!(!saved.preferences().contains_key(PRESET_RETURN_PREFERENCE));
+    }
+
+    #[test]
+    fn typed_multi_pane_view_survives_restart_and_restores_exact_state() {
+        let session = Arc::new(MemorySessionRepository::default());
+        let documents = Arc::new(MemoryFeatureRepository::default());
+        let mut app = bootstrap::demo_app()
+            .with_saved_view_repository(documents.clone())
+            .with_session_repository(session.clone());
+        app.settings_visible = false;
+        app.settings_first_run = false;
+
+        app.command = "DESK CHART".to_owned();
+        app.execute_command();
+        app.handle_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+        app.command = "VIEW SAVE Multi Pane Research".to_owned();
+        app.execute_command();
+
+        assert_eq!(app.saved_views.views.len(), 1);
+        let expected = app.saved_views.views[0].workspace_state.clone();
+        assert_eq!(expected.workspace, DESK_ID.as_str());
+        assert_eq!(expected.children.len(), 3);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
+        let mut restarted = bootstrap::demo_app()
+            .with_saved_view_repository(documents)
+            .with_session_repository(session);
+        restarted.settings_visible = false;
+        restarted.settings_first_run = false;
+        restarted.command = "VIEW RESTORE Multi Pane Research".to_owned();
+        restarted.execute_command();
+
+        assert_eq!(restarted.active_workspace(), DESK_ID);
+        assert_eq!(
+            restarted.workspaces.capture_view(DESK_ID).unwrap(),
+            expected
+        );
+        assert!(restarted
+            .command_feedback()
+            .is_some_and(|message| message.contains("VIEW RESTORED")));
+    }
+
+    #[test]
+    fn saved_view_degrades_explicitly_when_its_workspace_was_retired() {
+        let registry = WorkspaceRegistry::new(vec![
+            Box::new(CapturingWorkspace),
+            Box::new(TestWorkspace {
+                id: PORTFOLIO,
+                hotkey: 'p',
+            }),
+        ]);
+        let mut app = App::new(registry, CAPTURING);
+        app.saved_views
+            .save(
+                "Retired research",
+                "retired",
+                vec!["retired".to_owned(), PORTFOLIO.as_str().to_owned()],
+                WorkspaceViewState::new("retired"),
+            )
+            .unwrap();
+
+        app.restore_saved_view("Retired research");
+
+        assert_eq!(app.active_workspace(), PORTFOLIO);
+        assert!(app.command_feedback().is_some_and(|message| {
+            message.contains("DEGRADED") && message.contains("retired")
+        }));
     }
 
     #[test]

@@ -38,7 +38,7 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "help",
         prepare: prepare_help,
-        hashes: [0x14bb21c0d0e8e0e0, 0x99b4a376d072a328, 0x0efb5dcccdb3d628],
+        hashes: [0x14055b2667c88df3, 0xf3e5c9807260781f, 0x5032f11ee2437987],
     },
     Golden {
         name: "workspace-preset-preview",

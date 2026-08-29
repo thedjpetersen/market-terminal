@@ -289,6 +289,7 @@ pub fn persistent_app() -> App {
         runtime_settings,
     })
     .with_keymap(keymap)
+    .with_saved_view_repository(repository.clone())
     .with_session_repository(repository)
 }
 

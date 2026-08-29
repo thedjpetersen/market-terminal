@@ -123,6 +123,25 @@ current active workspace and complete custom order in crash-safe session state.
 restart. Unknown or retired workspace IDs are disclosed and skipped while new
 workspaces retain their relative order.
 
+Save an exact working view without leaving the keyboard:
+
+```text
+VIEW SAVE Morning Research
+VIEW LIST
+VIEW RESTORE Morning Research
+VIEW DELETE Morning Research
+```
+
+Saved views have stable numeric IDs, case-insensitive names, monotonic
+revisions, and independent crash-safe persistence. The current vertical slice
+restores workspace order plus the active workspace; Desk views additionally
+retain the focused pane and nested Monitor, Chart, and News state. Chart state
+includes canonical instrument identity, period, normalization, comparisons,
+studies, inspection cursor, zoom/pan window, and display modes. Restores report
+`EXACT` only when every applicable field was accepted. A retired workspace,
+malformed instrument, unsupported field, or future capability produces an
+explicit `DEGRADED` result while the remaining valid layout is recovered.
+
 Run `LAUNCH` (or press `L`) for the persistent Launchpad. Arrow keys or HJKL
 select tiles, `Enter` opens the selected command, `<`/`>` reorders it, and `X`
 twice removes it. Tiles also participate in spatial focus, mouse routing, and
@@ -152,8 +171,8 @@ Vi `NORMAL` mode: use `h`/`l`, `0`/`$`, `w`/`b`, `x`, `D`, `dd`, and
 `i`/`a`/`I`/`A`. Press `Esc` again to cancel the command.
 
 The interactive binary restores the active workspace, workspace order, preset
-return point, Launchpad tiles, and recent commands from crash-safe, versioned
-local state. Set
+return point, saved views, Launchpad tiles, and recent commands from crash-safe,
+versioned local state. Set
 `MARKET_TERMINAL_STATE_DIR` to override the platform default. Corrupt current
 state falls back to the previous valid generation and never blocks startup.
 
