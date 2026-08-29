@@ -49,10 +49,21 @@ bootstrap ──▶ app kernel
   page by identity rather than row index. Reordered rows therefore restore
   exactly; a disappeared filing selects the first available row and discloses
   the fallback in the source-status panel. Provider page data and document URLs
-  never enter the saved-view document. Unknown fields remain inert data, so a newer
-  snapshot can degrade on an older binary without coupling migrations to the
-  registry or panicking at startup. Session and saved-view documents remain
-  independent failure domains.
+  never enter the saved-view document. News owns its filter and selection schema:
+  region, topic, symbol, unread-only, saved-only, Stories/Events subview, and
+  optional provider story ID. Restore applies bounded filters first and then
+  resolves the story only within the filtered result by identity, so feed
+  reordering cannot silently change the selected headline. Removed stories
+  degrade to the first visible result, or to a disclosed empty state when no
+  result survives. Calendar rendering selects an explicit full or compact column
+  schema before constructing its table; narrow detail panes therefore preserve
+  time, region, importance, event, and survey instead of passing an
+  overconstrained layout to the table solver. The in-terminal reader is a trapped
+  transient modal rather than layout state; article bodies, publisher URLs, read
+  history, and bookmarks remain in their owning News data/session boundary.
+  Unknown fields remain inert data, so a newer snapshot can degrade on an older
+  binary without coupling migrations to the registry or panicking at startup.
+  Session and saved-view documents remain independent failure domains.
   It snapshots its shell state through the persistence context's narrow
   repository ports.
 - `features/<name>` is a bounded context. It owns its domain types, outbound

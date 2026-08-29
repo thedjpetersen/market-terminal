@@ -17,7 +17,8 @@ use ratatui::{
 
 use crate::{
     app::{
-        AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor,
+        AppIntent, CommandInvocation, ViewRestoreReport, ViewValue, Workspace, WorkspaceAction,
+        WorkspaceDescriptor, WorkspaceViewState,
     },
     ui::{
         components::terminal_block,
@@ -105,6 +106,28 @@ impl NewsWorkspace {
             .min(self.visible_indices(&workbench).len().saturating_sub(1));
     }
 
+    fn select_story_identity(&mut self, workbench: &NewsWorkbench, story_id: &str) -> bool {
+        let visible = self.visible_indices(workbench);
+        let Some(ordinal) = visible.iter().position(|index| {
+            workbench
+                .stories
+                .get(*index)
+                .is_some_and(|story| story.id == story_id)
+        }) else {
+            self.selected = 0;
+            self.detail_expanded = false;
+            self.detail_scroll = 0;
+            self.article_status = if visible.is_empty() {
+                "SAVED STORY UNAVAILABLE · NO STORIES MATCH RESTORED FILTERS".to_owned()
+            } else {
+                "SAVED STORY UNAVAILABLE · USING FIRST VISIBLE STORY".to_owned()
+            };
+            return false;
+        };
+        self.selected = ordinal;
+        true
+    }
+
     fn control_label(&self, control: NewsControl, workbench: &NewsWorkbench) -> String {
         let selected = self.selected_story(workbench);
         match control {
@@ -147,11 +170,7 @@ impl NewsWorkspace {
         }
     }
 
-    fn control_areas(
-        &self,
-        area: Rect,
-        workbench: &NewsWorkbench,
-    ) -> Vec<(NewsControl, Rect)> {
+    fn control_areas(&self, area: Rect, workbench: &NewsWorkbench) -> Vec<(NewsControl, Rect)> {
         pack_control_areas(
             area,
             NewsControl::ALL.into_iter().map(|control| {
@@ -166,8 +185,9 @@ impl NewsWorkspace {
         match control {
             NewsControl::Reset => self.filter.is_active() || self.show_calendar,
             NewsControl::ReadState | NewsControl::Bookmark => selected.is_some(),
-            NewsControl::Security | NewsControl::InsertSheet => selected
-                .is_some_and(|story| !story.related_symbols.is_empty()),
+            NewsControl::Security | NewsControl::InsertSheet => {
+                selected.is_some_and(|story| !story.related_symbols.is_empty())
+            }
             _ => true,
         }
     }
@@ -233,7 +253,10 @@ impl NewsWorkspace {
                 |story| {
                     format!(
                         "Open {} security research",
-                        story.related_symbols.first().map_or("linked", String::as_str)
+                        story
+                            .related_symbols
+                            .first()
+                            .map_or("linked", String::as_str)
                     )
                 },
             ),
@@ -242,7 +265,10 @@ impl NewsWorkspace {
                 |story| {
                     format!(
                         "Insert {} into Spreadsheet",
-                        story.related_symbols.first().map_or("linked", String::as_str)
+                        story
+                            .related_symbols
+                            .first()
+                            .map_or("linked", String::as_str)
                     )
                 },
             ),
@@ -261,8 +287,7 @@ impl NewsWorkspace {
         }
         let selected = self.selected_story(workbench);
         if control.is_story_specific()
-            && expected_identity
-                != selected.map(|story| story_identity(&story.id))
+            && expected_identity != selected.map(|story| story_identity(&story.id))
         {
             return false;
         }
@@ -680,26 +705,22 @@ impl Workspace for NewsWorkspace {
         let visible_rows = usize::from(areas.stories.height.saturating_sub(2)).min(visible.len());
         let mut actions = self.header_actions(area, &workbench);
         if !self.show_calendar {
-            actions.extend(
-                visible
-                    .iter()
-                    .take(visible_rows)
-                    .enumerate()
-                    .filter_map(|(ordinal, index)| {
-                        let story = workbench.stories.get(*index)?;
-                        let identity = story_identity(&story.id);
-                        let action = WorkspaceAction::new(
-                            format!("story:{ordinal}:{identity:016x}"),
-                            format!("Read {}", short_title(&story.headline.title)),
-                            news_story_row_area(areas.stories, ordinal)?,
-                        );
-                        Some(if ordinal == self.selected {
-                            action.preferred()
-                        } else {
-                            action
-                        })
-                    }),
-            );
+            actions.extend(visible.iter().take(visible_rows).enumerate().filter_map(
+                |(ordinal, index)| {
+                    let story = workbench.stories.get(*index)?;
+                    let identity = story_identity(&story.id);
+                    let action = WorkspaceAction::new(
+                        format!("story:{ordinal}:{identity:016x}"),
+                        format!("Read {}", short_title(&story.headline.title)),
+                        news_story_row_area(areas.stories, ordinal)?,
+                    );
+                    Some(if ordinal == self.selected {
+                        action.preferred()
+                    } else {
+                        action
+                    })
+                },
+            ));
         }
         if let Some(detail) = areas.detail.filter(|_| !self.show_calendar) {
             actions.push(WorkspaceAction::new(
@@ -874,13 +895,13 @@ impl Workspace for NewsWorkspace {
                 ""
             },
         );
-        frame.render_widget(
-            terminal_block("NEWS", "FILTERS & WORKFLOW"),
-            areas.header,
-        );
+        frame.render_widget(terminal_block("NEWS", "FILTERS & WORKFLOW"), areas.header);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(format!(" {} RESULTS  {unread} UNREAD  ", visible.len()), Style::new().bg(AMBER.into()).fg(BG.into()).bold()),
+                Span::styled(
+                    format!(" {} RESULTS  {unread} UNREAD  ", visible.len()),
+                    Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
+                ),
                 Span::styled(filter_label, INK),
                 Span::styled("  ", MUTED),
                 Span::styled(feed_status, YELLOW),
@@ -977,6 +998,202 @@ impl Workspace for NewsWorkspace {
             events,
         );
     }
+
+    fn capture_view(&self) -> WorkspaceViewState {
+        let workbench = self.query.load_workbench();
+        let mut state = WorkspaceViewState::new(ID.as_str())
+            .with_field("unread_only", ViewValue::Boolean(self.filter.unread_only))
+            .with_field(
+                "bookmarked_only",
+                ViewValue::Boolean(self.filter.bookmarked_only),
+            )
+            .with_field(
+                "subview",
+                ViewValue::Text(if self.show_calendar {
+                    "events".to_owned()
+                } else {
+                    "stories".to_owned()
+                }),
+            );
+        for (name, value) in [
+            ("region", self.filter.region.as_ref()),
+            ("topic", self.filter.topic.as_ref()),
+            ("symbol", self.filter.symbol.as_ref()),
+        ] {
+            if let Some(value) = value {
+                state = state.with_field(name, ViewValue::Text(value.clone()));
+            }
+        }
+        if let Some(story) = self.selected_story(&workbench) {
+            state = state.with_field("selected_story_id", ViewValue::Text(story.id.clone()));
+        }
+        state
+    }
+
+    fn restore_view(&mut self, state: &WorkspaceViewState) -> ViewRestoreReport {
+        if !state.workspace.eq_ignore_ascii_case(ID.as_str()) {
+            return ViewRestoreReport::warning(format!(
+                "saved state belongs to {}, not news",
+                state.workspace
+            ));
+        }
+
+        self.filter = NewsFilter::default();
+        self.show_calendar = false;
+        self.selected = 0;
+        self.detail_expanded = false;
+        self.detail_scroll = 0;
+        self.article_status = "ENTER READS HERE · O OPENS THE PUBLISHER".to_owned();
+
+        let mut report = ViewRestoreReport::default();
+        restore_filter_field(state, "region", 8, &mut self.filter.region, &mut report);
+        restore_filter_field(state, "topic", 16, &mut self.filter.topic, &mut report);
+        restore_filter_field(state, "symbol", 32, &mut self.filter.symbol, &mut report);
+        restore_boolean_field(
+            state,
+            "unread_only",
+            &mut self.filter.unread_only,
+            &mut report,
+        );
+        restore_boolean_field(
+            state,
+            "bookmarked_only",
+            &mut self.filter.bookmarked_only,
+            &mut report,
+        );
+        if let Some(value) = state.fields.get("subview") {
+            match value.as_text() {
+                Some("stories") => report.restored_fields += 1,
+                Some("events") => {
+                    self.show_calendar = true;
+                    report.restored_fields += 1;
+                }
+                _ => {
+                    report.skipped_fields += 1;
+                    report
+                        .warnings
+                        .push("news subview is unavailable".to_owned());
+                }
+            }
+        }
+
+        let workbench = self.query.load_workbench();
+        if let Some(value) = state.fields.get("selected_story_id") {
+            match value.as_text().filter(|value| valid_story_id(value)) {
+                Some(story_id) if self.select_story_identity(&workbench, story_id) => {
+                    report.restored_fields += 1;
+                }
+                Some(_) => {
+                    report.skipped_fields += 1;
+                    report
+                        .warnings
+                        .push("saved news story is no longer available".to_owned());
+                }
+                None => {
+                    report.skipped_fields += 1;
+                    report
+                        .warnings
+                        .push("saved news story identity is invalid".to_owned());
+                }
+            }
+        } else {
+            self.clamp_selection();
+        }
+
+        const KNOWN_FIELDS: [&str; 7] = [
+            "region",
+            "topic",
+            "symbol",
+            "unread_only",
+            "bookmarked_only",
+            "subview",
+            "selected_story_id",
+        ];
+        let unknown = state
+            .fields
+            .keys()
+            .filter(|field| !KNOWN_FIELDS.contains(&field.as_str()))
+            .count();
+        if unknown > 0 {
+            report.skipped_fields += unknown;
+            report
+                .warnings
+                .push(format!("ignored {unknown} future news field(s)"));
+        }
+        if !state.children.is_empty() {
+            report.skipped_fields += state.children.len();
+            report.warnings.push(format!(
+                "ignored {} future news child state(s)",
+                state.children.len()
+            ));
+        }
+        report
+    }
+}
+
+fn restore_filter_field(
+    state: &WorkspaceViewState,
+    name: &str,
+    maximum_bytes: usize,
+    target: &mut Option<String>,
+    report: &mut ViewRestoreReport,
+) {
+    let Some(value) = state.fields.get(name) else {
+        return;
+    };
+    match value
+        .as_text()
+        .filter(|value| valid_filter_token(value, maximum_bytes))
+    {
+        Some(value) => {
+            *target = Some(value.to_owned());
+            report.restored_fields += 1;
+        }
+        None => {
+            report.skipped_fields += 1;
+            report
+                .warnings
+                .push(format!("news {name} filter is invalid"));
+        }
+    }
+}
+
+fn restore_boolean_field(
+    state: &WorkspaceViewState,
+    name: &str,
+    target: &mut bool,
+    report: &mut ViewRestoreReport,
+) {
+    let Some(value) = state.fields.get(name) else {
+        return;
+    };
+    match value.as_boolean() {
+        Some(value) => {
+            *target = value;
+            report.restored_fields += 1;
+        }
+        None => {
+            report.skipped_fields += 1;
+            report.warnings.push(format!("news {name} flag is invalid"));
+        }
+    }
+}
+
+fn valid_filter_token(value: &str, maximum_bytes: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= maximum_bytes
+        && value.bytes().all(|byte| {
+            byte.is_ascii_uppercase()
+                || byte.is_ascii_digit()
+                || matches!(byte, b'-' | b'.' | b'_' | b'^' | b'/')
+        })
+}
+
+fn valid_story_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
 }
 
 fn story_identity(id: &str) -> u64 {
@@ -1018,14 +1235,8 @@ fn short_title(title: &str) -> String {
 
 fn news_story_row_area(area: Rect, ordinal: usize) -> Option<Rect> {
     let y = area.y.saturating_add(1 + u16::try_from(ordinal).ok()?);
-    (y < area.bottom().saturating_sub(1)).then(|| {
-        Rect::new(
-            area.x.saturating_add(1),
-            y,
-            area.width.saturating_sub(2),
-            1,
-        )
-    })
+    (y < area.bottom().saturating_sub(1))
+        .then(|| Rect::new(area.x.saturating_add(1), y, area.width.saturating_sub(2), 1))
 }
 
 fn story_open_area(area: Rect) -> Rect {
@@ -1305,6 +1516,32 @@ fn render_calendar(frame: &mut Frame, area: Rect, workbench: &NewsWorkbench) {
         );
         return;
     }
+    if area.width < 72 {
+        let rows = workbench.events.iter().map(|event| {
+            Row::new(vec![
+                Cell::from(event.time.clone()),
+                Cell::from(event.region.clone()),
+                Cell::from(event.importance.label()),
+                Cell::from(event.event.clone()),
+                Cell::from(event.survey.clone()),
+            ])
+        });
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(6),
+                Constraint::Length(4),
+                Constraint::Length(6),
+                Constraint::Min(14),
+                Constraint::Length(9),
+            ],
+        )
+        .header(Row::new(["TIME", "REG", "IMP", "EVENT", "SURVEY"]).style(AMBER))
+        .column_spacing(1)
+        .block(terminal_block("ECO", "ECONOMIC EVENT CALENDAR"));
+        frame.render_widget(table, area);
+        return;
+    }
     let rows = workbench.events.iter().map(|event| {
         Row::new(vec![
             Cell::from(event.time.clone()),
@@ -1378,6 +1615,15 @@ mod tests {
             let mut workbench = NewsWorkbench::from_snapshot(self.load_news());
             workbench.stories[0].url = Some("https://example.com/markets-gain".to_owned());
             workbench
+        }
+    }
+
+    struct ReorderedQuery;
+    impl NewsFeed for ReorderedQuery {
+        fn load_news(&self) -> NewsSnapshot {
+            let mut headlines = headlines();
+            headlines.reverse();
+            NewsSnapshot { headlines }
         }
     }
 
@@ -1476,6 +1722,97 @@ mod tests {
     }
 
     #[test]
+    fn typed_view_round_trips_all_filters_subview_and_story_identity() {
+        let mut source = NewsWorkspace::new(Arc::new(StubQuery));
+        source.filter = NewsFilter {
+            region: Some("AS".to_owned()),
+            topic: Some("TEC".to_owned()),
+            symbol: Some("NVDA".to_owned()),
+            unread_only: true,
+            bookmarked_only: true,
+        };
+        source.bookmarks.insert("14:00:TEC:Chip rally".to_owned());
+        source.show_calendar = true;
+        source.detail_expanded = true;
+        source.detail_scroll = 42;
+        let state = source.capture_view();
+
+        assert_eq!(state.fields.len(), 7);
+        assert_eq!(
+            state.fields.get("selected_story_id"),
+            Some(&ViewValue::Text("14:00:TEC:Chip rally".to_owned()))
+        );
+        assert_eq!(
+            state.fields.get("subview"),
+            Some(&ViewValue::Text("events".to_owned()))
+        );
+        assert!(!state.fields.contains_key("reader_open"));
+        assert!(!state.fields.contains_key("detail_scroll"));
+
+        let mut restored = NewsWorkspace::new(Arc::new(StubQuery));
+        restored.bookmarks.insert("14:00:TEC:Chip rally".to_owned());
+        let report = restored.restore_view(&state);
+
+        assert_eq!(report.restored_fields, 7);
+        assert_eq!(report.skipped_fields, 0);
+        assert!(report.warnings.is_empty());
+        assert!(restored.show_calendar);
+        assert!(!restored.detail_expanded);
+        assert_eq!(restored.detail_scroll, 0);
+        assert_eq!(restored.capture_view(), state);
+    }
+
+    #[test]
+    fn typed_view_follows_story_identity_after_feed_reordering() {
+        let mut source = NewsWorkspace::new(Arc::new(StubQuery));
+        source.selected = 1;
+        let state = source.capture_view();
+
+        let mut restored = NewsWorkspace::new(Arc::new(ReorderedQuery));
+        let report = restored.restore_view(&state);
+
+        assert_eq!(report.restored_fields, 4);
+        assert_eq!(report.skipped_fields, 0);
+        assert_eq!(restored.selected, 0);
+        assert_eq!(restored.capture_view(), state);
+    }
+
+    #[test]
+    fn typed_view_degrades_invalid_future_and_missing_story_state() {
+        let state = WorkspaceViewState::new(ID.as_str())
+            .with_field("region", ViewValue::Text("asia".to_owned()))
+            .with_field("topic", ViewValue::Text("TEC?admin=true".to_owned()))
+            .with_field("symbol", ViewValue::Boolean(true))
+            .with_field("unread_only", ViewValue::Text("yes".to_owned()))
+            .with_field("bookmarked_only", ViewValue::Unsigned(1))
+            .with_field("subview", ViewValue::Text("future".to_owned()))
+            .with_field(
+                "selected_story_id",
+                ViewValue::Text("retired-provider-story".to_owned()),
+            )
+            .with_field("future_field", ViewValue::Boolean(true))
+            .with_child(WorkspaceViewState::new("future-news-child"));
+        let mut restored = NewsWorkspace::new(Arc::new(StubQuery));
+        restored.filter.region = Some("US".to_owned());
+        restored.show_calendar = true;
+        restored.detail_expanded = true;
+
+        let report = restored.restore_view(&state);
+
+        assert_eq!(report.restored_fields, 0);
+        assert_eq!(report.skipped_fields, 9);
+        assert_eq!(report.warnings.len(), 9);
+        assert_eq!(restored.filter, NewsFilter::default());
+        assert!(!restored.show_calendar);
+        assert!(!restored.detail_expanded);
+        assert_eq!(restored.selected, 0);
+        assert_eq!(
+            restored.article_status,
+            "SAVED STORY UNAVAILABLE · USING FIRST VISIBLE STORY"
+        );
+    }
+
+    #[test]
     fn bookmark_and_read_state_are_independent() {
         let mut workspace = NewsWorkspace::new(Arc::new(StubQuery));
         workspace.handle_key(KeyEvent::new(
@@ -1543,6 +1880,34 @@ mod tests {
     }
 
     #[test]
+    fn compact_calendar_preserves_time_region_importance_and_survey_columns() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let area = Rect::new(0, 0, 51, 20);
+        let workbench = NewsWorkbench::from_snapshot(NewsSnapshot {
+            headlines: headlines(),
+        });
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| render_calendar(frame, area, &workbench))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("TIME"));
+        assert!(rendered.contains("REG"));
+        assert!(rendered.contains("IMP"));
+        assert!(rendered.contains("EVENT"));
+        assert!(rendered.contains("SURVEY"));
+        assert!(!rendered.contains("PRIOR"));
+    }
+
+    #[test]
     fn actions_share_geometry_revalidate_story_identity_and_trap_the_reader() {
         let area = Rect::new(5, 3, 120, 30);
         let mut workspace = NewsWorkspace::new(Arc::new(LinkedQuery));
@@ -1568,9 +1933,7 @@ mod tests {
         assert!(actions
             .iter()
             .any(|action| action.id.starts_with("story-web:") && action.enabled));
-        assert!(actions
-            .iter()
-            .any(|action| action.id == "view:events"));
+        assert!(actions.iter().any(|action| action.id == "view:events"));
 
         let stale_read = actions
             .iter()
@@ -1598,9 +1961,7 @@ mod tests {
         assert!(modal
             .iter()
             .any(|action| action.id.starts_with("modal:web:") && !action.enabled));
-        assert!(modal
-            .iter()
-            .all(|action| action.id.starts_with("modal:")));
+        assert!(modal.iter().all(|action| action.id.starts_with("modal:")));
         let close = modal
             .iter()
             .find(|action| action.id.starts_with("modal:close:"))

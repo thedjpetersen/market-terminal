@@ -34,7 +34,10 @@ Alert documents are sampled at startup so rendering performs no filesystem I/O.
   cursor/viewport positions, and display modes. Security fields include its
   provider-neutral instrument ID, terminal symbol, stable research-tab key, and
   optional Form 4 accession; they exclude SEC page content, filing URLs, prices,
-  fundamentals, and publisher responses.
+  fundamentals, and publisher responses. News fields include bounded region,
+  topic, and symbol filters, unread/saved filter flags, the Stories/Events
+  subview, and optional provider story ID. They exclude headline or article
+  content, publisher URLs, reader state, read history, and bookmark membership.
   Spreadsheet view fields include the local workbook ID, worksheet name and
   ordinal fallback, selected cell, and viewport origin; cell content remains in
   the separately versioned workbook document. Saved views do not persist

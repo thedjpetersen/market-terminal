@@ -1,7 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use market_terminal::{
-    app::WorkspaceRegistry,
+    app::{CommandInvocation, Workspace, WorkspaceRegistry},
     bootstrap,
+    features::news::{Headline, NewsFeed, NewsSnapshot, NewsWorkspace},
     features::overview::{
         LiveOverviewSnapshot, OverviewHealthState, OverviewPriority, OverviewQuery,
         OverviewSavedWork, OverviewSnapshot, OverviewSourceHealth, OverviewWorkspace,
@@ -141,6 +142,19 @@ fn offline_mission_control_matches_semantic_goldens_at_standard_sizes() {
     );
 }
 
+#[test]
+fn filtered_news_events_match_semantic_goldens_at_standard_sizes() {
+    let expected = [0x366d6cb47e5addfe, 0x66205393d2a971e3, 0x9e1a8d8bb1e245e3];
+    let actual = SIZES.map(|(width, height)| {
+        let workspace = filtered_news_workspace();
+        render_news_hash(&workspace, width, height)
+    });
+    assert_eq!(
+        actual, expected,
+        "review the filtered News events frame before updating hashes"
+    );
+}
+
 fn render_hash(prepare: fn(&mut App), width: u16, height: u16) -> u64 {
     let mut app = bootstrap::demo_app();
     prepare(&mut app);
@@ -154,8 +168,21 @@ fn render_app_hash(app: &App, width: u16, height: u16) -> u64 {
         .draw(|frame| runtime::render(frame, app))
         .expect("render golden frame");
 
+    semantic_hash(terminal.backend().buffer())
+}
+
+fn render_news_hash(workspace: &NewsWorkspace, width: u16, height: u16) -> u64 {
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| workspace.render(frame, frame.area()))
+        .expect("render filtered News golden frame");
+    semantic_hash(terminal.backend().buffer())
+}
+
+fn semantic_hash(buffer: &ratatui::buffer::Buffer) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
-    for cell in &terminal.backend().buffer().content {
+    for cell in &buffer.content {
         for byte in cell.symbol().as_bytes() {
             hash ^= u64::from(*byte);
             hash = hash.wrapping_mul(0x100000001b3);
@@ -235,11 +262,48 @@ impl OverviewQuery for OfflineMissionQuery {
     }
 }
 
+struct GoldenNewsFeed;
+
+impl NewsFeed for GoldenNewsFeed {
+    fn load_news(&self) -> NewsSnapshot {
+        NewsSnapshot {
+            headlines: vec![
+                Headline {
+                    time: "16:00".to_owned(),
+                    topic: "TOP".to_owned(),
+                    title: "Markets gain".to_owned(),
+                    region: "US".to_owned(),
+                },
+                Headline {
+                    time: "14:00".to_owned(),
+                    topic: "TEC".to_owned(),
+                    title: "Chip rally".to_owned(),
+                    region: "AS".to_owned(),
+                },
+            ],
+        }
+    }
+}
+
 fn offline_mission_app() -> App {
     let registry = WorkspaceRegistry::new(vec![Box::new(OverviewWorkspace::new(Arc::new(
         OfflineMissionQuery,
     )))]);
     App::new(registry, OVERVIEW)
+}
+
+fn filtered_news_workspace() -> NewsWorkspace {
+    let mut workspace = NewsWorkspace::new(Arc::new(GoldenNewsFeed));
+    workspace.handle_command(&CommandInvocation {
+        function: "NEWS".to_owned(),
+        args: vec![
+            "--region=AS".to_owned(),
+            "--topic=TEC".to_owned(),
+            "--symbol=NVDA".to_owned(),
+            "--events".to_owned(),
+        ],
+    });
+    workspace
 }
 
 fn prepare_overview(_app: &mut App) {}

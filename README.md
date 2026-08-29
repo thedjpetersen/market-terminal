@@ -165,14 +165,18 @@ inspection cursor, zoom/pan window, and display modes. Security views retain
 the provider-neutral instrument ID, terminal symbol, active research tab, and
 stable selected Form 4 accession. The selection follows the accession when a
 refresh reorders rows; a missing filing falls back visibly instead of opening a
-different document. Spreadsheet views retain the durable
-workbook identity, stable worksheet name with ordinal fallback, selected cell,
-and row/column viewport. Workbook cells, clipboard contents, and undo history
-remain in their owning document/session boundaries rather than being copied into
-a layout. Restores report `EXACT` only when every applicable field was accepted.
-A retired workspace, missing workbook, renamed worksheet, malformed instrument
-or filing identity, unsupported field, or future capability produces an explicit
-`DEGRADED` result while the remaining valid layout is recovered.
+different document. News views retain region, topic, symbol, unread, and saved
+filters; the Stories/Events subview; and selected story identity. Selection
+follows the story when a refreshed feed reorders rows; a missing story falls
+back visibly. Reader modals, article text, URLs, read history, and bookmarks
+remain outside layout storage. Spreadsheet views retain the durable workbook
+identity, stable worksheet name with ordinal fallback, selected cell, and
+row/column viewport. Workbook cells, clipboard contents, and undo history remain
+in their owning document/session boundaries rather than being copied into a
+layout. Restores report `EXACT` only when every applicable field was accepted. A
+retired workspace, missing workbook or story, renamed worksheet, malformed
+instrument or filing identity, unsupported field, or future capability produces
+an explicit `DEGRADED` result while the remaining valid layout is recovered.
 
 Run `LAUNCH` (or press `L`) for the persistent Launchpad. Arrow keys or HJKL
 select tiles, `Enter` opens the selected destination, `<`/`>` reorders it, and `X`
