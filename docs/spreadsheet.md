@@ -101,6 +101,16 @@ Persistent mode loads `default` at startup and autosaves successful mutations.
 Workbook payloads are schema-versioned, bounded, written atomically, and retain
 a previous valid generation for recovery.
 
+`VIEW SAVE <name>` captures Spreadsheet navigation separately from that workbook
+payload: workbook ID, worksheet name and ordinal, selected cell, and the first
+visible row and column. `VIEW RESTORE <name>` can therefore reopen a different
+persisted workbook and return to the same editing location after restart. The
+worksheet name is authoritative; its saved ordinal is an explicit degraded
+fallback when a tab was renamed. A missing workbook, removed tab, invalid cell,
+future field, or out-of-bounds viewport is reported as `DEGRADED`, and valid
+fields continue restoring. Saved views never embed cell contents, an uncommitted
+formula draft, clipboard data, or undo/redo history.
+
 The research commands send the selected non-formula text cell through
 `AppIntent::DispatchCommand`. Find, Monitor, Security, Chart, and News send a
 selected instrument back with `SHEET INSERT` when the user presses `A`. This is

@@ -160,6 +160,16 @@ history availability, and selected-cell type before mutating or emitting a kerne
 intent. Inline editing remains feature-owned and commits before a pointer routes
 to a different target.
 
+Spreadsheet also owns its saved-view field schema. A view records the workbook
+document ID, worksheet name plus ordinal fallback, selected cell, and first
+visible row and column. Restoration resolves the workbook through the
+Spreadsheet-owned repository before applying presentation state; unavailable
+documents and renamed tabs produce a degraded report while valid fields still
+recover. Workbook cells remain in the versioned workbook document, while draft
+edits, clipboard contents, and undo/redo stacks remain ephemeral. This keeps a
+layout reference small and prevents restoring a view from overwriting newer
+financial work.
+
 The interactive Monitor uses the same Alpha Vantage adapter through the
 Market-Data-owned `MarketDataQuery` port. `WatchlistWorkspace` submits snapshots
 to a capacity-one worker and only applies results during polling; construction,

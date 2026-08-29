@@ -71,7 +71,7 @@
       "upstream_maturity": "mixed",
       "reference_files": ["backend/saved_views/routes.py", "backend/api/routes/user_layouts.py", "frontend/src/components/savedViews/SavedViewsControl.tsx", "frontend/src/pages/SavedViewsPage.tsx"],
       "acceptance_tests": ["VIEW-ROUNDTRIP", "VIEW-MIGRATION", "VIEW-MISSING-CAPABILITY"],
-      "gap": "Schema-v2 saved views now persist stable identity/revision, workspace order, active destination, nested Desk pane focus, and typed Chart instrument/period/normalization/comparison/study/inspection/viewport/display state. V1 migration, a keyboard-only restart round trip, and explicit degraded recovery are locked. Extend capture to remaining research tabs, filters, sort, columns, table selections/scroll, Spreadsheet state, and configurable split geometry."
+      "gap": "Schema-v2 saved views now persist stable identity/revision, workspace order, active destination, nested Desk pane focus, typed Chart instrument/period/normalization/comparison/study/inspection/viewport/display state, and Spreadsheet workbook/sheet/cell/viewport state. V1 migration, keyboard-only and Spreadsheet restart round trips, renamed-sheet ordinal fallback, missing-workbook handling, and unknown-field degradation are locked. Extend capture to remaining research tabs, filters, sort, columns, table selections/scroll, and configurable split geometry."
     },
     {
       "id": "OTUI-006",

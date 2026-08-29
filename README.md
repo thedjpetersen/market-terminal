@@ -133,14 +133,18 @@ VIEW DELETE Morning Research
 ```
 
 Saved views have stable numeric IDs, case-insensitive names, monotonic
-revisions, and independent crash-safe persistence. The current vertical slice
-restores workspace order plus the active workspace; Desk views additionally
-retain the focused pane and nested Monitor, Chart, and News state. Chart state
-includes canonical instrument identity, period, normalization, comparisons,
-studies, inspection cursor, zoom/pan window, and display modes. Restores report
-`EXACT` only when every applicable field was accepted. A retired workspace,
-malformed instrument, unsupported field, or future capability produces an
-explicit `DEGRADED` result while the remaining valid layout is recovered.
+revisions, and independent crash-safe persistence. They restore workspace order
+plus the active workspace; Desk views additionally retain the focused pane and
+nested Monitor, Chart, and News state. Chart state includes canonical instrument
+identity, period, normalization, comparisons, studies, inspection cursor,
+zoom/pan window, and display modes. Spreadsheet views retain the durable
+workbook identity, stable worksheet name with ordinal fallback, selected cell,
+and row/column viewport. Workbook cells, clipboard contents, and undo history
+remain in their owning document/session boundaries rather than being copied into
+a layout. Restores report `EXACT` only when every applicable field was accepted.
+A retired workspace, missing workbook, renamed worksheet, malformed instrument,
+unsupported field, or future capability produces an explicit `DEGRADED` result
+while the remaining valid layout is recovered.
 
 Run `LAUNCH` (or press `L`) for the persistent Launchpad. Arrow keys or HJKL
 select tiles, `Enter` opens the selected command, `<`/`>` reorders it, and `X`

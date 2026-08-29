@@ -17,7 +17,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor},
+    app::{
+        AppIntent, CommandInvocation, ViewRestoreReport, ViewValue, Workspace, WorkspaceAction,
+        WorkspaceDescriptor, WorkspaceViewState,
+    },
     ui::{
         components::terminal_block,
         contains, is_primary_click, scroll_key,
@@ -264,6 +267,32 @@ impl SpreadsheetWorkspace {
             Ok(None) => self.status = format!("LOAD ERROR · WORKBOOK {id} WAS NOT FOUND"),
             Err(error) => self.status = format!("LOAD ERROR · {error}"),
         }
+    }
+
+    fn restore_view_workbook(&mut self, id: &str) -> Result<bool, String> {
+        if id.eq_ignore_ascii_case(&self.workbook_id) {
+            return Ok(false);
+        }
+        let store = self
+            .workbook_store
+            .clone()
+            .ok_or_else(|| "workbook persistence is unavailable".to_owned())?;
+        let document = store
+            .load_workbook(id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("workbook {id} was not found"))?;
+        let spreadsheet = Spreadsheet::from_document_payload(&document.payload)
+            .map_err(|error| error.to_string())?;
+        self.spreadsheet = spreadsheet;
+        self.workbook_id = document.id;
+        self.workbook_revision = document.revision;
+        self.cursor = CellAddress::new(1, 1).expect("A1 is in bounds");
+        self.first_column = 1;
+        self.first_row = 1;
+        self.edit = None;
+        self.clipboard = None;
+        self.refresh_market_data();
+        Ok(true)
     }
 
     fn list_workbooks(&mut self) {
@@ -1627,6 +1656,190 @@ impl Workspace for SpreadsheetWorkspace {
         }
     }
 
+    fn capture_view(&self) -> WorkspaceViewState {
+        let workbook = self.spreadsheet.workbook();
+        WorkspaceViewState::new(ID.as_str())
+            .with_field("workbook_id", ViewValue::Text(self.workbook_id.clone()))
+            .with_field(
+                "sheet_name",
+                ViewValue::Text(workbook.active_sheet().name().to_owned()),
+            )
+            .with_field(
+                "sheet_index",
+                ViewValue::Unsigned(workbook.active_sheet_index() as u64),
+            )
+            .with_field("cursor", ViewValue::Text(self.cursor.to_string()))
+            .with_field(
+                "first_column",
+                ViewValue::Unsigned(u64::from(self.first_column)),
+            )
+            .with_field("first_row", ViewValue::Unsigned(u64::from(self.first_row)))
+    }
+
+    fn restore_view(&mut self, state: &WorkspaceViewState) -> ViewRestoreReport {
+        if !state.workspace.eq_ignore_ascii_case(ID.as_str()) {
+            return ViewRestoreReport::warning(format!(
+                "saved state belongs to {}, not spreadsheet",
+                state.workspace
+            ));
+        }
+
+        const KNOWN_FIELDS: [&str; 6] = [
+            "workbook_id",
+            "sheet_name",
+            "sheet_index",
+            "cursor",
+            "first_column",
+            "first_row",
+        ];
+        let mut report = ViewRestoreReport::default();
+        let unknown = state
+            .fields
+            .keys()
+            .filter(|field| !KNOWN_FIELDS.contains(&field.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !unknown.is_empty() {
+            report.skipped_fields += unknown.len();
+            report.warnings.push(format!(
+                "spreadsheet ignored unsupported view field(s): {}",
+                unknown.join(", ")
+            ));
+        }
+
+        if let Some(value) = state.fields.get("workbook_id") {
+            match value.as_text().filter(|id| !id.trim().is_empty()) {
+                Some(id) => match self.restore_view_workbook(id.trim()) {
+                    Ok(_) => report.restored_fields += 1,
+                    Err(error) => {
+                        report.skipped_fields += 1;
+                        report
+                            .warnings
+                            .push(format!("spreadsheet {error}; kept current workbook"));
+                    }
+                },
+                None => {
+                    report.skipped_fields += 1;
+                    report
+                        .warnings
+                        .push("spreadsheet workbook identity is invalid".to_owned());
+                }
+            }
+        }
+
+        let sheet_name = state.fields.get("sheet_name").and_then(ViewValue::as_text);
+        let sheet_index = state
+            .fields
+            .get("sheet_index")
+            .and_then(ViewValue::as_unsigned)
+            .and_then(|index| usize::try_from(index).ok());
+        let selected_by_name = sheet_name.is_some_and(|name| {
+            let exists = self.spreadsheet.workbook().sheet(name).is_some();
+            exists && self.spreadsheet.select_sheet(name).is_ok()
+        });
+        if selected_by_name {
+            report.restored_fields += 1;
+            if sheet_index.is_some() {
+                report.restored_fields += 1;
+            } else if state.fields.contains_key("sheet_index") {
+                report.skipped_fields += 1;
+            }
+        } else if let Some(index) = sheet_index {
+            let fallback = self
+                .spreadsheet
+                .workbook()
+                .sheets()
+                .get(index)
+                .map(|sheet| sheet.name().to_owned());
+            if let Some(name) = fallback {
+                self.spreadsheet
+                    .select_sheet(&name)
+                    .expect("saved sheet index resolved to an existing worksheet");
+                report.restored_fields += 1;
+                if state.fields.contains_key("sheet_name") {
+                    report.skipped_fields += 1;
+                    report.warnings.push(format!(
+                        "spreadsheet worksheet {} was unavailable; restored ordinal {} ({name})",
+                        sheet_name.unwrap_or("<invalid>"),
+                        index + 1
+                    ));
+                }
+            } else {
+                report.skipped_fields += usize::from(state.fields.contains_key("sheet_index"));
+                report.skipped_fields += usize::from(state.fields.contains_key("sheet_name"));
+                report
+                    .warnings
+                    .push("spreadsheet worksheet could not be restored".to_owned());
+            }
+        } else if state.fields.contains_key("sheet_name")
+            || state.fields.contains_key("sheet_index")
+        {
+            report.skipped_fields += usize::from(state.fields.contains_key("sheet_name"));
+            report.skipped_fields += usize::from(state.fields.contains_key("sheet_index"));
+            report
+                .warnings
+                .push("spreadsheet worksheet identity is invalid".to_owned());
+        }
+
+        if let Some(value) = state.fields.get("cursor") {
+            match value.as_text().and_then(|address| address.parse().ok()) {
+                Some(address) => {
+                    self.cursor = address;
+                    report.restored_fields += 1;
+                }
+                None => {
+                    report.skipped_fields += 1;
+                    report
+                        .warnings
+                        .push("spreadsheet selected cell is invalid".to_owned());
+                }
+            }
+        }
+
+        if let Some(value) = state.fields.get("first_column") {
+            match value
+                .as_unsigned()
+                .and_then(|value| u8::try_from(value).ok())
+            {
+                Some(column) if (1..=MAX_COLUMNS).contains(&column) => {
+                    self.first_column = column;
+                    report.restored_fields += 1;
+                }
+                _ => {
+                    report.skipped_fields += 1;
+                    report
+                        .warnings
+                        .push("spreadsheet column viewport is invalid".to_owned());
+                }
+            }
+        }
+        if let Some(value) = state.fields.get("first_row") {
+            match value
+                .as_unsigned()
+                .and_then(|value| u16::try_from(value).ok())
+            {
+                Some(row) if (1..=MAX_ROWS).contains(&row) => {
+                    self.first_row = row;
+                    report.restored_fields += 1;
+                }
+                _ => {
+                    report.skipped_fields += 1;
+                    report
+                        .warnings
+                        .push("spreadsheet row viewport is invalid".to_owned());
+                }
+            }
+        }
+        self.edit = None;
+        self.refresh_market_data();
+        self.status = format!(
+            "RESTORED VIEW · {} · {}",
+            self.spreadsheet.workbook().active_sheet().name(),
+            self.cursor
+        );
+        report
+    }
+
     fn render(&self, frame: &mut Frame, area: Rect) {
         let areas = spreadsheet_areas(area);
         self.render_formula_bar(frame, areas.formula);
@@ -2318,5 +2531,94 @@ mod tests {
         workspace.cursor = "C21".parse().unwrap();
         assert!(workspace.handle_key(modified_key(KeyCode::Char('d'), KeyModifiers::CONTROL)));
         assert_eq!(workspace.spreadsheet.cell("C21").unwrap().raw, "=B21 * 2");
+    }
+
+    #[test]
+    fn typed_view_restores_workbook_sheet_cell_and_viewport_after_restart() {
+        let files = Arc::new(MemoryFileStore {
+            input: String::new(),
+            writes: Mutex::new(Vec::new()),
+        });
+        let workbooks = Arc::new(MemoryWorkbookStore::default());
+        let mut original = SpreadsheetWorkspace::persistent(
+            Arc::new(StubMarketData),
+            files.clone(),
+            workbooks.clone(),
+        );
+        original.add_sheet(Some("Scenario".to_owned()));
+        original.select_sheet("Sheet1");
+        original.save_workbook("valuation", false);
+        original.spreadsheet.select_sheet("Scenario").unwrap();
+        original.cursor = "H57".parse().unwrap();
+        original.first_column = 4;
+        original.first_row = 40;
+        let saved = original.capture_view();
+
+        let mut restarted =
+            SpreadsheetWorkspace::persistent(Arc::new(StubMarketData), files, workbooks);
+        assert_eq!(restarted.workbook_id, "default");
+        assert_eq!(
+            restarted.spreadsheet.workbook().active_sheet().name(),
+            "Sheet1"
+        );
+
+        let report = restarted.restore_view(&saved);
+        assert_eq!(report.skipped_fields, 0);
+        assert!(report.warnings.is_empty());
+        assert_eq!(report.restored_fields, 6);
+        assert_eq!(restarted.workbook_id, "valuation");
+        assert_eq!(
+            restarted.spreadsheet.workbook().active_sheet().name(),
+            "Scenario"
+        );
+        assert_eq!(restarted.cursor.to_string(), "H57");
+        assert_eq!(restarted.first_column, 4);
+        assert_eq!(restarted.first_row, 40);
+        assert_eq!(restarted.capture_view(), saved);
+    }
+
+    #[test]
+    fn typed_view_uses_sheet_ordinal_as_an_explicit_degraded_fallback() {
+        let mut workspace = workspace();
+        workspace.spreadsheet.select_sheet("Assumptions").unwrap();
+        workspace.cursor = "C12".parse().unwrap();
+        let saved = workspace.capture_view();
+        workspace.spreadsheet.rename_active_sheet("Inputs").unwrap();
+        workspace.spreadsheet.select_sheet("Sheet1").unwrap();
+
+        let report = workspace.restore_view(&saved);
+        assert_eq!(report.skipped_fields, 1);
+        assert_eq!(report.restored_fields, 5);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].contains("restored ordinal 2 (Inputs)"));
+        assert_eq!(
+            workspace.spreadsheet.workbook().active_sheet().name(),
+            "Inputs"
+        );
+        assert_eq!(workspace.cursor.to_string(), "C12");
+    }
+
+    #[test]
+    fn typed_view_rejects_missing_workbooks_and_future_fields_without_state_loss() {
+        let mut workspace = workspace();
+        workspace.cursor = "B8".parse().unwrap();
+        let saved = workspace
+            .capture_view()
+            .with_field("workbook_id", ViewValue::Text("retired".to_owned()))
+            .with_field("future_pivot", ViewValue::Boolean(true));
+
+        let report = workspace.restore_view(&saved);
+        assert_eq!(report.skipped_fields, 2);
+        assert_eq!(report.restored_fields, 5);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("kept current workbook")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("future_pivot")));
+        assert_eq!(workspace.workbook_id, "default");
+        assert_eq!(workspace.cursor.to_string(), "B8");
     }
 }

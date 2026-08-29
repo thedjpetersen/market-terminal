@@ -334,9 +334,9 @@ continues.
 | Reference capability | Status | Market Terminal evidence | Gap required for parity |
 | --- | --- | --- | --- |
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
-| Mission Control, launchpad, ticker tape | Partial | Live pulse, imported portfolio, provider events, source health, saved work, inspectable priority ranking, persistent editable Launchpad, typed Desk/Chart saved views, and versioned role presets | Add typed launch objects, Launchpad import/export, and recoverable state for the remaining workspaces. |
+| Mission Control, launchpad, ticker tape | Partial | Live pulse, imported portfolio, provider events, source health, saved work, inspectable priority ranking, persistent editable Launchpad, typed Desk/Chart/Spreadsheet saved views, and versioned role presets | Add typed launch objects, Launchpad import/export, and recoverable state for the remaining workspaces. |
 | Keyboard navigation and icon rail | Covered | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, Chart periods/studies/comparisons/inspection/modes/promotion/refresh, modal-safe News filters/headlines/story/calendar/reader actions, Overview periods/cards/live holdings/headlines/context controls, Alerts rows/mutations/Security/refresh controls, and Spreadsheet cells/rows/formula/tabs/workflow controls | Preserve the action and modal-trapping contracts as new controls and overlays are added. |
-| Saved views and workspace presets | Partial | Workspace order, active workspace, role presets, and schema-v2 nested Desk/Chart state persist with migration and degraded recovery | Extend typed capture to research tabs, filters, tables, Spreadsheet, and configurable pane geometry. |
+| Saved views and workspace presets | Partial | Workspace order, active workspace, role presets, and schema-v2 nested Desk/Chart plus workbook/sheet/cell/viewport Spreadsheet state persist with migration and degraded recovery | Extend typed capture to research tabs, filters, sort, columns, remaining tables, and configurable pane geometry. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
 | Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
 | Snapshot/streaming data and provider fallback | Partial | Yahoo, Alpha Vantage, Alpaca, Finnhub, bounded workers, coalescing, LKG cache, replay | Add capability-aware provider waterfall, durable bar cache, session calendars, health routing, and cross-provider provenance. |
@@ -556,10 +556,14 @@ exact/degraded restore reports. `VIEW SAVE/LIST/RESTORE/DELETE` recovers
 workspace order and active destination; Desk captures its focused pane and
 nested children, while Chart captures canonical instrument identity, period,
 normalization, comparisons, studies, inspection, viewport, and rendering
-modes. A keyboard-only restart test locks the multi-pane round trip. P1 exit
-still requires Launchpad import/export, typed screen/portfolio/sheet/layout
-tiles, capture adoption for the remaining workspaces and table controls, and
-unified discovery.
+modes. Spreadsheet now captures its durable workbook identity, stable worksheet
+name with ordinal fallback, selected cell, and row/column viewport without
+duplicating workbook data, clipboard contents, or undo history. Exact restart,
+renamed-sheet fallback, missing-workbook, and unknown-future-field tests lock its
+recovery semantics. A keyboard-only restart test locks the multi-pane round
+trip. P1 exit still requires Launchpad import/export, typed
+screen/portfolio/sheet/layout tiles, capture adoption for the remaining research
+and table workspaces, configurable split geometry, and unified discovery.
 
 ### P2 — Market-data fabric, microstructure, and chart workstation
 
