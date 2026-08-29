@@ -10,10 +10,9 @@ HTTP / worker / MCP host
           ▼
 market-terminal-application
   tenant + principal + capabilities + budgets
-          │ authorized bounded EngineRequest
-          ▼
-market-terminal-engine
-  deterministic validation and analytics
+          ├── authorized bounded EngineRequest ──▶ market-terminal-engine
+          │                                         deterministic analytics
+          └── tenant-bound read-only artifact keys ─▶ host-owned query adapter
 ```
 
 ## Owned contracts
@@ -30,6 +29,17 @@ market-terminal-engine
   execution. Domain validation remains the engine's responsibility.
 - `AnalyticalApplicationService` is stateless and synchronous. It returns the
   unchanged versioned `EngineResponse`, preserving the v1 transport contract.
+- `ResearchArtifactQuery` is a host-neutral, read-only port for Backtest,
+  comparison, Screening, News, and Security research artifacts. Its list/get
+  keys always contain the authenticated `TenantId`; the client cannot supply or
+  override ownership. `ArtifactCapabilitySet` independently gates this surface.
+- Artifact pages are capped at 100 entries, cursor/identifiers at 128 bytes, and
+  documents at 1 MiB. A next cursor must equal the last already-visible artifact
+  ID, preventing an opaque adapter cursor from becoming a tenant data channel.
+  The application revalidates schema, ownership, kind filters, identifiers,
+  provenance labels, digest envelopes, page size, and document size after every
+  adapter call. Cross-tenant or malformed adapter results fail closed without
+  disclosing the conflicting tenant.
 
 The application crate intentionally re-exports transport-neutral engine request,
 response, error, and schema types. Hosts therefore depend on the application
@@ -46,15 +56,18 @@ and also rejects a direct API-to-engine dependency.
 Authentication remains host-owned. The current HTTP host maps one configured
 bearer credential to one actor context. A future credential/session adapter may
 resolve many actors, but it must produce the same validated `ExecutionContext`.
-Likewise, future tenant-owned artifact and provider services should expose narrow
-application ports; they must not be added to the deterministic engine.
+Tenant-owned artifact and future provider services expose narrow application
+ports; they are not added to the deterministic engine. The artifact port has no
+concrete storage implementation in this crate, so local files, PostgreSQL, and
+remote document services can implement the same ownership contract.
 
 ## Next web extraction
 
-1. Add an application-owned read-only artifact query port with tenant ownership
-   in every key and bounded list/get methods.
-2. Implement local and service persistence adapters outside this crate; add
-   adversarial cross-tenant tests before exposing routes.
+1. Implement local and service persistence adapters outside this crate. The HTTP
+   library already exposes injectable list/get routes; the production binary
+   intentionally leaves them unmounted until an adapter is configured.
+2. Add credential/session resolution with adversarial cross-tenant integration
+   tests against each concrete repository.
 3. Add deadline, cancellation, and aggregate rate-budget contracts at the host
    edge while retaining deterministic per-request budgets here.
 4. Publish cross-language fixtures for actor capabilities and every v1 engine

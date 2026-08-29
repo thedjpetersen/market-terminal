@@ -15,7 +15,10 @@ pub use market_terminal_engine::{
     ENGINE_API_SCHEMA_VERSION,
 };
 
-pub const APPLICATION_SCHEMA_VERSION: u16 = 1;
+mod artifacts;
+pub use artifacts::*;
+
+pub const APPLICATION_SCHEMA_VERSION: u16 = 2;
 pub const MAX_IDENTITY_BYTES: usize = 64;
 pub const DEFAULT_MAX_BACKTEST_BARS: usize = 20_000;
 pub const MAX_BACKTEST_BARS: usize = 20_000;
@@ -222,6 +225,7 @@ pub struct ExecutionContext {
     principal_id: PrincipalId,
     capabilities: CapabilitySet,
     budget: ExecutionBudget,
+    artifact_capabilities: ArtifactCapabilitySet,
 }
 
 impl ExecutionContext {
@@ -236,6 +240,7 @@ impl ExecutionContext {
             principal_id,
             capabilities,
             budget,
+            artifact_capabilities: ArtifactCapabilitySet::none(),
         }
     }
 
@@ -255,6 +260,10 @@ impl ExecutionContext {
         self.budget
     }
 
+    pub const fn artifact_capabilities(&self) -> ArtifactCapabilitySet {
+        self.artifact_capabilities
+    }
+
     pub const fn with_capabilities(mut self, capabilities: CapabilitySet) -> Self {
         self.capabilities = capabilities;
         self
@@ -262,6 +271,11 @@ impl ExecutionContext {
 
     pub const fn with_budget(mut self, budget: ExecutionBudget) -> Self {
         self.budget = budget;
+        self
+    }
+
+    pub const fn with_artifact_capabilities(mut self, capabilities: ArtifactCapabilitySet) -> Self {
+        self.artifact_capabilities = capabilities;
         self
     }
 }
@@ -297,6 +311,9 @@ impl AnalyticalApplicationService {
 pub enum ApplicationErrorCode {
     CapabilityDenied,
     WorkloadBudgetExceeded,
+    InvalidArtifactRequest,
+    ArtifactServiceUnavailable,
+    ArtifactContractViolation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -391,6 +408,8 @@ fn comparison_points(artifact: &market_terminal_engine::backtesting::BacktestArt
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use market_terminal_engine::{
         api::BacktestRunRequest,
         backtesting::{BacktestBar, BacktestConfig},
@@ -398,6 +417,87 @@ mod tests {
     };
 
     use super::*;
+
+    struct FixtureArtifactQuery {
+        documents: Vec<ResearchArtifactDocument>,
+        requested_tenants: Mutex<Vec<TenantId>>,
+    }
+
+    impl FixtureArtifactQuery {
+        fn new(documents: Vec<ResearchArtifactDocument>) -> Self {
+            Self {
+                documents,
+                requested_tenants: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl ResearchArtifactQuery for FixtureArtifactQuery {
+        fn list(
+            &self,
+            key: &TenantArtifactListKey,
+        ) -> Result<ResearchArtifactPage, ArtifactQueryFailure> {
+            self.requested_tenants
+                .lock()
+                .unwrap()
+                .push(key.tenant_id().clone());
+            let items = self
+                .documents
+                .iter()
+                .filter(|document| {
+                    document.summary.tenant_id == *key.tenant_id()
+                        && key.kind().is_none_or(|kind| document.summary.kind == kind)
+                })
+                .take(key.limit())
+                .map(|document| document.summary.clone())
+                .collect();
+            Ok(ResearchArtifactPage {
+                schema_version: ARTIFACT_QUERY_SCHEMA_VERSION,
+                items,
+                next_cursor: None,
+            })
+        }
+
+        fn get(
+            &self,
+            key: &TenantArtifactKey,
+        ) -> Result<Option<ResearchArtifactDocument>, ArtifactQueryFailure> {
+            self.requested_tenants
+                .lock()
+                .unwrap()
+                .push(key.tenant_id().clone());
+            Ok(self
+                .documents
+                .iter()
+                .find(|document| {
+                    document.summary.tenant_id == *key.tenant_id()
+                        && document.summary.artifact_id == key.artifact_id()
+                })
+                .cloned())
+        }
+    }
+
+    fn research_artifact(
+        tenant: &str,
+        artifact_id: &str,
+        kind: ResearchArtifactKind,
+    ) -> ResearchArtifactDocument {
+        ResearchArtifactDocument {
+            summary: ResearchArtifactSummary {
+                schema_version: ARTIFACT_QUERY_SCHEMA_VERSION,
+                tenant_id: TenantId::new(tenant).unwrap(),
+                artifact_id: artifact_id.to_owned(),
+                kind,
+                title: "Verified research artifact".to_owned(),
+                created_at_epoch_ms: 1_725_000_000_000,
+                input_version: "fixture-v1".to_owned(),
+                source: "fixture".to_owned(),
+                quality: "verified".to_owned(),
+                content_digest: "ART-FNV1A64-0123456789ABCDEF".to_owned(),
+            },
+            content: serde_json::json!({"result": "evidence"}),
+        }
+    }
 
     fn context(capabilities: CapabilitySet, budget: ExecutionBudget) -> ExecutionContext {
         ExecutionContext::new(
@@ -494,5 +594,147 @@ mod tests {
         assert!(ExecutionBudget::new(MAX_BACKTEST_BARS + 1, 1).is_err());
         assert!(ExecutionBudget::new(1, 0).is_err());
         assert!(ExecutionBudget::new(1, MAX_COMPARISON_POINTS + 1).is_err());
+    }
+
+    #[test]
+    fn artifact_queries_are_bound_to_the_authenticated_tenant() {
+        let query = Arc::new(FixtureArtifactQuery::new(vec![
+            research_artifact("tenant-a", "shared-id", ResearchArtifactKind::BacktestRun),
+            research_artifact("tenant-b", "other-id", ResearchArtifactKind::NewsSnapshot),
+        ]));
+        let service = ResearchArtifactApplicationService::new(query.clone());
+        let context = context(CapabilitySet::all(), ExecutionBudget::default())
+            .with_artifact_capabilities(ArtifactCapabilitySet::read_only());
+
+        let page = service
+            .list(&context, ArtifactListRequest::default())
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].artifact_id, "shared-id");
+        assert!(service.get(&context, "other-id").unwrap().is_none());
+        assert!(query
+            .requested_tenants
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|tenant| tenant.as_str() == "tenant-a"));
+    }
+
+    #[test]
+    fn artifact_access_is_denied_before_the_adapter_and_inputs_are_bounded() {
+        let query = Arc::new(FixtureArtifactQuery::new(Vec::new()));
+        let service = ResearchArtifactApplicationService::new(query.clone());
+        let denied = context(CapabilitySet::all(), ExecutionBudget::default());
+        let error = service
+            .list(&denied, ArtifactListRequest::default())
+            .unwrap_err();
+        assert_eq!(error.code, ApplicationErrorCode::CapabilityDenied);
+        assert!(query.requested_tenants.lock().unwrap().is_empty());
+
+        let allowed = denied.with_artifact_capabilities(ArtifactCapabilitySet::read_only());
+        let error = service.get(&allowed, "bad/id").unwrap_err();
+        assert_eq!(error.code, ApplicationErrorCode::InvalidArtifactRequest);
+        let error = service
+            .list(
+                &allowed,
+                ArtifactListRequest {
+                    limit: Some(MAX_ARTIFACT_PAGE_SIZE + 1),
+                    ..ArtifactListRequest::default()
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.code, ApplicationErrorCode::InvalidArtifactRequest);
+        let error = service
+            .list(
+                &allowed,
+                ArtifactListRequest {
+                    cursor: Some("bad/cursor".to_owned()),
+                    ..ArtifactListRequest::default()
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.code, ApplicationErrorCode::InvalidArtifactRequest);
+        assert!(query.requested_tenants.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cross_tenant_or_malformed_adapter_results_fail_closed() {
+        struct MaliciousQuery;
+
+        impl ResearchArtifactQuery for MaliciousQuery {
+            fn list(
+                &self,
+                _key: &TenantArtifactListKey,
+            ) -> Result<ResearchArtifactPage, ArtifactQueryFailure> {
+                Ok(ResearchArtifactPage {
+                    schema_version: ARTIFACT_QUERY_SCHEMA_VERSION,
+                    items: vec![
+                        research_artifact(
+                            "tenant-b",
+                            "leaked",
+                            ResearchArtifactKind::SecurityResearch,
+                        )
+                        .summary,
+                    ],
+                    next_cursor: None,
+                })
+            }
+
+            fn get(
+                &self,
+                _key: &TenantArtifactKey,
+            ) -> Result<Option<ResearchArtifactDocument>, ArtifactQueryFailure> {
+                Ok(Some(research_artifact(
+                    "tenant-b",
+                    "leaked",
+                    ResearchArtifactKind::SecurityResearch,
+                )))
+            }
+        }
+
+        let service = ResearchArtifactApplicationService::new(Arc::new(MaliciousQuery));
+        let context = context(CapabilitySet::all(), ExecutionBudget::default())
+            .with_artifact_capabilities(ArtifactCapabilitySet::read_only());
+        for error in [
+            service
+                .list(&context, ArtifactListRequest::default())
+                .unwrap_err(),
+            service.get(&context, "leaked").unwrap_err(),
+        ] {
+            assert_eq!(error.code, ApplicationErrorCode::ArtifactContractViolation);
+            assert!(!error.message.contains("tenant-b"));
+        }
+
+        struct CursorLeakQuery;
+
+        impl ResearchArtifactQuery for CursorLeakQuery {
+            fn list(
+                &self,
+                _key: &TenantArtifactListKey,
+            ) -> Result<ResearchArtifactPage, ArtifactQueryFailure> {
+                Ok(ResearchArtifactPage {
+                    schema_version: ARTIFACT_QUERY_SCHEMA_VERSION,
+                    items: vec![
+                        research_artifact("tenant-a", "visible", ResearchArtifactKind::BacktestRun)
+                            .summary,
+                    ],
+                    next_cursor: Some("tenant-b-secret".to_owned()),
+                })
+            }
+
+            fn get(
+                &self,
+                _key: &TenantArtifactKey,
+            ) -> Result<Option<ResearchArtifactDocument>, ArtifactQueryFailure> {
+                Ok(None)
+            }
+        }
+
+        let service = ResearchArtifactApplicationService::new(Arc::new(CursorLeakQuery));
+        let error = service
+            .list(&context, ArtifactListRequest::default())
+            .unwrap_err();
+        assert_eq!(error.code, ApplicationErrorCode::ArtifactContractViolation);
+        assert!(!error.message.contains("tenant-b-secret"));
     }
 }

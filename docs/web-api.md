@@ -2,7 +2,8 @@
 
 `market-terminal-api` is the first web host for the extracted analytical engine.
 It is a separate Cargo package that enters through
-`market-terminal-application`, the host-neutral tenant/capability/budget layer,
+`market-terminal-application`, the host-neutral tenant/capability/budget and
+read-only artifact-query layer,
 which alone dispatches `market-terminal-engine`. Neither crate links the native
 terminal, feature workspaces, provider adapters, or local persistence.
 
@@ -43,7 +44,7 @@ The process handles Ctrl-C and SIGTERM with graceful Axum shutdown.
 Public and intentionally minimal:
 
 ```json
-{"status":"ok","api_schema_version":1,"application_schema_version":1,"engine_schema_version":1}
+{"status":"ok","api_schema_version":2,"application_schema_version":2,"engine_schema_version":1}
 ```
 
 ### `GET /v1/capabilities`
@@ -51,7 +52,9 @@ Public and intentionally minimal:
 Requires `Authorization: Bearer <token>`. Returns the API, application, and
 engine schemas; the server-owned tenant/principal identity; exact enabled
 operation names; request-body limit; and per-principal analytical workload
-ceilings. It discloses no secret, provider, account, or persistence state.
+ceilings. `artifact_operations` is empty unless a host explicitly grants
+`read_research_artifacts`. It discloses no secret, provider, account, or
+persistence state.
 
 ### `POST /v1/engine`
 
@@ -92,17 +95,35 @@ flattens the tagged engine result:
 The abbreviated `data` above illustrates the envelope; production responses
 contain the complete typed analytic artifact and disclosures.
 
+### Injectable read-only artifact routes
+
+`router_with_artifact_query` lets a web composition inject an implementation of
+the application-owned `ResearchArtifactQuery` port. It adds authenticated
+`GET /v1/artifacts?kind=<kind>&cursor=<last_artifact_id>&limit=<1-100>` and
+`GET /v1/artifacts/{artifact_id}` routes. Supported kinds are `backtest_run`,
+`backtest_comparison`, `screen_result`, `news_snapshot`, and
+`security_research`.
+
+The request never contains a tenant field. Both repository keys are constructed
+from the server-owned authenticated context, and returned pages/documents are
+revalidated for tenant, schema, kind, bounded identity, provenance, digest
+envelope, and size. A cross-tenant ID therefore returns the same generic 404 as
+a missing ID. The default binary uses `router`, so these routes do not exist
+until a reviewed adapter and explicit read capability are composed by a host.
+
 ## Failure contract
 
 | Status | Meaning |
 |---:|---|
-| 400 | Malformed JSON, unsupported engine schema, invalid request identity, or invalid provenance envelope. |
+| 400 | Malformed JSON, unsupported engine schema, invalid request identity/provenance, or invalid artifact query bounds. |
 | 401 | Missing or incorrect bearer token. |
 | 403 | Operation is valid but the authenticated principal lacks its capability. |
-| 404 | Unknown route. |
+| 404 | Unknown route or unavailable artifact; cross-tenant ownership is never disclosed. |
 | 413 | Body exceeded the configured limit before deserialization. |
 | 415 | Content type is not JSON. |
 | 422 | A syntactically valid operation failed its principal workload budget or domain validation. |
+| 502 | An artifact adapter violated the application contract; its conflicting data is not returned. |
+| 503 | The configured artifact adapter is unavailable. |
 
 Responses set `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and
 `Referrer-Policy: no-referrer`. Unauthorized responses additionally advertise a
@@ -114,15 +135,18 @@ explicit origin allowlist at a reviewed gateway or future host middleware.
 The host can run only the four closed deterministic engine operations. Bearer
 authentication resolves to a validated server-owned tenant/principal context;
 clients cannot submit or replace that identity. Application services reject
-missing capabilities and over-budget work before engine dispatch. The host
-cannot execute terminal commands, read environment-selected provider
+missing capabilities and over-budget work before engine dispatch. The default
+binary cannot execute terminal commands, read environment-selected provider
 credentials, load or save user artifacts, inspect portfolios, or mutate external
-state. `tests/architecture_boundaries.rs` enforces `API -> application -> engine`
-and rejects native package, feature, infrastructure, provider-client, terminal,
+state. The API library's optional artifact surface is read-only and adapter-
+injected; it cannot save or delete. `tests/architecture_boundaries.rs` enforces
+`API -> application -> engine` and rejects native package, feature,
+infrastructure, provider-client, terminal,
 runtime, clock, environment, filesystem, and network boundary violations.
 
 Before a multi-user web launch, replace the single configured credential mapping
-with an encrypted credential/session store, tenant-owned repositories, aggregate
+with an encrypted credential/session store, implement tenant-owned repository
+adapters with integration isolation tests, and add aggregate
 rate accounting, deadlines, metrics/distributed tracing, audited read-only
 provider/persistence services, TLS termination, and cross-language contract
 fixtures. Those belong around the engine, never inside its deterministic domains.

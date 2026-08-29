@@ -279,6 +279,17 @@ move to its own crate later without changing its public vocabulary.
   runtime, clock, provider, persistence, native-product, and UI dependencies in
   the application layer. This is not yet a multi-user credential/session store or
   tenant document repository.
+- **Complete:** tenant-owned read-only research-artifact application boundary.
+  The application crate now owns bounded list/get contracts for Backtest,
+  comparison, Screening, News, and Security artifacts with tenant identity in
+  every adapter key, an independent read capability, strict schema/provenance/
+  digest-envelope/document revalidation, and indistinguishable cross-tenant
+  misses. The HTTP library has injectable authenticated routes and maps invalid
+  input, unavailable storage, and corrupt adapter output separately. Adversarial
+  tests prove that client paths and query strings cannot choose a tenant and that
+  a malicious adapter cannot leak another tenant's metadata. The production API
+  binary still mounts no artifact route until a concrete repository is supplied;
+  multi-user credentials and durable tenant repositories remain future work.
 - **Complete:** P1 saved workspace experience. Five versioned Trader, Quant,
   PM, Risk, and Ops seeds now project through the live registry, disclose
   missing destinations, and require an explicit modal confirmation. The first

@@ -8,7 +8,10 @@
 use std::{fmt, sync::Arc, time::Instant};
 
 use axum::{
-    extract::{rejection::JsonRejection, DefaultBodyLimit, Extension, Request, State},
+    extract::{
+        rejection::{JsonRejection, QueryRejection},
+        DefaultBodyLimit, Extension, Path, Query, Request, State,
+    },
     http::{header, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -17,15 +20,18 @@ use axum::{
 };
 use market_terminal_application::{
     AnalyticalApplicationService, ApplicationConfigError, ApplicationError, ApplicationErrorCode,
-    CapabilitySet, EngineErrorCode, EngineOutcome, EngineRequest, EngineResponse, ExecutionContext,
-    PrincipalId, TenantId, APPLICATION_SCHEMA_VERSION, ENGINE_API_SCHEMA_VERSION,
+    ArtifactListRequest, CapabilitySet, EngineErrorCode, EngineOutcome, EngineRequest,
+    EngineResponse, ExecutionContext, PrincipalId, ResearchArtifactApplicationService,
+    ResearchArtifactKind, ResearchArtifactQuery, TenantId, APPLICATION_SCHEMA_VERSION,
+    ENGINE_API_SCHEMA_VERSION,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::info;
 
+pub use market_terminal_application::ArtifactCapabilitySet as ArtifactReadPolicy;
 pub use market_terminal_application::{CapabilitySet as OperationPolicy, ExecutionBudget};
 
-pub const API_SCHEMA_VERSION: u16 = 1;
+pub const API_SCHEMA_VERSION: u16 = 2;
 pub const DEFAULT_MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 pub const MIN_MAX_BODY_BYTES: usize = 1_024;
 pub const MAX_MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
@@ -78,6 +84,11 @@ impl ApiConfig {
 
     pub fn with_execution_budget(mut self, execution_budget: ExecutionBudget) -> Self {
         self.execution_context = self.execution_context.with_budget(execution_budget);
+        self
+    }
+
+    pub fn with_artifact_policy(mut self, policy: ArtifactReadPolicy) -> Self {
+        self.execution_context = self.execution_context.with_artifact_capabilities(policy);
         self
     }
 
@@ -140,16 +151,40 @@ impl From<ApplicationConfigError> for ApiConfigError {
 struct ApiState {
     config: ApiConfig,
     service: AnalyticalApplicationService,
+    artifact_service: Option<ResearchArtifactApplicationService>,
 }
 
 pub fn router(config: ApiConfig) -> Router {
+    build_router(config, None)
+}
+
+/// Builds the authenticated transport with read-only artifact routes backed by
+/// a host-owned adapter. The adapter never receives a client-supplied tenant.
+pub fn router_with_artifact_query(
+    config: ApiConfig,
+    query: Arc<dyn ResearchArtifactQuery>,
+) -> Router {
+    build_router(config, Some(ResearchArtifactApplicationService::new(query)))
+}
+
+fn build_router(
+    config: ApiConfig,
+    artifact_service: Option<ResearchArtifactApplicationService>,
+) -> Router {
     let state = ApiState {
         config,
         service: AnalyticalApplicationService,
+        artifact_service,
     };
-    let protected = Router::new()
+    let mut protected = Router::new()
         .route("/v1/capabilities", get(capabilities))
-        .route("/v1/engine", post(run_engine))
+        .route("/v1/engine", post(run_engine));
+    if state.artifact_service.is_some() {
+        protected = protected
+            .route("/v1/artifacts", get(list_artifacts))
+            .route("/v1/artifacts/{artifact_id}", get(get_artifact));
+    }
+    let protected = protected
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize))
         .layer(DefaultBodyLimit::max(state.config.max_body_bytes));
 
@@ -187,11 +222,69 @@ async fn capabilities(
             tenant_id: context.tenant_id().as_str().to_owned(),
             principal_id: context.principal_id().as_str().to_owned(),
             operations: context.capabilities().allowed_names(),
+            artifact_operations: context.artifact_capabilities().allowed_names(),
             max_body_bytes: state.config.max_body_bytes,
             max_backtest_bars: budget.max_backtest_bars(),
             max_comparison_points: budget.max_comparison_points(),
         }),
     ))
+}
+
+#[derive(Debug, Deserialize)]
+struct ArtifactListParams {
+    kind: Option<ResearchArtifactKind>,
+    cursor: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn list_artifacts(
+    State(state): State<ApiState>,
+    Extension(context): Extension<ExecutionContext>,
+    params: Result<Query<ArtifactListParams>, QueryRejection>,
+) -> Response {
+    let Some(service) = &state.artifact_service else {
+        return not_found().await;
+    };
+    let Query(params) = match params {
+        Ok(params) => params,
+        Err(_) => {
+            return problem(
+                StatusCode::BAD_REQUEST,
+                "invalid_artifact_request",
+                "artifact query parameters are invalid",
+            )
+        }
+    };
+    match service.list(
+        &context,
+        ArtifactListRequest {
+            kind: params.kind,
+            cursor: params.cursor,
+            limit: params.limit,
+        },
+    ) {
+        Ok(page) => secure_response((StatusCode::OK, Json(page))),
+        Err(error) => application_rejection(error),
+    }
+}
+
+async fn get_artifact(
+    State(state): State<ApiState>,
+    Extension(context): Extension<ExecutionContext>,
+    Path(artifact_id): Path<String>,
+) -> Response {
+    let Some(service) = &state.artifact_service else {
+        return not_found().await;
+    };
+    match service.get(&context, artifact_id) {
+        Ok(Some(document)) => secure_response((StatusCode::OK, Json(document))),
+        Ok(None) => problem(
+            StatusCode::NOT_FOUND,
+            "artifact_not_found",
+            "artifact was not found",
+        ),
+        Err(error) => application_rejection(error),
+    }
 }
 
 async fn run_engine(
@@ -305,6 +398,21 @@ fn application_rejection(error: ApplicationError) -> Response {
             "workload_budget_exceeded",
             error.message,
         ),
+        ApplicationErrorCode::InvalidArtifactRequest => problem(
+            StatusCode::BAD_REQUEST,
+            "invalid_artifact_request",
+            error.message,
+        ),
+        ApplicationErrorCode::ArtifactServiceUnavailable => problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "artifact_service_unavailable",
+            error.message,
+        ),
+        ApplicationErrorCode::ArtifactContractViolation => problem(
+            StatusCode::BAD_GATEWAY,
+            "artifact_contract_violation",
+            error.message,
+        ),
     }
 }
 
@@ -391,6 +499,7 @@ struct CapabilityResponse {
     tenant_id: String,
     principal_id: String,
     operations: Vec<&'static str>,
+    artifact_operations: Vec<&'static str>,
     max_body_bytes: usize,
     max_backtest_bars: usize,
     max_comparison_points: usize,
@@ -411,6 +520,12 @@ mod tests {
     use serde_json::{json, Value};
     use tower::ServiceExt;
 
+    use market_terminal_application::{
+        ArtifactQueryFailure, ResearchArtifactDocument, ResearchArtifactPage,
+        ResearchArtifactSummary, TenantArtifactKey, TenantArtifactListKey,
+        ARTIFACT_QUERY_SCHEMA_VERSION,
+    };
+
     use super::*;
 
     const TOKEN: &str = "test-token-0123456789-ABCDEFGHIJ";
@@ -423,6 +538,78 @@ mod tests {
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(body.to_string()))
             .expect("request")
+    }
+
+    fn authenticated_get(uri: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+            .body(Body::empty())
+            .expect("request")
+    }
+
+    #[derive(Clone)]
+    struct FixtureArtifactQuery {
+        documents: Vec<ResearchArtifactDocument>,
+    }
+
+    impl ResearchArtifactQuery for FixtureArtifactQuery {
+        fn list(
+            &self,
+            key: &TenantArtifactListKey,
+        ) -> Result<ResearchArtifactPage, ArtifactQueryFailure> {
+            let items = self
+                .documents
+                .iter()
+                .filter(|document| {
+                    document.summary.tenant_id == *key.tenant_id()
+                        && key.kind().is_none_or(|kind| document.summary.kind == kind)
+                })
+                .take(key.limit())
+                .map(|document| document.summary.clone())
+                .collect();
+            Ok(ResearchArtifactPage {
+                schema_version: ARTIFACT_QUERY_SCHEMA_VERSION,
+                items,
+                next_cursor: None,
+            })
+        }
+
+        fn get(
+            &self,
+            key: &TenantArtifactKey,
+        ) -> Result<Option<ResearchArtifactDocument>, ArtifactQueryFailure> {
+            Ok(self
+                .documents
+                .iter()
+                .find(|document| {
+                    document.summary.tenant_id == *key.tenant_id()
+                        && document.summary.artifact_id == key.artifact_id()
+                })
+                .cloned())
+        }
+    }
+
+    fn artifact(
+        tenant: &str,
+        artifact_id: &str,
+        kind: ResearchArtifactKind,
+    ) -> ResearchArtifactDocument {
+        ResearchArtifactDocument {
+            summary: ResearchArtifactSummary {
+                schema_version: ARTIFACT_QUERY_SCHEMA_VERSION,
+                tenant_id: TenantId::new(tenant).unwrap(),
+                artifact_id: artifact_id.to_owned(),
+                kind,
+                title: format!("Research {artifact_id}"),
+                created_at_epoch_ms: 1_725_000_000_000,
+                input_version: "fixture-v1".to_owned(),
+                source: "fixture".to_owned(),
+                quality: "verified".to_owned(),
+                content_digest: "ART-FNV1A64-0123456789ABCDEF".to_owned(),
+            },
+            content: json!({"artifact_id": artifact_id}),
+        }
     }
 
     fn option_request() -> Value {
@@ -556,12 +743,170 @@ mod tests {
         let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let body = json_body(response).await;
-        assert_eq!(body["application_schema_version"], 1);
+        assert_eq!(body["application_schema_version"], 2);
         assert_eq!(body["tenant_id"], "tenant-a");
         assert_eq!(body["principal_id"], "researcher-7");
         assert_eq!(body["operations"], json!(["price_option"]));
         assert_eq!(body["max_backtest_bars"], 17);
         assert_eq!(body["max_comparison_points"], 31);
+        assert_eq!(body["artifact_operations"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn artifact_routes_are_read_only_tenant_scoped_and_capability_scoped() {
+        let query = Arc::new(FixtureArtifactQuery {
+            documents: vec![
+                artifact("tenant-a", "run-a", ResearchArtifactKind::BacktestRun),
+                artifact("tenant-b", "run-b", ResearchArtifactKind::BacktestRun),
+            ],
+        });
+        let config = ApiConfig::for_principal(TOKEN, "tenant-a", "researcher-7")
+            .unwrap()
+            .with_artifact_policy(ArtifactReadPolicy::read_only());
+        let app = router_with_artifact_query(config, query.clone());
+
+        let response = app
+            .clone()
+            .oneshot(authenticated_get(
+                "/v1/artifacts?kind=backtest_run&limit=10",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["items"].as_array().unwrap().len(), 1);
+        assert_eq!(body["items"][0]["artifact_id"], "run-a");
+        assert_eq!(body["items"][0]["tenant_id"], "tenant-a");
+
+        let response = app
+            .clone()
+            .oneshot(authenticated_get("/v1/artifacts/run-a"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(json_body(response).await["content"]["artifact_id"], "run-a");
+
+        let response = app
+            .clone()
+            .oneshot(authenticated_get("/v1/artifacts/run-b"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = json_body(response).await;
+        assert_eq!(body["code"], "artifact_not_found");
+        assert!(!body.to_string().contains("tenant-b"));
+
+        let response = app
+            .oneshot(authenticated_get("/v1/capabilities"))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(response).await["artifact_operations"],
+            json!(["read_research_artifacts"])
+        );
+
+        let denied = router_with_artifact_query(ApiConfig::new(TOKEN).unwrap(), query);
+        let response = denied
+            .oneshot(authenticated_get("/v1/artifacts"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(json_body(response).await["code"], "capability_denied");
+    }
+
+    #[tokio::test]
+    async fn artifact_request_and_adapter_contract_failures_are_distinct() {
+        struct CrossTenantQuery;
+
+        impl ResearchArtifactQuery for CrossTenantQuery {
+            fn list(
+                &self,
+                _key: &TenantArtifactListKey,
+            ) -> Result<ResearchArtifactPage, ArtifactQueryFailure> {
+                Ok(ResearchArtifactPage {
+                    schema_version: ARTIFACT_QUERY_SCHEMA_VERSION,
+                    items: vec![
+                        artifact("tenant-b", "leaked", ResearchArtifactKind::SecurityResearch)
+                            .summary,
+                    ],
+                    next_cursor: None,
+                })
+            }
+
+            fn get(
+                &self,
+                _key: &TenantArtifactKey,
+            ) -> Result<Option<ResearchArtifactDocument>, ArtifactQueryFailure> {
+                Ok(None)
+            }
+        }
+
+        let config = ApiConfig::for_principal(TOKEN, "tenant-a", "researcher-7")
+            .unwrap()
+            .with_artifact_policy(ArtifactReadPolicy::read_only());
+        let app = router_with_artifact_query(config, Arc::new(CrossTenantQuery));
+        let response = app
+            .clone()
+            .oneshot(authenticated_get("/v1/artifacts?limit=101"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            json_body(response).await["code"],
+            "invalid_artifact_request"
+        );
+
+        let response = app
+            .clone()
+            .oneshot(authenticated_get("/v1/artifacts?kind=not_a_kind"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            json_body(response).await["code"],
+            "invalid_artifact_request"
+        );
+
+        let response = app
+            .oneshot(authenticated_get("/v1/artifacts"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body = json_body(response).await;
+        assert_eq!(body["code"], "artifact_contract_violation");
+        assert!(!body.to_string().contains("tenant-b"));
+
+        struct UnavailableQuery;
+
+        impl ResearchArtifactQuery for UnavailableQuery {
+            fn list(
+                &self,
+                _key: &TenantArtifactListKey,
+            ) -> Result<ResearchArtifactPage, ArtifactQueryFailure> {
+                Err(ArtifactQueryFailure::Unavailable)
+            }
+
+            fn get(
+                &self,
+                _key: &TenantArtifactKey,
+            ) -> Result<Option<ResearchArtifactDocument>, ArtifactQueryFailure> {
+                Err(ArtifactQueryFailure::Unavailable)
+            }
+        }
+
+        let config = ApiConfig::for_principal(TOKEN, "tenant-a", "researcher-7")
+            .unwrap()
+            .with_artifact_policy(ArtifactReadPolicy::read_only());
+        let app = router_with_artifact_query(config, Arc::new(UnavailableQuery));
+        let response = app
+            .oneshot(authenticated_get("/v1/artifacts"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            json_body(response).await["code"],
+            "artifact_service_unavailable"
+        );
     }
 
     #[tokio::test]

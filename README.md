@@ -1130,8 +1130,8 @@ the composition root.
 crates/
 ├── market-terminal-engine/ host-neutral Backtesting, Options, Fixed Income,
 │                           and a versioned request/response API
-├── market-terminal-application/ tenant identity, capability policy, workload budgets,
-│                               and host-neutral analytical use cases
+├── market-terminal-application/ tenant identity, capabilities, budgets, analytical
+│                               use cases, and read-only research-artifact ports
 └── market-terminal-api/    authenticated HTTP adapter over application services
 src/
 ├── app/             lifecycle, input modes, workspace contract and registry
@@ -1178,7 +1178,10 @@ MARKET_TERMINAL_API_TOKEN="replace-with-a-random-token-at-least-32-characters" \
 `GET /v1/capabilities` discloses the server-owned tenant/principal identity,
 capability allowlist, body limit, and analytical workload ceilings;
 `POST /v1/engine` accepts the versioned engine envelope. There is no CORS,
-provider, persistence, arbitrary-command, or mutation surface in this slice.
+provider, concrete persistence, arbitrary-command, or mutation surface in the
+production binary. Host compositions may inject the application-owned artifact
+query port to mount read-only `GET /v1/artifacts` routes; tenant identity always
+comes from the authenticated actor, never a request parameter.
 See [`docs/web-api.md`](docs/web-api.md) for request examples, status contracts,
 configuration, and deployment constraints.
 

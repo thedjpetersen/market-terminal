@@ -210,10 +210,25 @@ fn application_services_are_host_neutral_and_own_engine_execution_policy() {
                 path.display()
             );
         }
+    }
+
+    let contract = production_source(&application.join("src/lib.rs"));
+    assert!(
+        contract.contains("market_terminal_engine::execute"),
+        "application services must be the sole policy boundary that dispatches engine work"
+    );
+    let artifact_contract = production_source(&application.join("src/artifacts.rs"));
+    for required in [
+        "pub trait ResearchArtifactQuery",
+        "TenantArtifactListKey",
+        "TenantArtifactKey",
+        "ArtifactCapabilitySet",
+        "MAX_ARTIFACT_PAGE_SIZE",
+        "MAX_ARTIFACT_DOCUMENT_BYTES",
+    ] {
         assert!(
-            source.contains("market_terminal_engine::execute"),
-            "{} must be the sole policy boundary that dispatches engine work",
-            path.display()
+            artifact_contract.contains(required),
+            "application services must retain the tenant-owned bounded artifact contract `{required}`"
         );
     }
 }

@@ -32,10 +32,13 @@ native bootstrap ──▶ app kernel
   `docs/engine.md`.
 - `crates/market-terminal-application` is the host-neutral use-case boundary
   over the engine. It owns validated tenant/principal identity, exact analytical
-  capabilities, and per-principal backtest/comparison workload budgets. It has
+  capabilities, per-principal backtest/comparison workload budgets, and a
+  tenant-bound read-only research-artifact query port. It has
   no HTTP, runtime, clock, filesystem, network, provider, persistence, or native
   product dependency. HTTP, worker, MCP, and future hosts must enter analytical
-  execution here rather than call the engine directly.
+  execution here rather than call the engine directly. Every artifact key is
+  constructed from authenticated context and every adapter result is revalidated
+  for ownership, schema, provenance, digest envelope, and size before release.
 - `crates/market-terminal-api` is an HTTP host adapter over the application
   service crate. It
   does not depend on the native product, feature modules, infrastructure, or
@@ -43,7 +46,9 @@ native bootstrap ──▶ app kernel
   engine. It maps the configured bearer credential to a server-owned actor,
   applies body limits before JSON deserialization, and owns transport-safe error
   mapping, request correlation, security headers, loopback-safe binding, and
-  graceful shutdown. It exposes no provider or persistence path. See
+  graceful shutdown. Its library can mount authenticated read-only artifact
+  list/get routes when a host supplies the application port; the default binary
+  exposes no provider or concrete persistence path. See
   `docs/web-api.md`. See `docs/application-services.md` for the shared actor,
   capability, and budget contract.
 

@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/thedjpetersen/market-terminal"
 
 [dependencies]
-axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio"] }
 market-terminal-application = { path = "../market-terminal-application" }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
