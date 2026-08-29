@@ -148,6 +148,15 @@ impl NewsFeed for LiveNewsFeed {
             .clone()
     }
 
+    fn load_events(&self) -> Vec<crate::features::news::NewsEvent> {
+        self.state
+            .read()
+            .expect("news state lock")
+            .workbench
+            .events
+            .clone()
+    }
+
     fn status(&self) -> String {
         self.state.read().expect("news state lock").status.clone()
     }

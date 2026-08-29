@@ -38,6 +38,13 @@ bootstrap ──▶ app kernel
   opaque stale-safe actions and validated shell intents; and its narrow state
   port is implemented by the local persistence adapter. A capacity-one worker
   coalesces edits so disk I/O never runs in the input or rendering path.
+  Mission Control is an Overview-owned read model rather than a cross-feature
+  domain import. The live infrastructure composer translates Markets,
+  Portfolio, News, Alerts, and Launchpad snapshots into Overview DTOs with
+  explicit quality, as-of, ranking rationale, and drill-down commands. Durable
+  local documents are sampled during startup; render and input paths consume
+  only memory. The News port exposes provider-backed events separately so the
+  deterministic gallery calendar cannot appear in the live daily surface.
 - `foundation` contains only stable, narrowly shared value objects. Canonical
   instrument identity lives here; provider quote schemas and feature state do
   not.

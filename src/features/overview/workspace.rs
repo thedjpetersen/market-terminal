@@ -19,10 +19,8 @@ use crate::{
 };
 
 use super::{
-    controls::{
-        control_areas, gallery_areas, live_areas, panel_header_area, period_areas,
-        table_row_area, visible_table_rows, OverviewControl,
-    },
+    controls::{control_areas, gallery_areas, panel_header_area, period_areas, OverviewControl},
+    mission::{card_row_area, mission_areas, render_mission, visible_card_rows},
     LiveOverviewSnapshot, OverviewHeadline, OverviewQuery, OverviewSnapshot, ID,
 };
 
@@ -166,52 +164,138 @@ impl OverviewWorkspace {
     }
 
     fn live_actions(&self, area: Rect, snapshot: &LiveOverviewSnapshot) -> Vec<WorkspaceAction> {
-        let areas = live_areas(area);
-        let visible_holdings = visible_table_rows(areas.holdings, snapshot.holdings.len());
-        let visible_headlines = visible_table_rows(areas.headlines, snapshot.headlines.len());
+        let areas = mission_areas(area);
         let mut actions = snapshot
-            .holdings
+            .priorities
             .iter()
-            .take(visible_holdings)
+            .take(visible_card_rows(
+                areas.priorities,
+                snapshot.priorities.len(),
+            ))
             .enumerate()
-            .filter_map(|(index, holding)| {
-                let area = table_row_area(areas.holdings, index)?;
-                let action = WorkspaceAction::new(
-                    format!("holding:{index}:{:016x}", text_identity(&holding.symbol)),
-                    format!("Open {} security research", holding.symbol),
+            .filter_map(|(index, priority)| {
+                let area = card_row_area(areas.priorities, index)?;
+                let identity = text_identity(&format!(
+                    "{}\0{}\0{}",
+                    priority.id, priority.reason, priority.command
+                ));
+                Some(WorkspaceAction::new(
+                    format!("priority:{index}:{identity:016x}"),
+                    format!("Open ranked priority: {}", priority.title),
                     area,
-                );
-                Some(if index == 0 { action.preferred() } else { action })
+                ))
             })
             .collect::<Vec<_>>();
-        let holdings_are_empty = actions.is_empty();
+        actions.extend(snapshot.market_pulse.iter().take(6).enumerate().filter_map(
+            |(index, pulse)| {
+                let x = areas.pulse.x.saturating_add(1 + index as u16 * 18);
+                if x >= areas.pulse.right().saturating_sub(1) {
+                    return None;
+                }
+                let area = Rect::new(
+                    x,
+                    areas.pulse.y.saturating_add(1),
+                    18.min(areas.pulse.right().saturating_sub(1).saturating_sub(x)),
+                    1,
+                );
+                Some(WorkspaceAction::new(
+                    format!("market:{index}:{:016x}", text_identity(&pulse.symbol)),
+                    format!("Open {} market security", pulse.symbol),
+                    area,
+                ))
+            },
+        ));
         actions.extend(
             snapshot
-                .headlines
+                .holdings
                 .iter()
-                .take(visible_headlines)
+                .take(visible_card_rows(areas.positions, snapshot.holdings.len()))
                 .enumerate()
-                .filter_map(|(index, headline)| {
-                    let area = table_row_area(areas.headlines, index)?;
-                    let identity = headline_identity(headline);
-                    let action = WorkspaceAction::new(
-                        format!("headline:{index}:{identity:016x}"),
-                        format!("Open News for {}", short_label(&headline.title)),
+                .filter_map(|(index, holding)| {
+                    let area = card_row_area(areas.positions, index)?;
+                    Some(WorkspaceAction::new(
+                        format!("holding:{index}:{:016x}", text_identity(&holding.symbol)),
+                        format!("Open {} security research", holding.symbol),
                         area,
-                    );
-                    Some(if holdings_are_empty && index == 0 {
-                        action.preferred()
-                    } else {
-                        action
-                    })
+                    ))
                 }),
         );
-        let rows_are_empty = actions.is_empty();
+        let visible_events = visible_card_rows(areas.events, snapshot.events.len());
+        actions.extend(
+            snapshot
+                .events
+                .iter()
+                .take(visible_events)
+                .enumerate()
+                .filter_map(|(index, event)| {
+                    let area = card_row_area(areas.events, index)?;
+                    let identity = text_identity(&format!(
+                        "{}\0{}\0{}",
+                        event.time, event.region, event.title
+                    ));
+                    Some(WorkspaceAction::new(
+                        format!("event:{index}:{identity:016x}"),
+                        format!("Open calendar for {}", short_label(&event.title)),
+                        area,
+                    ))
+                }),
+        );
+        let headline_offset = if snapshot.events.is_empty() {
+            1
+        } else {
+            snapshot.events.len()
+        };
+        actions.extend(snapshot.headlines.iter().take(2).enumerate().filter_map(
+            |(index, headline)| {
+                let area = card_row_area(areas.events, headline_offset + index)?;
+                Some(WorkspaceAction::new(
+                    format!("headline:{index}:{:016x}", headline_identity(headline)),
+                    format!("Open News for {}", short_label(&headline.title)),
+                    area,
+                ))
+            },
+        ));
+        actions.extend(
+            snapshot
+                .source_health
+                .iter()
+                .take(visible_card_rows(
+                    areas.health,
+                    snapshot.source_health.len(),
+                ))
+                .enumerate()
+                .filter_map(|(index, health)| {
+                    let area = card_row_area(areas.health, index)?;
+                    let identity = text_identity(&format!(
+                        "{}\0{}\0{}",
+                        health.source, health.detail, health.command
+                    ));
+                    Some(WorkspaceAction::new(
+                        format!("health:{index}:{identity:016x}"),
+                        format!("Inspect {} source", health.source),
+                        area,
+                    ))
+                }),
+        );
+        actions.extend(
+            snapshot
+                .saved_work
+                .iter()
+                .take(visible_card_rows(areas.saved, snapshot.saved_work.len()))
+                .enumerate()
+                .filter_map(|(index, work)| {
+                    let area = card_row_area(areas.saved, index)?;
+                    let identity = text_identity(&format!("{}\0{}", work.label, work.command));
+                    Some(WorkspaceAction::new(
+                        format!("saved:{}:{identity:016x}", work.id),
+                        format!("Open saved work: {}", work.label),
+                        area,
+                    ))
+                }),
+        );
         let mut footer = self.footer_actions(areas.footer);
-        if rows_are_empty {
-            if let Some(action) = footer.first_mut() {
-                action.preferred = true;
-            }
+        if let Some(action) = actions.first_mut().or_else(|| footer.first_mut()) {
+            action.preferred = true;
         }
         actions.extend(footer);
         actions
@@ -409,43 +493,24 @@ impl OverviewWorkspace {
     }
 
     fn render_live(&self, frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSnapshot) {
-        let areas = live_areas(area);
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(vec![
-                    Span::styled(
-                        " IMPORTED PORTFOLIO ",
-                        Style::new().bg(CYAN.into()).fg(BG.into()).bold(),
-                    ),
-                    Span::styled(format!(" {} ", snapshot.portfolio_source), INK),
-                ]),
-                Line::from(vec![
-                    Span::styled(" AS OF ", AMBER),
-                    Span::styled(&snapshot.portfolio_as_of, MUTED),
-                    Span::styled("   NEWS ", AMBER),
-                    Span::styled(&snapshot.news_status, MUTED),
-                ]),
-            ]),
-            areas.header,
-        );
-        render_live_holdings(frame, areas.holdings, snapshot);
-        render_live_kpis(frame, areas.kpis, snapshot);
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::styled(
-                    "PERFORMANCE HISTORY UNAVAILABLE FROM A POINT-IN-TIME CSV SNAPSHOT",
-                    AMBER,
-                ),
-                Line::styled(
-                    "YTD return, drawdown, volatility, Sharpe, attribution, and movers are not synthesized.",
-                    MUTED,
-                ),
-            ])
-            .block(reference_block("Data boundary")),
-            areas.boundary,
-        );
-        render_live_headlines(frame, areas.headlines, snapshot);
-        self.render_function_strip(frame, areas.footer);
+        let mut spans = control_areas(mission_areas(area).footer)
+            .into_iter()
+            .map(|(control, _)| {
+                Span::styled(
+                    control.text(),
+                    if control == OverviewControl::Refresh {
+                        AMBER
+                    } else {
+                        INK
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        spans.extend([
+            Span::styled(" / COMMAND ", INK),
+            Span::styled(" Q QUIT ", INK),
+        ]);
+        render_mission(frame, area, snapshot, Line::from(spans));
     }
 }
 
@@ -487,7 +552,8 @@ impl Workspace for OverviewWorkspace {
                 let OverviewSnapshot::Gallery { periods, .. } = self.query.load_overview() else {
                     return false;
                 };
-                self.selected_period = (self.selected_period + 1).min(periods.len().saturating_sub(1));
+                self.selected_period =
+                    (self.selected_period + 1).min(periods.len().saturating_sub(1));
                 true
             }
             KeyCode::F(9) | KeyCode::Char('r' | 'R') => {
@@ -540,6 +606,104 @@ impl Workspace for OverviewWorkspace {
                 return false;
             }
             self.selected_period = index;
+            return true;
+        }
+        if let Some(priority) = id.strip_prefix("priority:") {
+            let Some((index, expected_identity)) = parse_index_identity(priority) else {
+                return false;
+            };
+            let OverviewSnapshot::Live(snapshot) = self.query.load_overview() else {
+                return false;
+            };
+            let Some(priority) = snapshot.priorities.get(index) else {
+                return false;
+            };
+            let identity = text_identity(&format!(
+                "{}\0{}\0{}",
+                priority.id, priority.reason, priority.command
+            ));
+            if identity != expected_identity {
+                return false;
+            }
+            self.dispatch(priority.command.clone());
+            return true;
+        }
+        if let Some(market) = id.strip_prefix("market:") {
+            let Some((index, expected_identity)) = parse_index_identity(market) else {
+                return false;
+            };
+            let OverviewSnapshot::Live(snapshot) = self.query.load_overview() else {
+                return false;
+            };
+            let Some(market) = snapshot.market_pulse.get(index) else {
+                return false;
+            };
+            if text_identity(&market.symbol) != expected_identity {
+                return false;
+            }
+            self.dispatch(format!("SEC {} US", market.symbol));
+            return true;
+        }
+        if let Some(event) = id.strip_prefix("event:") {
+            let Some((index, expected_identity)) = parse_index_identity(event) else {
+                return false;
+            };
+            let OverviewSnapshot::Live(snapshot) = self.query.load_overview() else {
+                return false;
+            };
+            let Some(event) = snapshot.events.get(index) else {
+                return false;
+            };
+            let identity = text_identity(&format!(
+                "{}\0{}\0{}",
+                event.time, event.region, event.title
+            ));
+            if identity != expected_identity {
+                return false;
+            }
+            self.dispatch("NEWS CAL");
+            return true;
+        }
+        if let Some(health) = id.strip_prefix("health:") {
+            let Some((index, expected_identity)) = parse_index_identity(health) else {
+                return false;
+            };
+            let OverviewSnapshot::Live(snapshot) = self.query.load_overview() else {
+                return false;
+            };
+            let Some(health) = snapshot.source_health.get(index) else {
+                return false;
+            };
+            let identity = text_identity(&format!(
+                "{}\0{}\0{}",
+                health.source, health.detail, health.command
+            ));
+            if identity != expected_identity {
+                return false;
+            }
+            self.dispatch(health.command.clone());
+            return true;
+        }
+        if let Some(saved) = id.strip_prefix("saved:") {
+            let Some((saved_id, expected_identity)) = saved.split_once(':') else {
+                return false;
+            };
+            let Ok(saved_id) = saved_id.parse::<u64>() else {
+                return false;
+            };
+            let Some(expected_identity) = parse_identity(expected_identity) else {
+                return false;
+            };
+            let OverviewSnapshot::Live(snapshot) = self.query.load_overview() else {
+                return false;
+            };
+            let Some(saved) = snapshot.saved_work.iter().find(|work| work.id == saved_id) else {
+                return false;
+            };
+            if text_identity(&format!("{}\0{}", saved.label, saved.command)) != expected_identity {
+                return false;
+            }
+            self.dispatch(saved.command.clone());
             return true;
         }
         if let Some(holding) = id.strip_prefix("holding:") {
@@ -615,121 +779,6 @@ impl Workspace for OverviewWorkspace {
     }
 }
 
-fn render_live_holdings(frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSnapshot) {
-    if snapshot.holdings.is_empty() {
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::styled("NO PORTFOLIO IMPORTED", AMBER),
-                Line::raw(""),
-                Line::styled(
-                    "Use PORT IMPORT \"~/Downloads/positions.csv\" or set MARKET_TERMINAL_PORTFOLIO_CSV.",
-                    MUTED,
-                ),
-            ])
-            .block(reference_block("Current positions")),
-            area,
-        );
-        return;
-    }
-
-    let rows = snapshot.holdings.iter().map(|holding| {
-        Row::new([
-            Cell::from(holding.symbol.clone()).style(Style::new().fg(CYAN.into()).bold()),
-            Cell::from(Line::from(holding.quantity.clone()).alignment(Alignment::Right)),
-            Cell::from(Line::from(holding.market_value.clone()).alignment(Alignment::Right)),
-            Cell::from(Line::from(holding.pnl.clone()).alignment(Alignment::Right))
-                .style(theme::value(&holding.pnl)),
-            Cell::from(Line::from(holding.weight.clone()).alignment(Alignment::Right)),
-        ])
-    });
-    frame.render_widget(
-        Table::new(
-            rows,
-            [
-                Constraint::Percentage(24),
-                Constraint::Percentage(17),
-                Constraint::Percentage(24),
-                Constraint::Percentage(18),
-                Constraint::Percentage(17),
-            ],
-        )
-        .header(
-            Row::new(["SYMBOL", "QUANTITY", "MARKET VALUE", "P&L", "WEIGHT"])
-                .style(Style::new().fg(INK.into()).bold())
-                .bottom_margin(1),
-        )
-        .column_spacing(1)
-        .block(reference_block(
-            "Imported positions · click a row for Security",
-        )),
-        area,
-    );
-}
-
-fn render_live_kpis(frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSnapshot) {
-    let columns = Layout::horizontal([Constraint::Ratio(1, 4); 4]).split(area);
-    for (index, (label, value)) in [
-        ("NET ASSET VALUE", snapshot.net_asset_value.as_str()),
-        ("YTD RETURN", snapshot.ytd_return.as_str()),
-        ("AVAILABLE CASH", snapshot.available_cash.as_str()),
-        ("SHARPE", snapshot.sharpe.as_str()),
-    ]
-    .iter()
-    .enumerate()
-    {
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::styled(*label, MUTED),
-                Line::styled(*value, if index == 1 { GREEN } else { CYAN }),
-            ])
-            .block(Block::new().borders(Borders::ALL).border_style(AMBER))
-            .alignment(Alignment::Center),
-            columns[index],
-        );
-    }
-}
-
-fn render_live_headlines(frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSnapshot) {
-    if snapshot.headlines.is_empty() {
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::styled("NO LIVE STORIES LOADED", AMBER),
-                Line::styled(&snapshot.news_status, MUTED),
-            ])
-            .block(reference_block("Live headlines")),
-            area,
-        );
-        return;
-    }
-
-    frame.render_widget(
-        Table::new(
-            snapshot.headlines.iter().map(|headline| {
-                Row::new([
-                    headline.time.clone(),
-                    headline.topic.clone(),
-                    headline.title.clone(),
-                    headline.region.clone(),
-                ])
-            }),
-            [
-                Constraint::Length(6),
-                Constraint::Length(6),
-                Constraint::Min(30),
-                Constraint::Length(6),
-            ],
-        )
-        .header(
-            Row::new(["TIME", "TOPIC", "HEADLINE", "REGION"])
-                .style(Style::new().fg(INK.into()).bold())
-                .bottom_margin(1),
-        )
-        .column_spacing(1)
-        .block(reference_block("Live headlines · click a row for News")),
-        area,
-    );
-}
-
 fn reference_block(title: &'static str) -> Block<'static> {
     Block::new()
         .borders(Borders::ALL)
@@ -749,9 +798,18 @@ fn text_identity(value: &str) -> u64 {
     hash
 }
 
+fn parse_index_identity(value: &str) -> Option<(usize, u64)> {
+    let (index, identity) = value.split_once(':')?;
+    Some((index.parse().ok()?, parse_identity(identity)?))
+}
+
 fn headline_identity(headline: &OverviewHeadline) -> u64 {
     let mut identity = String::with_capacity(
-        headline.time.len() + headline.topic.len() + headline.title.len() + headline.region.len() + 3,
+        headline.time.len()
+            + headline.topic.len()
+            + headline.title.len()
+            + headline.region.len()
+            + 3,
     );
     identity.push_str(&headline.time);
     identity.push('\0');
@@ -1021,12 +1079,49 @@ mod tests {
                 region: "US".to_owned(),
             }],
             news_status: "LIVE · 1 STORY".to_owned(),
+            market_pulse: vec![super::super::OverviewMarketPulse {
+                symbol: "SPY".to_owned(),
+                last: "653.28".to_owned(),
+                percent_change: "+0.64%".to_owned(),
+                quality: "DELAYED".to_owned(),
+                as_of: "2026-08-26 12:01 UTC".to_owned(),
+                provider: "TEST".to_owned(),
+            }],
+            events: vec![super::super::OverviewEvent {
+                time: "14:00".to_owned(),
+                region: "US".to_owned(),
+                importance: "HIGH".to_owned(),
+                title: "FED DECISION".to_owned(),
+                period: "AUG".to_owned(),
+            }],
+            source_health: vec![super::super::OverviewSourceHealth {
+                source: "MARKETS".to_owned(),
+                state: super::super::OverviewHealthState::Ready,
+                detail: "TEST · DELAYED".to_owned(),
+                as_of: "2026-08-26 12:01 UTC".to_owned(),
+                command: "MARKETS".to_owned(),
+            }],
+            saved_work: vec![super::super::OverviewSavedWork {
+                id: 9,
+                label: "Apple research".to_owned(),
+                command: "SEC AAPL US".to_owned(),
+                kind: "COMMAND TILE".to_owned(),
+            }],
+            priorities: vec![super::super::OverviewPriority {
+                id: "performance-missing".to_owned(),
+                score: 45,
+                title: "Performance history is unavailable".to_owned(),
+                reason: "Point-in-time positions cannot establish returns".to_owned(),
+                source: "PORTFOLIO".to_owned(),
+                as_of: "2026-08-26 12:00 UTC".to_owned(),
+                command: "PORT PERF".to_owned(),
+            }],
         }
     }
 
     impl OverviewQuery for LiveQuery {
         fn load_overview(&self) -> OverviewSnapshot {
-            OverviewSnapshot::Live(live_snapshot())
+            OverviewSnapshot::Live(Box::new(live_snapshot()))
         }
     }
 
@@ -1046,7 +1141,7 @@ mod tests {
 
     impl OverviewQuery for MutableLiveQuery {
         fn load_overview(&self) -> OverviewSnapshot {
-            OverviewSnapshot::Live(self.snapshot.lock().unwrap().clone())
+            OverviewSnapshot::Live(Box::new(self.snapshot.lock().unwrap().clone()))
         }
 
         fn request_refresh(&self) {
@@ -1089,7 +1184,9 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("actual-positions.csv"));
         assert!(rendered.contains("Cached publisher headline"));
-        assert!(rendered.contains("PERFORMANCE HISTORY UNAVAILABLE"));
+        assert!(rendered.contains("MISSION CONTROL"));
+        assert!(rendered.contains("Performance history"));
+        assert!(rendered.contains("FED DECISION"));
         assert!(!rendered.contains("Advantest"));
         assert!(!rendered.contains("S&P Futures"));
     }
@@ -1097,17 +1194,19 @@ mod tests {
     #[test]
     fn live_overview_rows_open_security_and_news() {
         let area = Rect::new(0, 0, 160, 48);
-        let areas = live_areas(area);
         let mut workspace = OverviewWorkspace::new(Arc::new(LiveQuery));
+        let actions = workspace.actions(area);
+        let holding = actions
+            .iter()
+            .find(|action| action.id.starts_with("holding:0:"))
+            .unwrap();
+        let headline = actions
+            .iter()
+            .find(|action| action.id.starts_with("headline:0:"))
+            .unwrap();
 
-        assert!(workspace.handle_mouse(
-            click(areas.holdings.x + 2, areas.holdings.y + 3),
-            area
-        ));
-        assert!(workspace.handle_mouse(
-            click(areas.headlines.x + 2, areas.headlines.y + 3),
-            area
-        ));
+        assert!(workspace.handle_mouse(click(holding.area.x, holding.area.y), area));
+        assert!(workspace.handle_mouse(click(headline.area.x, headline.area.y), area));
 
         assert_eq!(
             workspace.poll_intents(),
@@ -1146,7 +1245,43 @@ mod tests {
             .iter()
             .find(|action| action.id.starts_with("holding:0:"))
             .unwrap();
-        assert!(holding.preferred);
+        assert!(!holding.preferred);
+        assert!(
+            actions
+                .iter()
+                .find(|action| action.id.starts_with("priority:0:"))
+                .unwrap()
+                .preferred
+        );
+        let priority = actions
+            .iter()
+            .find(|action| action.id.starts_with("priority:0:"))
+            .unwrap()
+            .clone();
+        assert!(workspace.activate_action(&priority.id));
+        assert_eq!(
+            workspace.poll_intents(),
+            vec![AppIntent::DispatchCommand {
+                command: "PORT PERF".to_owned(),
+                origin: ID,
+            }]
+        );
+        query.snapshot.lock().unwrap().priorities[0].reason = "Replacement rationale".to_owned();
+        assert!(!workspace.activate_action(&priority.id));
+
+        let saved = workspace
+            .actions(area)
+            .into_iter()
+            .find(|action| action.id.starts_with("saved:9:"))
+            .unwrap();
+        assert!(workspace.activate_action(&saved.id));
+        assert_eq!(
+            workspace.poll_intents(),
+            vec![AppIntent::DispatchCommand {
+                command: "SEC AAPL US".to_owned(),
+                origin: ID,
+            }]
+        );
         assert!(workspace.activate_action(&holding.id));
         assert_eq!(
             workspace.poll_intents(),

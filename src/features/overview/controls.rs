@@ -30,36 +30,6 @@ pub(super) fn gallery_areas(area: Rect) -> GalleryAreas {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct LiveAreas {
-    pub header: Rect,
-    pub holdings: Rect,
-    pub kpis: Rect,
-    pub boundary: Rect,
-    pub headlines: Rect,
-    pub footer: Rect,
-}
-
-pub(super) fn live_areas(area: Rect) -> LiveAreas {
-    let rows = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(12),
-        Constraint::Length(5),
-        Constraint::Length(5),
-        Constraint::Min(8),
-        Constraint::Length(1),
-    ])
-    .split(area);
-    LiveAreas {
-        header: rows[0],
-        holdings: rows[1],
-        kpis: rows[2],
-        boundary: rows[3],
-        headlines: rows[4],
-        footer: rows[5],
-    }
-}
-
 pub(super) fn period_areas(area: Rect, periods: &[&str]) -> Vec<(usize, Rect)> {
     if area.height == 0 {
         return Vec::new();
@@ -78,24 +48,8 @@ pub(super) fn period_areas(area: Rect, periods: &[&str]) -> Vec<(usize, Rect)> {
     result
 }
 
-pub(super) fn table_row_area(area: Rect, index: usize) -> Option<Rect> {
-    let y = area.y.saturating_add(3).saturating_add(index as u16);
-    (area.width > 2 && y < area.bottom()).then(|| {
-        Rect::new(
-            area.x.saturating_add(1),
-            y,
-            area.width.saturating_sub(2),
-            1,
-        )
-    })
-}
-
 pub(super) fn panel_header_area(area: Rect) -> Rect {
     Rect::new(area.x, area.y, area.width, area.height.min(1))
-}
-
-pub(super) fn visible_table_rows(area: Rect, rows: usize) -> usize {
-    usize::from(area.height.saturating_sub(4)).min(rows)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,7 +117,6 @@ mod tests {
     fn dashboard_layouts_keep_every_region_inside_the_viewport() {
         for area in [Rect::new(0, 0, 80, 24), Rect::new(2, 3, 120, 36)] {
             let gallery = gallery_areas(area);
-            let live = live_areas(area);
             for region in [
                 gallery.header,
                 gallery.returns,
@@ -171,12 +124,6 @@ mod tests {
                 gallery.composition,
                 gallery.news,
                 gallery.footer,
-                live.header,
-                live.holdings,
-                live.kpis,
-                live.boundary,
-                live.headlines,
-                live.footer,
             ] {
                 assert!(region.x >= area.x);
                 assert!(region.y >= area.y);
@@ -195,8 +142,5 @@ mod tests {
         let controls = control_areas(Rect::new(0, 0, 18, 1));
         assert_eq!(controls.len(), 2);
         assert_eq!(controls[1].0, OverviewControl::Risk);
-
-        assert_eq!(visible_table_rows(Rect::new(0, 0, 20, 6), 10), 2);
-        assert!(table_row_area(Rect::new(0, 0, 20, 4), 1).is_none());
     }
 }

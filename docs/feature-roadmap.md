@@ -247,10 +247,13 @@ move to its own crate later without changing its public vocabulary.
   discarding newly registered workspaces. Launchpad now provides a responsive
   command-tile grid with stable identities, add/rename/reorder/remove/reset,
   keyboard, pointer, spatial-focus and follow-hint routing, versioned seeds, and
-  coalesced crash-safe persistence. Import/export, typed saved objects,
-  pane/view state capture, and unified discovery remain.
-- **Next:** execute the P1 Mission Control, launchpad, saved-layout, and unified
-  discovery package, then the remaining Stage 2 risk, screening, and alert-rule
+  coalesced crash-safe persistence. Mission Control now composes a live market
+  pulse, portfolio summary, provider-backed events, source health, saved work,
+  current news, and deterministic ranked priorities with exact drill-down
+  commands. Import/export, typed saved objects, pane/view state capture, and
+  unified discovery remain.
+- **Next:** execute the remaining P1 saved-layout, typed-object, import/export,
+  and unified-discovery packages, then the remaining Stage 2 risk, screening, and alert-rule
   families. Provider availability
   extends the deployment surface; deterministic fixtures remain the acceptance
   baseline and opt-in live contracts verify real provider behavior.
@@ -328,7 +331,7 @@ continues.
 | Reference capability | Status | Market Terminal evidence | Gap required for parity |
 | --- | --- | --- | --- |
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
-| Mission Control, launchpad, ticker tape | Partial | Overview, Desk, Markets, persisted active workspace, and previewable versioned role presets | Add configurable launch tiles, live pulse strip, priority stack, and editable saved layouts. |
+| Mission Control, launchpad, ticker tape | Partial | Live pulse, imported portfolio, provider events, source health, saved work, inspectable priority ranking, persistent editable Launchpad, Desk, and versioned role presets | Add typed launch objects, Launchpad import/export, and complete recoverable pane/view layouts. |
 | Keyboard navigation and icon rail | Covered | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, Chart periods/studies/comparisons/inspection/modes/promotion/refresh, modal-safe News filters/headlines/story/calendar/reader actions, Overview periods/cards/live holdings/headlines/context controls, Alerts rows/mutations/Security/refresh controls, and Spreadsheet cells/rows/formula/tabs/workflow controls | Preserve the action and modal-trapping contracts as new controls and overlays are added. |
 | Saved views and workspace presets | Partial | Workspace order, active workspace, layout and command history persist | Persist/restore view parameters, filters, selected instrument, table columns, chart state, pane geometry, and Trader/Quant/PM/Risk/Ops presets. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
@@ -535,9 +538,17 @@ geometry, stale-action rejection, keyboard reordering, guarded deletion,
 versioned seeds, and a capacity-one durable writer. Tests lock pure edit
 semantics, command editing, action revalidation, `F`-hint dispatch, private local
 storage, and a full workspace restart. Three-size semantic frames cover both
-the preset preview and Launchpad. P1 exit still requires import/export, typed
-saved screen/portfolio/sheet/layout objects, complete pane/view capture, Mission
-Control offline composition, and unified discovery.
+the preset preview and Launchpad. Mission Control is now an Overview-owned read
+model over translated Markets, Portfolio, News, Alerts, and Launchpad snapshots.
+Its responsive live surface includes exact pulse provenance, portfolio KPIs and
+positions, provider-backed events, source health, startup-sampled saved work,
+current headlines, and score-sorted priorities whose reasons, owners, as-of
+state, and commands are visible. Actions revalidate content identity before
+dispatch. Unit evidence locks ranking, offline composition, stale-action
+rejection, and drill-down; a three-size semantic golden locks the all-external-
+providers-offline frame without gallery substitution. P1 exit still requires
+import/export, typed saved screen/portfolio/sheet/layout objects, complete
+pane/view capture, and unified discovery.
 
 ### P2 — Market-data fabric, microstructure, and chart workstation
 

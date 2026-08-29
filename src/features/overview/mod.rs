@@ -1,9 +1,14 @@
 mod controls;
 mod domain;
+mod mission;
 mod port;
 mod workspace;
 
-pub use domain::{LiveOverviewSnapshot, OverviewHeadline, OverviewHolding, OverviewSnapshot};
+pub use domain::{
+    LiveOverviewSnapshot, OverviewEvent, OverviewHeadline, OverviewHealthState, OverviewHolding,
+    OverviewMarketPulse, OverviewPriority, OverviewSavedWork, OverviewSnapshot,
+    OverviewSourceHealth,
+};
 pub use port::OverviewQuery;
 pub use workspace::OverviewWorkspace;
 

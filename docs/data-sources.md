@@ -8,6 +8,13 @@ Across snapshot providers, Monitor retains at most 64 distinct observations per
 instrument for an in-process session sparkline. Cached repeats do not add
 points, and the trace is neither persisted nor synthesized.
 
+Mission Control is a consumer-owned projection of these registered sources. It
+retains each source's exact status, quality, provenance, and as-of text; it does
+not combine currencies, infer portfolio returns from positions, create calendar
+events, or substitute gallery values. Ranked items are deterministic rules over
+missing, partial, loading, unavailable, and triggered states. Launchpad and
+Alert documents are sampled at startup so rendering performs no filesystem I/O.
+
 ## Local shell, navigation, and presentation state
 
 - **Surfaces:** command routing and Help, workspace/panel focus, follow hints,
@@ -22,9 +29,10 @@ points, and the trace is neither persisted nor synthesized.
   Launchpad stores only user-authored labels, exact terminal commands, stable
   local tile IDs, and a revision. Visible-action rectangles, selections, delete
   confirmation, and follow labels are derived in process and never persisted.
-- **Quality and privacy:** command, action, theme, and Launchpad behavior is deterministic
-  under the checked-in fixtures. No command text, focus history, terminal frame,
-  or user interaction is transmitted by these capabilities.
+- **Quality and privacy:** command, action, theme, Launchpad, and Mission Control
+  routing behavior is deterministic under the checked-in fixtures. No command
+  text, focus history, terminal frame, ranking result, or user interaction is
+  transmitted by these capabilities.
 
 ## Yahoo Finance chart
 

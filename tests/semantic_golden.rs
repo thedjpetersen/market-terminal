@@ -1,6 +1,16 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use market_terminal::{bootstrap, runtime, App};
+use market_terminal::{
+    app::WorkspaceRegistry,
+    bootstrap,
+    features::overview::{
+        LiveOverviewSnapshot, OverviewHealthState, OverviewPriority, OverviewQuery,
+        OverviewSavedWork, OverviewSnapshot, OverviewSourceHealth, OverviewWorkspace,
+        ID as OVERVIEW,
+    },
+    runtime, App,
+};
 use ratatui::{backend::TestBackend, Terminal};
+use std::sync::Arc;
 
 struct Golden {
     name: &'static str,
@@ -108,13 +118,30 @@ fn key_workspaces_match_semantic_goldens_at_standard_sizes() {
     );
 }
 
+#[test]
+fn offline_mission_control_matches_semantic_goldens_at_standard_sizes() {
+    let expected = [0x95ef8129ead0501d, 0x6d3f1f2325402473, 0x61e0560a59eb00c1];
+    let actual = SIZES.map(|(width, height)| {
+        let app = offline_mission_app();
+        render_app_hash(&app, width, height)
+    });
+    assert_eq!(
+        actual, expected,
+        "review Mission Control offline frames before updating hashes"
+    );
+}
+
 fn render_hash(prepare: fn(&mut App), width: u16, height: u16) -> u64 {
     let mut app = bootstrap::demo_app();
     prepare(&mut app);
+    render_app_hash(&app, width, height)
+}
+
+fn render_app_hash(app: &App, width: u16, height: u16) -> u64 {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("test terminal");
     terminal
-        .draw(|frame| runtime::render(frame, &app))
+        .draw(|frame| runtime::render(frame, app))
         .expect("render golden frame");
 
     let mut hash = 0xcbf29ce484222325_u64;
@@ -127,6 +154,82 @@ fn render_hash(prepare: fn(&mut App), width: u16, height: u16) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+struct OfflineMissionQuery;
+
+impl OverviewQuery for OfflineMissionQuery {
+    fn load_overview(&self) -> OverviewSnapshot {
+        OverviewSnapshot::Live(Box::new(LiveOverviewSnapshot {
+            net_asset_value: "—".to_owned(),
+            ytd_return: "N/A".to_owned(),
+            available_cash: "—".to_owned(),
+            sharpe: "N/A".to_owned(),
+            portfolio_source: "POSITIONS NOT CONFIGURED".to_owned(),
+            portfolio_as_of: "—".to_owned(),
+            holdings: Vec::new(),
+            headlines: Vec::new(),
+            news_status: "LIVE FEED UNAVAILABLE · OFFLINE".to_owned(),
+            market_pulse: Vec::new(),
+            events: Vec::new(),
+            source_health: vec![
+                OverviewSourceHealth {
+                    source: "PORTFOLIO".to_owned(),
+                    state: OverviewHealthState::NotConfigured,
+                    detail: "NO POSITION SNAPSHOT".to_owned(),
+                    as_of: "—".to_owned(),
+                    command: "PORT".to_owned(),
+                },
+                OverviewSourceHealth {
+                    source: "MARKETS".to_owned(),
+                    state: OverviewHealthState::Unavailable,
+                    detail: "MARKET SNAPSHOT UNAVAILABLE · OFFLINE".to_owned(),
+                    as_of: "—".to_owned(),
+                    command: "MARKETS".to_owned(),
+                },
+                OverviewSourceHealth {
+                    source: "NEWS".to_owned(),
+                    state: OverviewHealthState::Unavailable,
+                    detail: "LIVE FEED UNAVAILABLE · OFFLINE".to_owned(),
+                    as_of: "CURRENT CACHE".to_owned(),
+                    command: "NEWS".to_owned(),
+                },
+            ],
+            saved_work: vec![OverviewSavedWork {
+                id: 1,
+                label: "Mission Control".to_owned(),
+                command: "HOME".to_owned(),
+                kind: "COMMAND TILE".to_owned(),
+            }],
+            priorities: vec![
+                OverviewPriority {
+                    id: "market-pulse-unavailable".to_owned(),
+                    score: 80,
+                    title: "Market pulse is unavailable".to_owned(),
+                    reason: "MARKET SNAPSHOT UNAVAILABLE · OFFLINE".to_owned(),
+                    source: "MARKETS".to_owned(),
+                    as_of: "—".to_owned(),
+                    command: "MARKETS".to_owned(),
+                },
+                OverviewPriority {
+                    id: "portfolio-missing".to_owned(),
+                    score: 65,
+                    title: "Portfolio snapshot not configured".to_owned(),
+                    reason: "Import positions to personalize priorities".to_owned(),
+                    source: "PORTFOLIO".to_owned(),
+                    as_of: "—".to_owned(),
+                    command: "PORT".to_owned(),
+                },
+            ],
+        }))
+    }
+}
+
+fn offline_mission_app() -> App {
+    let registry = WorkspaceRegistry::new(vec![Box::new(OverviewWorkspace::new(Arc::new(
+        OfflineMissionQuery,
+    )))]);
+    App::new(registry, OVERVIEW)
 }
 
 fn prepare_overview(_app: &mut App) {}

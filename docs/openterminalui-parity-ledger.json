@@ -49,7 +49,7 @@
       "upstream_maturity": "substantive",
       "reference_files": ["frontend/src/pages/HomePage.tsx", "frontend/src/components/home/MissionControlGrid.tsx", "frontend/src/components/home/SystemHealthBar.tsx"],
       "acceptance_tests": ["MISSION-OFFLINE", "MISSION-DRILLDOWN", "MISSION-RANKING"],
-      "gap": "Compose market pulse, portfolio state, events, provider health, recent work, and an inspectable priority stack without substituting fixtures when providers fail."
+      "gap": "Mission Control now composes exact market pulse provenance, imported portfolio state, provider-backed events, source health, saved Launchpad work, current news, and score-ranked actionable items with visible rationale/as-of/owner/command. Offline semantic evidence proves provider failures remain labeled without gallery substitution. Complete P1 still requires recoverable pane/view objects and unified discovery integration."
     },
     {
       "id": "OTUI-004",

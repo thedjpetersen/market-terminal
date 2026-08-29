@@ -251,14 +251,17 @@ pub fn persistent_app() -> App {
     let snapshot_refresh_interval = quote_refresh_interval();
     let mut runtime_settings = runtime_settings_summary(snapshot_refresh_interval, &initial_symbol);
     runtime_settings.keybindings = keymap.status(keymap_warnings.len());
-    let overview_query: Arc<dyn OverviewQuery> = Arc::new(LiveOverviewQuery::new(
-        portfolio_query.clone(),
-        news_query.clone(),
-    ));
     let markets_query: Arc<dyn MarketsQuery> = Arc::new(LiveMarketsQuery::new(
         live_market_data.market_data.clone(),
         configured_market_symbols(),
         snapshot_refresh_interval,
+    ));
+    let overview_query: Arc<dyn OverviewQuery> = Arc::new(LiveOverviewQuery::mission_control(
+        portfolio_query.clone(),
+        news_query.clone(),
+        markets_query.clone(),
+        repository.clone(),
+        repository.clone(),
     ));
     build_app(AppProviders {
         overview_query,

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::{NewsSnapshot, NewsWorkbench};
+use super::{NewsEvent, NewsSnapshot, NewsWorkbench};
 
 pub trait NewsFeed: Send + Sync {
     fn load_news(&self) -> NewsSnapshot;
@@ -9,6 +9,13 @@ pub trait NewsFeed: Send + Sync {
     /// aware results. The default keeps offline and test adapters useful.
     fn load_workbench(&self) -> NewsWorkbench {
         NewsWorkbench::from_snapshot(self.load_news())
+    }
+
+    /// Returns only provider-backed calendar events. The default is empty so
+    /// consumers never mistake the deterministic News gallery calendar for a
+    /// live external source.
+    fn load_events(&self) -> Vec<NewsEvent> {
+        Vec::new()
     }
 
     fn status(&self) -> String {
