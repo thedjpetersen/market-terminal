@@ -16,11 +16,13 @@ points, and the trace is neither persisted nor synthesized.
   or third-party reference data. Their inputs are bounded terminal events,
   feature-owned action descriptors, built-in theme definitions, and the local
   session document.
-- **Persistence:** only the selected theme, workspace order, active workspace,
-  keymap preferences, and recent commands are eligible for crash-safe local
-  persistence. Visible-action rectangles and follow labels are derived for the
-  current viewport and are never persisted.
-- **Quality and privacy:** command, action, and theme behavior is deterministic
+- **Persistence:** the selected theme, workspace order, active workspace,
+  preset return point, keymap preferences, recent commands, and bounded
+  Launchpad tile document are eligible for crash-safe local persistence.
+  Launchpad stores only user-authored labels, exact terminal commands, stable
+  local tile IDs, and a revision. Visible-action rectangles, selections, delete
+  confirmation, and follow labels are derived in process and never persisted.
+- **Quality and privacy:** command, action, theme, and Launchpad behavior is deterministic
   under the checked-in fixtures. No command text, focus history, terminal frame,
   or user interaction is transmitted by these capabilities.
 

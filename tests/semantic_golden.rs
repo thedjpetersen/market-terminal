@@ -18,67 +18,72 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "spreadsheet",
         prepare: prepare_spreadsheet,
-        hashes: [0xde9842c043fdb13c, 0x12cda5e51d679347, 0xfdb113f90e395920],
+        hashes: [0x348f31f016a049e5, 0x1b4b5178b0b68201, 0xec9ee27f517ea8a7],
     },
     Golden {
         name: "instrument-find",
         prepare: prepare_find,
-        hashes: [0x7bf921a1d5542973, 0xec4a6d37ee19d5c6, 0x82f485327339bd79],
+        hashes: [0x71f625791ea64bac, 0x023bef0fa9a381d4, 0x7f41ce0bff731b20],
     },
     Golden {
         name: "help",
         prepare: prepare_help,
-        hashes: [0xc606e9b59e3d94f3, 0x801ada1ed7bff7d0, 0xaf23406824fdb6cb],
+        hashes: [0x14bb21c0d0e8e0e0, 0x99b4a376d072a328, 0x0efb5dcccdb3d628],
     },
     Golden {
         name: "workspace-preset-preview",
         prepare: prepare_workspace_preset_preview,
-        hashes: [0x4cc072226fb733a1, 0x1e2d6be4abc5b584, 0xba1d8f937e51d562],
+        hashes: [0x7a04494f6250d87a, 0xe69eff31457179ee, 0xf344b282141f4221],
+    },
+    Golden {
+        name: "launchpad",
+        prepare: prepare_launchpad,
+        hashes: [0xf22729a28219ae46, 0x2f3225c2ae81b973, 0xc2bc68d6ca7ded7a],
     },
     Golden {
         name: "spreadsheet-error",
         prepare: prepare_spreadsheet_error,
-        hashes: [0x8f7d96e4015cc375, 0x0e805fb6022cc0a6, 0x027dfcbf10f4d98b],
+        hashes: [0xe20f49fbabedc1bc, 0x6cc81e54570bde28, 0xbb7a539b51f8bd24],
     },
     Golden {
         name: "formula-editor",
         prepare: prepare_formula_editor,
-        hashes: [0xd17d1354baf81fe3, 0x19a563994925ade0, 0x56b9ec16cfaffb09],
+        hashes: [0xed4d9e54266f0326, 0x9ee89e35d51f6352, 0x619c25ba3a400f36],
     },
     Golden {
         name: "risk",
         prepare: prepare_risk,
-        hashes: [0xe1b4613461b2e418, 0xd0d495a90a0fc1c9, 0xf490670878307079],
+        hashes: [0xf2025630f0df039b, 0x0ba08b07113c8e6f, 0xe423a99991bf1f32],
     },
     Golden {
         name: "risk-history",
         prepare: prepare_risk_history,
-        hashes: [0x2585b21f3c947110, 0x3726a67132e1222d, 0xe0134fa41e96413d],
+        hashes: [0x488c3c8a4a7e593d, 0x39076603416acd6f, 0xa50d790819644cf6],
     },
     Golden {
         name: "news",
         prepare: prepare_news,
-        hashes: [0xe845a20f59083ce3, 0x559da760c32dc499, 0x58ab3ba74fbd5669],
+        hashes: [0x805d8a9df1bfbe74, 0x6073aa4a27122aa3, 0x07d6fbebbf2c303e],
     },
     Golden {
         name: "news-reader",
         prepare: prepare_news_reader,
-        hashes: [0xff94c4456267fe0f, 0x30c7fb0a3ae066b0, 0xe9b2272fa91ef6f1],
+        hashes: [0x2d1dffcf21e05e74, 0x2d48d33b39bcca9a, 0x293ec73e84efe14e],
     },
     Golden {
         name: "alerts",
         prepare: prepare_alerts,
-        hashes: [0x51989730c470a18b, 0x18db67236fdd3013, 0xc889b0b131fdc289],
+        hashes: [0x643bd7ff822dc668, 0x768d62b2a5dcbf15, 0x9d5b524c32b98ab8],
     },
     Golden {
         name: "panel-focus",
         prepare: prepare_panel_focus,
-        hashes: [0x4e829f219f1a7025, 0x4ba506f53b8f138a, 0x117a60a4e7574cc9],
+        hashes: [0xdd251026c08fb468, 0x1c597ec8b6e164e4, 0x0e8dfb588e822e68],
     },
     Golden {
         name: "follow-hints",
         prepare: prepare_follow_hints,
-        hashes: [0xf4bb75e587d86b7f, 0xbdae658b18414f1a, 0xb34a90345098a389],
+        hashes: [0xa3c9b589dab3f911, 0xee6cb17a3560fca3, 0x8d623ebb76e220cf],
     },
 ];
 
@@ -140,6 +145,10 @@ fn prepare_help(app: &mut App) {
 
 fn prepare_workspace_preset_preview(app: &mut App) {
     dispatch(app, "PRESET TRADER");
+}
+
+fn prepare_launchpad(app: &mut App) {
+    dispatch(app, "LAUNCH");
 }
 
 fn prepare_risk(app: &mut App) {

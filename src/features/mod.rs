@@ -3,6 +3,7 @@ pub mod assistant;
 pub mod charting;
 pub mod chat;
 pub mod instrument;
+pub mod launchpad;
 pub mod market_data;
 pub mod markets;
 pub mod news;

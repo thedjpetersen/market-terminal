@@ -12,6 +12,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use super::alert_state::{decode_alert_rules, encode_alert_rules};
 use crate::features::alerts::{AlertRulesState, AlertStateError, AlertStateStore};
+use crate::features::launchpad::{LaunchpadState, LaunchpadStateError, LaunchpadStateStore};
 use crate::features::persistence::{
     DocumentId, FeatureDocument, FeatureDocumentRepository, FeatureKey, PersistenceError,
     SessionState, SessionStateRepository, MAX_DOCUMENT_BYTES,
@@ -514,6 +515,63 @@ impl AlertStateStore for LocalPersistence {
     }
 }
 
+impl LaunchpadStateStore for LocalPersistence {
+    fn load_launchpad(&self) -> Result<Option<LaunchpadState>, LaunchpadStateError> {
+        let feature = launchpad_feature_key()?;
+        let id = launchpad_document_id()?;
+        FeatureDocumentRepository::load(self, &feature, &id)
+            .map_err(launchpad_persistence_error)?
+            .map(|document| {
+                let state: LaunchpadState = serde_json::from_value(document.payload().clone())
+                    .map_err(|error| LaunchpadStateError::Corrupt(error.to_string()))?;
+                state
+                    .validate()
+                    .map_err(|error| LaunchpadStateError::Corrupt(error.to_string()))?;
+                if state.revision != document.revision() {
+                    return Err(LaunchpadStateError::Corrupt(
+                        "document and launchpad revisions do not match".to_owned(),
+                    ));
+                }
+                Ok(state)
+            })
+            .transpose()
+    }
+
+    fn save_launchpad(&self, state: &LaunchpadState) -> Result<(), LaunchpadStateError> {
+        state
+            .validate()
+            .map_err(|error| LaunchpadStateError::Corrupt(error.to_string()))?;
+        let payload = serde_json::to_value(state)
+            .map_err(|error| LaunchpadStateError::Corrupt(error.to_string()))?;
+        let document = FeatureDocument::new(
+            launchpad_feature_key()?,
+            launchpad_document_id()?,
+            state.revision,
+            payload,
+        )
+        .map_err(|error| LaunchpadStateError::Corrupt(error.to_string()))?;
+        FeatureDocumentRepository::save(self, &document).map_err(launchpad_persistence_error)
+    }
+}
+
+fn launchpad_feature_key() -> Result<FeatureKey, LaunchpadStateError> {
+    FeatureKey::new("launchpad").map_err(|error| LaunchpadStateError::Corrupt(error.to_string()))
+}
+
+fn launchpad_document_id() -> Result<DocumentId, LaunchpadStateError> {
+    DocumentId::new("tiles").map_err(|error| LaunchpadStateError::Corrupt(error.to_string()))
+}
+
+fn launchpad_persistence_error(error: PersistenceError) -> LaunchpadStateError {
+    match error {
+        PersistenceError::UnsupportedVersion { schema, version } => {
+            LaunchpadStateError::Unsupported(format!("{schema} version {version}"))
+        }
+        PersistenceError::Corrupt(message) => LaunchpadStateError::Corrupt(message),
+        error => LaunchpadStateError::Io(error.to_string()),
+    }
+}
+
 fn spreadsheet_feature_key() -> Result<FeatureKey, SpreadsheetFileError> {
     FeatureKey::new("spreadsheet")
         .map_err(|error| SpreadsheetFileError::InvalidLocation(error.to_string()))
@@ -970,6 +1028,27 @@ mod tests {
         assert!(names
             .iter()
             .all(|name| !name.to_string_lossy().ends_with(".tmp")));
+    }
+
+    #[test]
+    fn launchpad_tiles_round_trip_through_private_feature_state() {
+        let directory = TestDirectory::new("launchpad");
+        let repository = LocalPersistence::new(&directory.0);
+        let mut expected = LaunchpadState::seeded();
+        expected.add("Apple Research", "SEC AAPL US").unwrap();
+
+        LaunchpadStateStore::save_launchpad(&repository, &expected).unwrap();
+
+        assert_eq!(
+            LaunchpadStateStore::load_launchpad(&repository).unwrap(),
+            Some(expected)
+        );
+        assert!(repository
+            .document_path(
+                &FeatureKey::new("launchpad").unwrap(),
+                &DocumentId::new("tiles").unwrap()
+            )
+            .exists());
     }
 
     #[test]

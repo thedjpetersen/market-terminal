@@ -8,6 +8,7 @@ use crate::{
         charting::{ChartHistoryQuery, ChartInstrument, ChartingWorkspace},
         chat::{ChatGateway, ChatWorkspace},
         instrument::{InstrumentSearch, InstrumentSearchWorkspace},
+        launchpad::{LaunchpadStateStore, LaunchpadWorkspace},
         market_data::MarketDataQuery,
         markets::{MarketsQuery, MarketsWorkspace},
         news::{NewsArticleOpener, NewsFeed, NewsWorkspace},
@@ -59,6 +60,7 @@ pub fn demo_app() -> App {
         security_document_opener: None,
         alerts_query: Arc::new(DemoAlertsReplay::new()),
         alert_state_store: None,
+        launchpad_state_store: None,
         snapshot_refresh_interval: Duration::from_secs(60),
         runtime_settings: RuntimeSettingsSummary::demo(),
     })
@@ -85,6 +87,7 @@ struct AppProviders {
     security_document_opener: Option<Arc<dyn SecurityDocumentOpener>>,
     alerts_query: Arc<dyn AlertsQuery>,
     alert_state_store: Option<Arc<dyn AlertStateStore>>,
+    launchpad_state_store: Option<Arc<dyn LaunchpadStateStore>>,
     snapshot_refresh_interval: Duration,
     runtime_settings: RuntimeSettingsSummary,
 }
@@ -111,6 +114,7 @@ fn build_app(providers: AppProviders) -> App {
         security_document_opener,
         alerts_query,
         alert_state_store,
+        launchpad_state_store,
         snapshot_refresh_interval,
         runtime_settings,
     } = providers;
@@ -152,12 +156,17 @@ fn build_app(providers: AppProviders) -> App {
 
     let workspaces = WorkspaceRegistry::new(vec![
         Box::new(OverviewWorkspace::new(overview_query)),
+        Box::new(match launchpad_state_store {
+            Some(store) => LaunchpadWorkspace::persistent(store),
+            None => LaunchpadWorkspace::new(),
+        }),
         Box::new(desk_workspace),
         Box::new(AssistantWorkspace::new(
             assistant_gateway,
             assistant_context,
             vec![
                 "overview".to_owned(),
+                "launchpad".to_owned(),
                 "desk".to_owned(),
                 "assistant".to_owned(),
                 "instrument_search".to_owned(),
@@ -272,6 +281,7 @@ pub fn persistent_app() -> App {
         security_document_opener: Some(Arc::new(SystemNewsArticleOpener)),
         alerts_query,
         alert_state_store: Some(repository.clone()),
+        launchpad_state_store: Some(repository.clone()),
         snapshot_refresh_interval,
         runtime_settings,
     })

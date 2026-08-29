@@ -244,8 +244,11 @@ move to its own crate later without changing its public vocabulary.
   missing destinations, and require an explicit modal confirmation. The first
   applied role persists a crash-safe custom return point; `PRESET RETURN`
   restores the exact active workspace and semantic order after restart without
-  discarding newly registered workspaces. Editable Launchpad tiles, pane/view
-  state capture, and unified discovery remain.
+  discarding newly registered workspaces. Launchpad now provides a responsive
+  command-tile grid with stable identities, add/rename/reorder/remove/reset,
+  keyboard, pointer, spatial-focus and follow-hint routing, versioned seeds, and
+  coalesced crash-safe persistence. Import/export, typed saved objects,
+  pane/view state capture, and unified discovery remain.
 - **Next:** execute the P1 Mission Control, launchpad, saved-layout, and unified
   discovery package, then the remaining Stage 2 risk, screening, and alert-rule
   families. Provider availability
@@ -523,14 +526,18 @@ restarts, restores the same semantic frame, switches presets, and returns withou
 state loss. Mission Control remains useful with every external provider offline
 and labels each unavailable card rather than substituting fixture data.
 
-**Current P1 evidence:** the versioned seed catalog and registry projection are
-implemented. `PRESET <ROLE>` is keyboard-only, modal, cancelable, and
-non-mutating until confirmation; `PRESET RETURN` survives process restart and
-restores the pre-preset active workspace/order. Unit coverage locks catalog
-validation, unknown/deduplicated workspace degradation, cancel semantics, and a
-full apply/restart/return round trip. A three-size semantic frame locks the
-preview itself. This completes the preset-order slice, not pane/view capture or
-the Launchpad editor; those remain required for P1 exit.
+**Current P1 evidence:** the versioned preset catalog and registry projection
+are implemented. `PRESET <ROLE>` is modal, cancelable, and non-mutating until
+confirmation; `PRESET RETURN` survives restart and restores the pre-preset
+workspace. Launchpad is now an independent bounded context with 24-tile limits,
+validated labels/commands, stable IDs, monotonic revisions, responsive tile
+geometry, stale-action rejection, keyboard reordering, guarded deletion,
+versioned seeds, and a capacity-one durable writer. Tests lock pure edit
+semantics, command editing, action revalidation, `F`-hint dispatch, private local
+storage, and a full workspace restart. Three-size semantic frames cover both
+the preset preview and Launchpad. P1 exit still requires import/export, typed
+saved screen/portfolio/sheet/layout objects, complete pane/view capture, Mission
+Control offline composition, and unified discovery.
 
 ### P2 — Market-data fabric, microstructure, and chart workstation
 

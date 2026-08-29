@@ -33,6 +33,11 @@ bootstrap ──▶ app kernel
   repository port.
 - `features/<name>` is a bounded context. It owns its domain types, outbound
   query port, local UI state, and terminal workspace adapter.
+  Launchpad follows this rule: its bounded tile aggregate owns validation,
+  stable identity, revisioning, and edit semantics; its workspace maps tiles to
+  opaque stale-safe actions and validated shell intents; and its narrow state
+  port is implemented by the local persistence adapter. A capacity-one worker
+  coalesces edits so disk I/O never runs in the input or rendering path.
 - `foundation` contains only stable, narrowly shared value objects. Canonical
   instrument identity lives here; provider quote schemas and feature state do
   not.

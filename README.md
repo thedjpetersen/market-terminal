@@ -122,6 +122,24 @@ current active workspace and complete custom order in crash-safe session state.
 restart. Unknown or retired workspace IDs are disclosed and skipped while new
 workspaces retain their relative order.
 
+Run `LAUNCH` (or press `L`) for the persistent Launchpad. Arrow keys or HJKL
+select tiles, `Enter` opens the selected command, `<`/`>` reorders it, and `X`
+twice removes it. Tiles also participate in spatial focus, mouse routing, and
+`F` follow hints. Edit through the bounded command API:
+
+```text
+LAUNCH ADD "Apple Research" SEC AAPL US
+LAUNCH RENAME 9 "Apple Deep Dive"
+LAUNCH MOVE 9 1
+LAUNCH REMOVE 9
+LAUNCH RESET CONFIRM
+```
+
+Labels and commands are validated, tile identities remain stable across moves,
+and edits are coalesced onto a background crash-safe writer. A failed or corrupt
+load is disclosed and falls back to the versioned seeds instead of blocking the
+terminal.
+
 Tmux-style panel switching is also available. Press `Ctrl+B`, release it, then
 use `Left`/`Right` or `N`/`P` for the next or previous workspace. Use `1`–`9`
 and `0` to select the corresponding numbered workspace, or `?` for help.
@@ -133,7 +151,8 @@ Vi `NORMAL` mode: use `h`/`l`, `0`/`$`, `w`/`b`, `x`, `D`, `dd`, and
 `i`/`a`/`I`/`A`. Press `Esc` again to cancel the command.
 
 The interactive binary restores the active workspace, workspace order, preset
-return point, and recent commands from crash-safe, versioned local state. Set
+return point, Launchpad tiles, and recent commands from crash-safe, versioned
+local state. Set
 `MARKET_TERMINAL_STATE_DIR` to override the platform default. Corrupt current
 state falls back to the previous valid generation and never blocks startup.
 
