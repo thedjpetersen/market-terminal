@@ -267,9 +267,11 @@ move to its own crate later without changing its public vocabulary.
   active column preset, selected instrument, and viewport anchor; selection is
   identity-stable under live re-sorts. Portfolio now restores all eight
   subviews, stable selected-row identity, and top-visible identity with a real
-  shared viewport. Remaining Alerts table capture and unified discovery remain.
-- **Next:** finish typed Alerts rule/scroll capture, then
-  execute the P1 unified-discovery package before the remaining Stage 2 risk,
+  shared viewport. Alerts now restores selected-rule and top-visible-rule IDs,
+  including a pending identity when restore precedes asynchronous rule loading,
+  over a real shared viewport. Typed capture adoption is complete across every
+  current workspace; unified discovery remains.
+- **Next:** execute the P1 unified-discovery package before the remaining Stage 2 risk,
   screening, and alert-rule families. Provider availability
   extends the deployment surface; deterministic fixtures remain the acceptance
   baseline and opt-in live contracts verify real provider behavior.
@@ -347,9 +349,9 @@ continues.
 | Reference capability | Status | Market Terminal evidence | Gap required for parity |
 | --- | --- | --- | --- |
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
-| Mission Control, launchpad, ticker tape | Partial | Live pulse, imported portfolio, provider events, source health, saved work, inspectable priority ranking, persistent editable typed Launchpad with portable import/export, typed Desk/Chart/Security/News/Monitor/Portfolio/Spreadsheet saved views, and versioned role presets | Add recoverable Alerts state, unified discovery, and a denser configurable ticker/pulse surface. |
+| Mission Control, launchpad, ticker tape | Partial | Live pulse, imported portfolio, provider events, source health, saved work, inspectable priority ranking, persistent editable typed Launchpad with portable import/export, typed saved views across every workspace, and versioned role presets | Add unified discovery and a denser configurable ticker/pulse surface. |
 | Keyboard navigation and icon rail | Covered | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, Chart periods/studies/comparisons/inspection/modes/promotion/refresh, modal-safe News filters/headlines/story/calendar/reader actions, Overview periods/cards/live holdings/headlines/context controls, Alerts rows/mutations/Security/refresh controls, and Spreadsheet cells/rows/formula/tabs/workflow controls | Preserve the action and modal-trapping contracts as new controls and overlays are added. |
-| Saved views and workspace presets | Partial | Workspace order, active workspace, role presets, schema-v2 nested Desk/Chart state with bounded split geometry, Security instrument/tab/Form 4 selection, News filters/subview/story selection, Monitor watchlist/sort/columns/identity/viewport, Portfolio subview/row/viewport, and workbook/sheet/cell/viewport Spreadsheet state persist with migration and degraded recovery | Extend typed capture to Alerts rule selection and meaningful scroll. |
+| Saved views and workspace presets | Partial | Workspace order, active workspace, role presets, schema-v2 nested Desk/Chart state with bounded split geometry, Security instrument/tab/Form 4 selection, News filters/subview/story selection, Monitor watchlist/sort/columns/identity/viewport, Portfolio subview/row/viewport, Alerts rule/viewport, and workbook/sheet/cell/viewport Spreadsheet state persist with migration and degraded recovery | Integrate saved views into unified discovery and add a dedicated searchable management surface. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
 | Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
 | Snapshot/streaming data and provider fallback | Partial | Yahoo, Alpha Vantage, Alpaca, Finnhub, bounded workers, coalescing, LKG cache, replay | Add capability-aware provider waterfall, durable bar cache, session calendars, health routing, and cross-provider provenance. |
@@ -648,8 +650,19 @@ the saved-view document. Unit evidence covers every subview, reordered
 positions, long-table scrolling, rendered-action alignment, and invalid,
 missing, and future state. An application restart restores exact Attribution
 selection, and a dedicated semantic golden locks the selected Attribution
-surface at 80×24, 120×36, and 160×48. P1 exit now requires Alerts rule
-selection and meaningful scroll capture, followed by unified discovery.
+surface at 80×24, 120×36, and 160×48. Alerts now captures stable selected-rule
+and top-visible-rule IDs without duplicating the independently durable rule
+register. Restore can accept bounded pending identities before asynchronous
+rules arrive and resolves them by exact ID; live snapshot application preserves
+both anchors. The real viewport is shared by rendering, pointer rows, arrow
+reveal, spatial actions, and follow hints. Missing, malformed, and future fields
+degrade independently, while stale row actions continue to fail closed. Unit
+evidence locks reordered registers, pending asynchronous recovery, long-table
+scrolling, rendered-action alignment, and degraded state. An application restart
+restores exact rule selection before provider data arrives, and a dedicated
+three-size semantic golden locks a long, scrolled alert register. Typed saved-
+view adoption is complete for every current workspace. P1 exit now requires
+unified discovery.
 
 ### P2 — Market-data fabric, microstructure, and chart workstation
 

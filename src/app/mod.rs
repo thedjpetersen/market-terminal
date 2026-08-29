@@ -4339,6 +4339,63 @@ mod tests {
     }
 
     #[test]
+    fn typed_alerts_view_survives_restart_before_async_rules_arrive() {
+        let session = Arc::new(MemorySessionRepository::default());
+        let documents = Arc::new(MemoryFeatureRepository::default());
+        let mut app = bootstrap::demo_app()
+            .with_saved_view_repository(documents.clone())
+            .with_session_repository(session.clone());
+        app.settings_visible = false;
+        app.settings_first_run = false;
+        app.command = "ALERTS".to_owned();
+        app.execute_command();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while app
+            .workspaces
+            .capture_view(ALERTS)
+            .is_some_and(|state| !state.fields.contains_key("selected_rule_id"))
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::yield_now();
+            app.advance_tick();
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let workspace_area = crate::ui::ShellLayout::new(Rect::new(0, 0, 80, 24)).workspace;
+        let _ = app.workspace_actions(workspace_area, 256);
+        app.command = "VIEW SAVE Alert Register".to_owned();
+        app.execute_command();
+
+        let expected = app.saved_views.views[0].workspace_state.clone();
+        assert_eq!(expected.workspace, ALERTS.as_str());
+        assert!(expected.fields.contains_key("selected_rule_id"));
+        assert!(expected.fields.contains_key("top_rule_id"));
+
+        let mut restarted = bootstrap::demo_app()
+            .with_saved_view_repository(documents)
+            .with_session_repository(session);
+        restarted.settings_visible = false;
+        restarted.settings_first_run = false;
+        restarted.command = "VIEW RESTORE Alert Register".to_owned();
+        restarted.execute_command();
+
+        assert_eq!(restarted.active_workspace(), ALERTS);
+        assert_eq!(restarted.workspaces.capture_view(ALERTS).unwrap(), expected);
+        assert!(restarted
+            .command_feedback()
+            .is_some_and(|message| message.contains("VIEW RESTORED") && message.contains("EXACT")));
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while restarted.workspaces.capture_view(ALERTS).unwrap() != expected
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::yield_now();
+            restarted.advance_tick();
+        }
+        assert_eq!(restarted.workspaces.capture_view(ALERTS).unwrap(), expected);
+    }
+
+    #[test]
     fn feature_intent_can_restore_a_saved_layout_through_the_shell_router() {
         let documents = Arc::new(MemoryFeatureRepository::default());
         let mut app = bootstrap::demo_app().with_saved_view_repository(documents);

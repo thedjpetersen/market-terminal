@@ -109,6 +109,11 @@ const GOLDENS: &[Golden] = &[
         hashes: [0x643bd7ff822dc668, 0x768d62b2a5dcbf15, 0x9d5b524c32b98ab8],
     },
     Golden {
+        name: "alerts-long-register",
+        prepare: prepare_alerts_long_register,
+        hashes: [0x9a75a634312cf209, 0x74ed799c5a29b5fe, 0x1c38e8573e4f89af],
+    },
+    Golden {
         name: "panel-focus",
         prepare: prepare_panel_focus,
         hashes: [0xdd251026c08fb468, 0x1c597ec8b6e164e4, 0x0e8dfb588e822e68],
@@ -452,6 +457,12 @@ fn prepare_alerts(app: &mut App) {
     dispatch(app, "ALERTS");
     std::thread::sleep(std::time::Duration::from_millis(10));
     app.advance_tick();
+}
+
+fn prepare_alerts_long_register(app: &mut App) {
+    for index in 0..18 {
+        dispatch(app, &format!("ALERT T{index:03} > {}", 100 + index));
+    }
 }
 
 fn prepare_panel_focus(app: &mut App) {

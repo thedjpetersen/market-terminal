@@ -53,10 +53,17 @@ Alert documents are sampled at startup so rendering performs no filesystem I/O.
   Portfolio-owned repository and never enter the saved-view document. Missing
   or malformed row identities degrade independently without discarding the
   valid subview or remaining anchor.
+  Alerts view fields include optional selected-rule and top-visible-rule IDs.
+  They exclude thresholds, instruments, observations, evaluation IDs,
+  lifecycle/debounce/trigger state, delivery, and audit records; those remain in
+  the independently versioned Alerts rule register. Restore may retain bounded
+  pending IDs until the asynchronous register arrives, then rematches by rule ID.
+  Missing or malformed IDs degrade independently without changing durable rule
+  content.
   Spreadsheet view fields include the local workbook ID, worksheet name and
   ordinal fallback, selected cell, and viewport origin; cell content remains in
   the separately versioned workbook document. Saved views do not persist
-  provider responses, chart bars, portfolio holdings, broker ledgers, article text, formula
+  provider responses, chart bars, portfolio holdings, broker ledgers, Alert rule content, article text, formula
   drafts, clipboard data, undo history, credentials, or terminal frames.
   Launchpad stores only user-authored labels, typed destination identities,
   exact routing metadata, stable local tile IDs, and a revision. Destination

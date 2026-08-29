@@ -187,7 +187,13 @@ views retain the durable workbook
 identity, stable worksheet name with ordinal fallback, selected cell, and
 row/column viewport. Workbook cells, clipboard contents, and undo history remain
 in their owning document/session boundaries rather than being copied into a
-layout. Restores report `EXACT` only when every applicable field was accepted. A
+layout. Alerts views retain stable selected-rule and top-visible-rule IDs. The
+rule window is shared by rendering, mouse, arrows, spatial actions, and follow
+hints, and a saved identity can wait safely for the asynchronous rule register
+to arrive. Thresholds, observations, trigger/debounce state, delivery, and audit
+history remain in Alerts' independently durable rule register rather than being
+duplicated in layout storage. Restores report `EXACT` only when every applicable
+field was accepted. A
 retired workspace, missing workbook or story, renamed worksheet, malformed
 instrument or filing identity, unsupported field, or future capability produces
 an explicit `DEGRADED` result while the remaining valid layout is recovered.

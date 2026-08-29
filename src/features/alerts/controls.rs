@@ -41,6 +41,7 @@ pub(super) fn table_row_area(area: Rect, index: usize) -> Option<Rect> {
         .then(|| Rect::new(area.x.saturating_add(1), y, area.width.saturating_sub(2), 1))
 }
 
+#[cfg(test)]
 pub(super) fn visible_rule_rows(area: Rect, rule_count: usize) -> usize {
     usize::from(area.height.saturating_sub(4)).min(rule_count)
 }

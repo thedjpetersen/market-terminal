@@ -1,8 +1,11 @@
-use std::sync::{
-    mpsc::{channel, sync_channel, Receiver, SyncSender, TrySendError},
-    Arc,
-};
 use std::thread::JoinHandle;
+use std::{
+    cell::Cell as StateCell,
+    sync::{
+        mpsc::{channel, sync_channel, Receiver, SyncSender, TrySendError},
+        Arc,
+    },
+};
 
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::{
@@ -14,7 +17,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor},
+    app::{
+        AppIntent, CommandInvocation, ViewRestoreReport, ViewValue, Workspace, WorkspaceAction,
+        WorkspaceDescriptor, WorkspaceViewState,
+    },
     ui::{
         components::terminal_block,
         contains, is_primary_click, scroll_key,
@@ -23,10 +29,7 @@ use crate::{
 };
 
 use super::{
-    controls::{
-        alert_areas, pack_control_areas, panel_header_area, table_row_area, visible_rule_rows,
-        AlertControl,
-    },
+    controls::{alert_areas, pack_control_areas, panel_header_area, table_row_area, AlertControl},
     AlertCondition, AlertEvaluation, AlertLifecycle, AlertRule, AlertRuleId, AlertRulesState,
     AlertSnapshot, AlertStateError, AlertStateStore, AlertStatus, AlertsError, AlertsQuery,
     DebouncePolicy, InstrumentRef, ID, MAX_ALERT_RULES,
@@ -50,6 +53,10 @@ struct AlertPersistResult {
 pub struct AlertsWorkspace {
     rules: Vec<AlertRule>,
     selected: usize,
+    viewport_top: StateCell<usize>,
+    viewport_rows: StateCell<usize>,
+    pending_selected_rule_id: Option<String>,
+    pending_top_rule_id: Option<String>,
     status: String,
     snapshot_as_of: String,
     snapshot_source: String,
@@ -157,6 +164,10 @@ impl AlertsWorkspace {
         let mut workspace = Self {
             rules,
             selected: 0,
+            viewport_top: StateCell::new(0),
+            viewport_rows: StateCell::new(0),
+            pending_selected_rule_id: None,
+            pending_top_rule_id: None,
             status: "LOADING LOCAL ALERTS".to_owned(),
             snapshot_as_of: "--".to_owned(),
             snapshot_source: "SIMULATED LOCAL".to_owned(),
@@ -228,6 +239,15 @@ impl AlertsWorkspace {
     }
 
     fn apply_snapshot(&mut self, snapshot: AlertSnapshot) {
+        let selected_rule_id = self
+            .selected_rule()
+            .map(|rule| rule.id.as_str().to_owned())
+            .or_else(|| self.pending_selected_rule_id.clone());
+        let top_rule_id = self
+            .rules
+            .get(self.viewport_top.get())
+            .map(|rule| rule.id.as_str().to_owned())
+            .or_else(|| self.pending_top_rule_id.clone());
         let mut state_changed = false;
         if self.rules.is_empty() {
             let available = MAX_ALERT_RULES.saturating_sub(self.rules.len());
@@ -264,7 +284,7 @@ impl AlertsWorkspace {
         if state_changed {
             self.queue_persist();
         }
-        self.selected = self.selected.min(self.rules.len().saturating_sub(1));
+        self.restore_rule_anchors(selected_rule_id.as_deref(), top_rule_id.as_deref());
         self.snapshot_as_of = snapshot.as_of;
         self.snapshot_source = snapshot.source;
         self.status = if triggered > 0 {
@@ -283,6 +303,7 @@ impl AlertsWorkspace {
     }
 
     fn move_selection(&mut self, delta: isize) {
+        self.pending_selected_rule_id = None;
         if self.rules.is_empty() {
             self.selected = 0;
             return;
@@ -291,6 +312,51 @@ impl AlertsWorkspace {
             .selected
             .saturating_add_signed(delta)
             .min(self.rules.len() - 1);
+        self.reveal_selection();
+    }
+
+    fn reveal_selection(&self) {
+        let capacity = self.viewport_rows.get();
+        if capacity == 0 {
+            return;
+        }
+        let mut top = self.viewport_top.get();
+        if self.selected < top {
+            top = self.selected;
+        } else if self.selected >= top.saturating_add(capacity) {
+            top = self.selected.saturating_add(1).saturating_sub(capacity);
+        }
+        self.viewport_top
+            .set(top.min(self.rules.len().saturating_sub(capacity.max(1))));
+    }
+
+    fn update_viewport(&self, area: Rect) -> (usize, usize) {
+        let capacity = usize::from(area.height.saturating_sub(4));
+        self.viewport_rows.set(capacity);
+        self.reveal_selection();
+        (self.viewport_top.get(), capacity)
+    }
+
+    fn rule_index(&self, id: &str) -> Option<usize> {
+        self.rules.iter().position(|rule| rule.id.as_str() == id)
+    }
+
+    fn restore_rule_anchors(&mut self, selected_id: Option<&str>, top_id: Option<&str>) {
+        self.selected = selected_id
+            .and_then(|id| self.rule_index(id))
+            .unwrap_or_default();
+        self.viewport_top.set(
+            top_id
+                .and_then(|id| self.rule_index(id))
+                .unwrap_or_default(),
+        );
+        self.pending_selected_rule_id = selected_id
+            .filter(|id| self.rule_index(id).is_none() && self.rules.is_empty())
+            .map(str::to_owned);
+        self.pending_top_rule_id = top_id
+            .filter(|id| self.rule_index(id).is_none() && self.rules.is_empty())
+            .map(str::to_owned);
+        self.reveal_selection();
     }
 
     fn selected_rule(&self) -> Option<&AlertRule> {
@@ -423,6 +489,8 @@ impl AlertsWorkspace {
                 rule.instrument.symbol.eq_ignore_ascii_case(&symbol) && rule.condition == condition
             }) {
                 self.selected = index;
+                self.pending_selected_rule_id = None;
+                self.reveal_selection();
                 self.status = format!("EXISTING {symbol} RULE SELECTED");
                 return;
             }
@@ -446,6 +514,8 @@ impl AlertsWorkspace {
                 DebouncePolicy::consecutive(2),
             ));
             self.selected = self.rules.len() - 1;
+            self.pending_selected_rule_id = None;
+            self.reveal_selection();
             self.status = format!("{symbol} RULE CREATED · SIMULATED LOCAL");
             return;
         }
@@ -457,6 +527,8 @@ impl AlertsWorkspace {
             .position(|rule| rule.instrument.symbol.eq_ignore_ascii_case(&symbol))
         {
             self.selected = index;
+            self.pending_selected_rule_id = None;
+            self.reveal_selection();
             self.status = format!("{} RULE SELECTED", symbol.to_ascii_uppercase());
         } else {
             self.status =
@@ -584,17 +656,21 @@ impl Workspace for AlertsWorkspace {
 
     fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
         let areas = alert_areas(area);
-        let visible_rows = visible_rule_rows(areas.rules, self.rules.len());
-        let preferred_row = (self.selected < visible_rows)
-            .then_some(self.selected)
-            .or_else(|| (visible_rows > 0).then_some(0));
+        let (viewport_top, viewport_rows) = self.update_viewport(areas.rules);
+        let visible_rows = viewport_rows.min(self.rules.len().saturating_sub(viewport_top));
+        let preferred_row = (self.selected >= viewport_top
+            && self.selected < viewport_top.saturating_add(visible_rows))
+        .then_some(self.selected)
+        .or_else(|| (visible_rows > 0).then_some(viewport_top));
         let mut actions = self
             .rules
             .iter()
+            .skip(viewport_top)
             .take(visible_rows)
             .enumerate()
-            .filter_map(|(index, rule)| {
-                let area = table_row_area(areas.rules, index)?;
+            .filter_map(|(ordinal, rule)| {
+                let index = viewport_top.saturating_add(ordinal);
+                let area = table_row_area(areas.rules, ordinal)?;
                 let mut action = WorkspaceAction::new(
                     format!("rule:{index}:{}", rule.id),
                     format!(
@@ -657,6 +733,8 @@ impl Workspace for AlertsWorkspace {
             return false;
         }
         self.selected = index;
+        self.pending_selected_rule_id = None;
+        self.reveal_selection();
         true
     }
 
@@ -668,6 +746,7 @@ impl Workspace for AlertsWorkspace {
 
     fn render(&self, frame: &mut Frame, area: Rect) {
         let areas = alert_areas(area);
+        let (viewport_top, viewport_rows) = self.update_viewport(areas.rules);
         let (triggered, acknowledged, disabled) = status_counts(&self.rules);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
@@ -696,33 +775,39 @@ impl Workspace for AlertsWorkspace {
         ])
         .style(Style::new().fg(AMBER.into()).bold())
         .bottom_margin(1);
-        let rows = self.rules.iter().enumerate().map(|(index, rule)| {
-            let selected = index == self.selected;
-            Row::new(vec![
-                Cell::from(display_status(rule)).style(rule_status_style(rule, selected)),
-                Cell::from(rule.instrument.symbol.clone()),
-                Cell::from(rule.condition.label()),
-                Cell::from(
-                    rule.last_observation
-                        .as_ref()
-                        .map(|observation| format!("{:.2}", observation.price))
-                        .unwrap_or_else(|| "--".to_owned()),
-                ),
-                Cell::from(
-                    rule.last_observation
-                        .as_ref()
-                        .map(|observation| format!("{:+.2}%", observation.percent_move))
-                        .unwrap_or_else(|| "--".to_owned()),
-                ),
-                Cell::from(debounce_label(rule)),
-                Cell::from(rule.delivery.label()),
-            ])
-            .style(if selected {
-                Style::new().bg(CYAN.into()).fg(BG.into()).bold()
-            } else {
-                Style::new()
-            })
-        });
+        let rows = self
+            .rules
+            .iter()
+            .enumerate()
+            .skip(viewport_top)
+            .take(viewport_rows)
+            .map(|(index, rule)| {
+                let selected = index == self.selected;
+                Row::new(vec![
+                    Cell::from(display_status(rule)).style(rule_status_style(rule, selected)),
+                    Cell::from(rule.instrument.symbol.clone()),
+                    Cell::from(rule.condition.label()),
+                    Cell::from(
+                        rule.last_observation
+                            .as_ref()
+                            .map(|observation| format!("{:.2}", observation.price))
+                            .unwrap_or_else(|| "--".to_owned()),
+                    ),
+                    Cell::from(
+                        rule.last_observation
+                            .as_ref()
+                            .map(|observation| format!("{:+.2}%", observation.percent_move))
+                            .unwrap_or_else(|| "--".to_owned()),
+                    ),
+                    Cell::from(debounce_label(rule)),
+                    Cell::from(rule.delivery.label()),
+                ])
+                .style(if selected {
+                    Style::new().bg(CYAN.into()).fg(BG.into()).bold()
+                } else {
+                    Style::new()
+                })
+            });
         frame.render_widget(
             Table::new(
                 rows,
@@ -771,6 +856,107 @@ impl Workspace for AlertsWorkspace {
             areas.disclosure,
         );
     }
+
+    fn capture_view(&self) -> WorkspaceViewState {
+        let mut state = WorkspaceViewState::new(ID.as_str());
+        if let Some(id) = self
+            .selected_rule()
+            .map(|rule| rule.id.as_str().to_owned())
+            .or_else(|| self.pending_selected_rule_id.clone())
+        {
+            state = state.with_field("selected_rule_id", ViewValue::Text(id));
+        }
+        if let Some(id) = self
+            .rules
+            .get(self.viewport_top.get())
+            .map(|rule| rule.id.as_str().to_owned())
+            .or_else(|| self.pending_top_rule_id.clone())
+        {
+            state = state.with_field("top_rule_id", ViewValue::Text(id));
+        }
+        state
+    }
+
+    fn restore_view(&mut self, state: &WorkspaceViewState) -> ViewRestoreReport {
+        if !state.workspace.eq_ignore_ascii_case(ID.as_str()) {
+            return ViewRestoreReport::warning(format!(
+                "saved state belongs to {}, not alerts",
+                state.workspace
+            ));
+        }
+
+        let mut report = ViewRestoreReport::default();
+        let selected = restore_alert_rule_field(
+            &self.rules,
+            state,
+            "selected_rule_id",
+            "selected rule",
+            &mut report,
+        );
+        let top = restore_alert_rule_field(
+            &self.rules,
+            state,
+            "top_rule_id",
+            "viewport anchor",
+            &mut report,
+        );
+        self.restore_rule_anchors(selected.as_deref(), top.as_deref());
+
+        const KNOWN_FIELDS: [&str; 2] = ["selected_rule_id", "top_rule_id"];
+        let unknown = state
+            .fields
+            .keys()
+            .filter(|field| !KNOWN_FIELDS.contains(&field.as_str()))
+            .count();
+        if unknown > 0 {
+            report.skipped_fields += unknown;
+            report
+                .warnings
+                .push(format!("ignored {unknown} future Alerts field(s)"));
+        }
+        if !state.children.is_empty() {
+            report.skipped_fields += state.children.len();
+            report.warnings.push(format!(
+                "ignored {} future Alerts child state(s)",
+                state.children.len()
+            ));
+        }
+        report
+    }
+}
+
+fn restore_alert_rule_field(
+    rules: &[AlertRule],
+    state: &WorkspaceViewState,
+    field: &str,
+    label: &str,
+    report: &mut ViewRestoreReport,
+) -> Option<String> {
+    let value = state.fields.get(field)?;
+    let Some(id) = value.as_text().filter(|id| valid_alert_rule_id(id)) else {
+        report.skipped_fields += 1;
+        report
+            .warnings
+            .push(format!("saved Alerts {label} identity is invalid"));
+        return None;
+    };
+    if rules.is_empty() || rules.iter().any(|rule| rule.id.as_str() == id) {
+        report.restored_fields += 1;
+        Some(id.to_owned())
+    } else {
+        report.skipped_fields += 1;
+        report
+            .warnings
+            .push(format!("saved Alerts {label} is no longer available"));
+        None
+    }
+}
+
+fn valid_alert_rule_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 512
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
 }
 
 impl Drop for AlertsWorkspace {
@@ -1037,6 +1223,15 @@ mod tests {
         })
     }
 
+    fn test_rule(index: usize) -> AlertRule {
+        AlertRule::new(
+            AlertRuleId::new(format!("test:rule:{index:03}")),
+            InstrumentRef::new(format!("us:listed:test{index:03}"), format!("T{index:03}")),
+            AlertCondition::price_above(100.0 + index as f64),
+            DebouncePolicy::consecutive(1),
+        )
+    }
+
     #[test]
     fn exposes_exact_alert_command_vocabulary_without_hotkey_collision() {
         let mut workspace = AlertsWorkspace::new(stub_query(false));
@@ -1121,6 +1316,108 @@ mod tests {
         workspace.rules[0].id = AlertRuleId::new("replacement:aapl");
         assert!(!workspace.activate_action(&rule.id));
         assert!(!workspace.activate_action("rule:999:missing"));
+    }
+
+    #[test]
+    fn typed_view_round_trips_selected_rule_and_viewport_by_identity() {
+        let mut source = AlertsWorkspace::new(stub_query(false));
+        source.rules = (0..20).map(test_rule).collect();
+        source.selected = 14;
+        source.viewport_top.set(10);
+        let state = source.capture_view();
+
+        let mut restored = AlertsWorkspace::new(stub_query(false));
+        restored.rules = (0..20).rev().map(test_rule).collect();
+        let report = restored.restore_view(&state);
+
+        assert_eq!(report.restored_fields, 2);
+        assert_eq!(report.skipped_fields, 0);
+        assert!(report.warnings.is_empty());
+        assert_eq!(
+            restored.selected_rule().unwrap().id.as_str(),
+            "test:rule:014"
+        );
+        assert_eq!(
+            restored.rules[restored.viewport_top.get()].id.as_str(),
+            "test:rule:010"
+        );
+        assert_eq!(restored.capture_view(), state);
+    }
+
+    #[test]
+    fn typed_view_resolves_pending_rule_identity_after_async_snapshot() {
+        let state = WorkspaceViewState::new(ID.as_str())
+            .with_field(
+                "selected_rule_id",
+                ViewValue::Text("test:rule:007".to_owned()),
+            )
+            .with_field("top_rule_id", ViewValue::Text("test:rule:004".to_owned()));
+        let mut workspace = AlertsWorkspace::new(stub_query(false));
+        workspace.rules.clear();
+
+        let report = workspace.restore_view(&state);
+        assert_eq!(report.restored_fields, 2);
+        assert_eq!(workspace.capture_view(), state);
+
+        workspace.apply_snapshot(AlertSnapshot::new(
+            7,
+            "2026-08-29T09:00:00Z",
+            (0..12).map(test_rule).collect(),
+            Vec::new(),
+            "ASYNC TEST",
+        ));
+
+        assert_eq!(
+            workspace.selected_rule().unwrap().id.as_str(),
+            "test:rule:007"
+        );
+        assert_eq!(
+            workspace.rules[workspace.viewport_top.get()].id.as_str(),
+            "test:rule:004"
+        );
+        assert_eq!(workspace.capture_view(), state);
+    }
+
+    #[test]
+    fn long_rule_tables_scroll_rendered_actions_with_selection() {
+        let mut workspace = AlertsWorkspace::new(stub_query(false));
+        workspace.rules = (0..24).map(test_rule).collect();
+        workspace.selected = 23;
+        let area = Rect::new(0, 0, 80, 24);
+        let actions = workspace.actions(area);
+        let top = workspace.viewport_top.get();
+
+        assert!(top > 0);
+        assert!(workspace.selected < top + workspace.viewport_rows.get());
+        assert!(actions
+            .iter()
+            .any(|action| action.id == "rule:23:test:rule:023" && action.preferred));
+        assert!(actions
+            .iter()
+            .filter(|action| action.id.starts_with("rule:"))
+            .all(|action| action.area.bottom() <= alert_areas(area).rules.bottom()));
+    }
+
+    #[test]
+    fn typed_view_degrades_missing_invalid_and_future_state_independently() {
+        let state = WorkspaceViewState::new(ID.as_str())
+            .with_field(
+                "selected_rule_id",
+                ViewValue::Text("missing:rule".to_owned()),
+            )
+            .with_field("top_rule_id", ViewValue::Text("bad\nrule".to_owned()))
+            .with_field("future_field", ViewValue::Boolean(true))
+            .with_child(WorkspaceViewState::new("future-alerts-child"));
+        let mut workspace = AlertsWorkspace::new(stub_query(false));
+        workspace.rules = (0..4).map(test_rule).collect();
+
+        let report = workspace.restore_view(&state);
+
+        assert_eq!(report.restored_fields, 0);
+        assert_eq!(report.skipped_fields, 4);
+        assert_eq!(report.warnings.len(), 4);
+        assert_eq!(workspace.selected, 0);
+        assert_eq!(workspace.viewport_top.get(), 0);
     }
 
     #[test]

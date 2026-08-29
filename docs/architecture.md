@@ -83,6 +83,15 @@ bootstrap ──▶ app kernel
   identity digest and fail closed after asynchronous replacement. Portfolio
   data, broker records, calculations, methodology, and source status remain
   behind the feature repository rather than entering shell persistence.
+  Alerts is the asynchronous durable-table reference. Its view envelope stores
+  only selected-rule and top-visible-rule IDs, never thresholds, observations,
+  debounce/trigger state, delivery, or audit history from the independently
+  persisted rule register. A restore that precedes asynchronous rule loading
+  keeps bounded pending identities and resolves them when the register arrives.
+  Live snapshot application preserves the selected and top rules by ID. One
+  bounded viewport drives table rendering, mouse rows, arrow reveal, spatial
+  actions, and follow hints; action activation still revalidates the exact rule
+  ID after insertion or replacement.
   Unknown fields remain inert data, so a newer snapshot can degrade on an older
   binary without coupling migrations to the registry or panicking at startup.
   Session and saved-view documents remain independent failure domains.
@@ -412,9 +421,9 @@ The next structural steps are intentionally additive:
   decorators around feature ports;
 - move bounded contexts into workspace crates when build times or team
   ownership justify a Cargo workspace;
-- finish the typed saved-view contract for Alerts rule selection and viewport,
-  then preserve the same feature-owned identity and transient-data boundaries as
-  future workspace schemas stabilize.
+- preserve the completed typed saved-view identity and transient-data boundaries
+  as future workspace schemas stabilize, and integrate saved objects into the
+  unified discovery surface.
 
 The current boundary is deliberately a modular monolith. It gives strong
 ownership and test seams without paying the operational cost of services or a
