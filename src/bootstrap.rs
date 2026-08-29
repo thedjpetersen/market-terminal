@@ -8,6 +8,7 @@ use crate::{
         backtesting::BacktestWorkspace,
         charting::{ChartHistoryQuery, ChartInstrument, ChartingWorkspace},
         chat::{ChatGateway, ChatWorkspace},
+        fixed_income::FixedIncomeWorkspace,
         instrument::{InstrumentSearch, InstrumentSearchWorkspace},
         launchpad::{LaunchpadStateStore, LaunchpadWorkspace},
         market_data::MarketDataQuery,
@@ -199,6 +200,7 @@ fn build_app(providers: AppProviders) -> App {
                 "risk".to_owned(),
                 "news".to_owned(),
                 "options".to_owned(),
+                "fixed_income".to_owned(),
                 "spreadsheet".to_owned(),
             ],
         )),
@@ -241,6 +243,7 @@ fn build_app(providers: AppProviders) -> App {
             None => NewsWorkspace::new(news_query),
         }),
         Box::new(OptionsWorkspace::new()),
+        Box::new(FixedIncomeWorkspace::new()),
         Box::new(spreadsheet_workspace),
     ]);
     App::new(workspaces, OVERVIEW)

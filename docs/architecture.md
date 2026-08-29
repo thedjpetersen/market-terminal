@@ -179,6 +179,13 @@ bootstrap ──▶ app kernel
   Chart intent, and typed saved-view recovery. No common equity field bag, Market
   Data adapter, chain quote, or order path crosses this boundary. See
   `docs/options.md`.
+  Fixed Income is a separate P5 bounded context. Its pure domain owns a typed
+  fixed-rate bullet input, periodic cash-flow construction, clean/dirty price,
+  explicit accrued interest, price-to-yield solving, duration, convexity, DV01,
+  deterministic parallel shocks, and a conventions-bearing digest. Its workspace
+  owns atomic parsing, presentation, navigation, and typed recovery. It has no
+  provider port in this first slice and does not reuse an equity field bag or
+  fabricate curve, calendar, spread, or credit state. See `docs/fixed-income.md`.
 - `foundation` contains only stable, narrowly shared value objects. Canonical
   instrument identity lives here; provider quote schemas and feature state do
   not.

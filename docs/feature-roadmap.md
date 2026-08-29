@@ -319,9 +319,19 @@ move to its own crate later without changing its public vocabulary.
   keyboard/mouse/spatial/follow interaction. Model and provider fields are
   separated fail-closed: no chain, quote, provider IV/Greeks, OI, flow, venue,
   calendar, or order is fabricated.
-- **Next:** add P2/P3 hotlists/breadth/heatmaps, Screening
-  arithmetic and whole-result promotion, factor research, and compound alert
-  families. Provider availability
+- **Complete:** first bounded P5 Fixed Income slice. `BOND` owns an exact
+  fixed-rate bullet schedule over integer face/coupon/yield inputs; reconciles
+  clean price, dirty price, and explicit accrued interest; reports current yield,
+  Macaulay/modified duration, convexity, and DV01; solves yield from clean price;
+  and recomputes seven deterministic parallel shocks. Atomic commands, typed
+  recovery, shared action geometry, three-size rendering, independent reference
+  cases, input digests, and a dedicated performance gate lock the slice. No live
+  curve, calendar, market price, spread, or credit state is fabricated.
+- **Next:** continue P5-P7 with licensed fixed-income curve/calendar contracts,
+  richer immutable backtest artifacts and experiment tracking, and screen-aware
+  evidence-bound AI research; continue P2/P3 hotlists/breadth/heatmaps,
+  Screening arithmetic and whole-result promotion, factor research, and compound
+  alert families. Provider availability
   extends the deployment surface; deterministic fixtures remain the acceptance
   baseline and opt-in live contracts verify real provider behavior.
 
@@ -416,7 +426,7 @@ continues.
 | Backtesting, Model Lab, robustness | Partial | Production `BACKTEST` workspace with close-to-next-open timing, immutable integer inputs, explicit costs, fill/equity/drawdown/turnover reconciliation, hashes, and typed recovery | Add calendars, corporate actions, universes, richer lifecycle/fills/costs, templates, persistence/export, benchmarks, walk-forward and parameter sweeps, robustness, experiment tracking, tear sheets, and governance. |
 | Portfolio Lab and optimizer | Missing | Performance/attribution calculators cover realized portfolios only | Add portfolio backtests, weighting/rebalancing, strategy blends, optimizer constraints, correlation, attribution, and reproducible run comparison. |
 | Cockpit and intelligence timeline | Partial | Overview composes positions and news | Add ranked portfolio risks, catalysts, alerts, movers and model signals plus a source-linked chronological event timeline. |
-| Cross-asset and macro workspaces | Missing | Markets explicitly marks unsupported datasets unavailable | Add FX, commodities, crypto, ETF, mutual-fund, bond, yield-curve, economics, and sector-rotation contexts through licensed adapters. |
+| Cross-asset and macro workspaces | Partial | Dedicated Fixed Income context now owns explicit fixed-rate bullet schedules, price/yield analytics, accrued interest, duration/convexity/DV01, deterministic parallel shocks, typed recovery, and fail-closed provider separation | Add dated bond conventions, licensed curves/spreads/history, plus FX, commodities, crypto, ETF, mutual-fund, economics, and sector-rotation contexts through asset-specific adapters. |
 | Compound alerts and delivery | Partial | Restart-safe price/move rules, debounce, acknowledgement, audit, local simulation | Add compound technical/news/portfolio/calendar/sheet rules, cooldown/expiry/limits, breakout scans, and opt-in external channels with delivery audit. |
 | Operations, data quality, and governance | Partial | Structured tracing, lag/drop metrics, provider quality in feature views | Add consolidated health, cache/feed status, data-quality incidents, kill switches, restricted-list policy, model registry/approval, and operator audit views. |
 | Plug-ins, scripting, and external tool API | Missing | Feature-owned Rust modules only | Add capability-scoped plug-in manifest, sandboxed calculations, budgets, signing, versioned scripting, and read-only MCP tools. |
@@ -945,6 +955,14 @@ than a universal instrument bag.
 - Add fixed-income cash-flow schedules, price/yield, accrued interest, day counts,
   calendars, duration/convexity, spread measures, Treasury curve construction,
   historical comparison, inversion signals, and curve shocks with convention data.
+  - **Delivered foundation:** `BOND` provides fixed-rate bullet cash-flow
+    schedules, nominal periodic price/yield math, explicit accrued interest,
+    clean/dirty reconciliation, current yield, duration/convexity/DV01, seven
+    parallel shocks, input digests, typed recovery, and model-only disclosure.
+  - **Still required:** dated schedules, settlement/day-count/calendar rules,
+    irregular and embedded-option structures, market-price yield entry, licensed
+    Treasury/credit curves and spreads, history/inversion, and provider degraded
+    and entitlement states.
 - Add FX spot/cross/forward/carry and central-bank calendars; commodity curves,
   rolls/spreads/seasonality; crypto spot/derivatives/sector/DeFi views; ETF holdings,
   flows and overlap; and mutual-fund search, rolling returns, category ranks, SIP
@@ -1116,6 +1134,7 @@ not an automatic expansion of this commitment.
 | Screening & Analytics | universes, filters, rankings, comparables, reusable studies | Instrument Master, Market Data, fundamentals | saved screens and result sets |
 | Backtesting | immutable research inputs, timing, simulated ledger, metrics, reproducible run artifacts | point-in-time history and later paper-execution contracts | versioned research run artifacts |
 | Options | explicit contract/model inputs, transparent reference pricing, model Greeks, deterministic scenarios | future derivatives chain/rate/calendar ports | versioned model analytics and research navigation intents |
+| Fixed Income | explicit bond/model inputs, fixed-rate schedules, price/yield risk, deterministic shocks | future reference, curve, calendar, and credit ports | versioned model analytics and research navigation intents |
 | Alerts | alert rules, schedules, delivery state, acknowledgement | events exposed by other contexts, notification adapters | `AlertTriggered` |
 | Trading & Orders | order intent, validation, routing, fills, allocations | Instrument Master, Market Data, Portfolio, broker adapters | `OrderStateChanged`, `FillReceived` |
 | Collaboration & Export | notes, snapshots, reports, CSV/JSON export | read models from other contexts | exported artifact metadata |

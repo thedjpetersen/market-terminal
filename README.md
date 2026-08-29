@@ -46,6 +46,8 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 - Backtest — reproducible, next-bar moving-average research replay with explicit
   execution costs, integer-share accounting, immutable hashes, equity/drawdown,
   and a signal-to-fill audit; it has no live order path
+- Fixed Income — transparent fixed-rate bullet cash flows, clean/dirty price,
+  accrued interest, yield risk, and deterministic curve-shock reference analytics
 - Chat — TLS-capable IRC market rooms with bounded queues, background reconnect,
   participant presence, notices, actions, and an inline composer
 - Alerts — idempotent, debounced local rules with acknowledgement and audit state
@@ -173,6 +175,15 @@ and a deterministic 5×3 spot/volatility scenario grid; model version, ACT/365
 convention, units, multiplier, disclosures, and an input digest remain visible.
 It intentionally loads no chain, quote, provider IV, OI, volume, or provider
 Greeks and cannot submit an order. See [the Options contract](docs/options.md).
+
+`BOND`/`FI` opens the first P5 fixed-income slice. For example,
+`BOND UST-5Y-REFERENCE USD 100 4.5 4.25 5 SEMI 0` builds an exact semiannual
+fixed-rate bullet schedule from explicit inputs. The workspace reconciles clean
+price, dirty price, accrued interest, coupon cash flows, current yield, Macaulay
+and modified duration, convexity, DV01, and seven parallel yield shocks. Model
+version, units, compounding, accrual convention, exclusions, and an input digest
+remain visible. It deliberately loads no live curve, calendar, market price,
+spread, or credit state. See [the Fixed-income contract](docs/fixed-income.md).
 
 `DESK` (aliases `SPLIT` and `DASHBOARD`) opens the combined workspace adapted
 from `alphai-tui`. Press `Tab`/`Shift+Tab` or `1`/`2`/`3` to focus Monitor,
@@ -1088,6 +1099,7 @@ src/
 │   ├── charting/    chart specification + history port + workspace
 │   ├── backtesting/ immutable replay inputs + engine + audit workspace
 │   ├── options/     European reference model + Greeks + scenario workspace
+│   ├── fixed_income/ fixed-rate schedule + price/yield risk reference workspace
 │   ├── chat/        IRC domain + gateway port + workspace
 │   ├── spreadsheet/ workbook domain + application + presentation
 │   └── assistant/   AI conversation domain + provider port + workspace

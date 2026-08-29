@@ -3,6 +3,7 @@ pub mod assistant;
 pub mod backtesting;
 pub mod charting;
 pub mod chat;
+pub mod fixed_income;
 pub mod instrument;
 pub mod launchpad;
 pub mod market_data;

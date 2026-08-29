@@ -5,6 +5,7 @@ use market_terminal::{
     bootstrap,
     features::{
         backtesting::{run_backtest, BacktestBar, BacktestConfig},
+        fixed_income::{analyze_bond, BondModelInput},
         options::{price_option, OptionModelInput},
         screening::{
             evaluate_screen, universe_content_digest, Comparison, ScreenClause, ScreenDefinition,
@@ -39,6 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         responsive_theme_render_case()?,
         backtest_replay_case()?,
         option_scenario_case()?,
+        fixed_income_scenario_case()?,
         screening_evaluation_case()?,
         spreadsheet_edit_case()?,
     ];
@@ -57,6 +59,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+fn fixed_income_scenario_case() -> Result<CaseResult, Box<dyn Error>> {
+    let input = BondModelInput::default();
+    let expected = analyze_bond(&input)?.input_digest;
+    let p95_ms = measure(|_| {
+        let analytics = analyze_bond(&input)?;
+        if analytics.input_digest != expected
+            || analytics.scenarios.len() != 7
+            || analytics.cash_flows.len() != 10
+        {
+            return Err("fixed-income model artifact changed".into());
+        }
+        Ok(())
+    })?;
+    Ok(CaseResult {
+        name: "fixed_income_scenario_grid",
+        p95_ms,
+        context: "fixed_rate_bullet=true scenarios=7 cash_flows=10 digest=verified".to_owned(),
+    })
 }
 
 fn option_scenario_case() -> Result<CaseResult, Box<dyn Error>> {

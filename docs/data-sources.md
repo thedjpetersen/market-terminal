@@ -36,6 +36,13 @@ are explicit user inputs. The terminal labels every output as model-only and doe
 not infer bid/ask, provider IV/Greeks, OI, volume, chain membership, venue, or
 calendar state. Saved views retain only those typed inputs and presentation state.
 
+Fixed Income currently consumes no provider data. Instrument label, currency,
+face, coupon, nominal yield, model maturity, coupon frequency, and accrued-period
+fraction are explicit user inputs. Its fixed-rate bullet schedule and analytics
+are reference-model outputs. It does not infer settlement, day count, holidays,
+market price, benchmark curve, spread, credit quality, or entitlement state.
+Saved views retain only typed inputs and presentation state.
+
 ## Local shell, navigation, and presentation state
 
 - **Surfaces:** command routing, unified discovery and Help, workspace/panel

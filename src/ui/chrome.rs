@@ -340,6 +340,9 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
         "chat" if gallery_replay => "LOCAL GALLERY CHAT · NOT LIVE",
         "chat" => "EXTERNAL IRC · VERIFY PARTICIPANTS",
         "options" => "USER INPUT + REFERENCE MODEL · NO CHAIN, PROVIDER GREEKS, OR ORDER PATH",
+        "fixed_income" => {
+            "USER INPUT + REFERENCE MODEL · NO LIVE CURVE, CALENDAR, SPREAD, OR CREDIT DATA"
+        }
         _ => "NOT INVESTMENT ADVICE",
     };
     frame.render_widget(

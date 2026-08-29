@@ -320,11 +320,11 @@
       "capability": "Fixed-income analytics and yield curves",
       "owner": "Fixed Income",
       "priority": "P5",
-      "market_status": "missing",
+      "market_status": "partial",
       "upstream_maturity": "substantive",
       "reference_files": ["backend/api/routes/fixed_income.py", "backend/services/fixed_income_service.py", "backend/core/bond_analytics.py", "frontend/src/pages/fixed-income/YieldCurveDashboard.tsx", "frontend/src/pages/fixed-income/BondAnalyticsCalculator.tsx"],
       "acceptance_tests": ["BOND-CONVENTION-CASES", "CURVE-CONSTRUCTION", "CURVE-SHOCK"],
-      "gap": "Add schedules, price/yield, accrued interest, day counts, calendars, duration/convexity, spreads, Treasury curve construction, historical comparison, inversion, and curve shocks."
+      "gap": "The first bounded slice now provides fixed-rate bullet schedules, nominal periodic price/yield analytics, explicit accrued interest, clean/dirty reconciliation, current yield, duration/convexity/DV01, deterministic parallel shocks, typed recovery, and model/provider separation. Add dated settlement/day-count/calendar conventions, irregular and embedded-option structures, licensed Treasury/credit curves and spreads, historical comparison/inversion, and degraded/entitlement states."
     },
     {
       "id": "OTUI-029",

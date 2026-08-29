@@ -54,14 +54,19 @@ const GOLDENS: &[Golden] = &[
         hashes: [0x6c109a0e38d556d9, 0x37db2f652388beb6, 0xb11a2e22c5e46443],
     },
     Golden {
+        name: "fixed-income-model",
+        prepare: prepare_fixed_income,
+        hashes: [0x3595825619247cf2, 0xfef236b965db2e2e, 0x9d38b16843037df6],
+    },
+    Golden {
         name: "help",
         prepare: prepare_help,
-        hashes: [0xdc20b3b2561bd788, 0xd8274e10c2438e8f, 0x8794d4b70fe3273e],
+        hashes: [0x44b797e9058346be, 0xa2c521511dfd15a4, 0xad1486544098d064],
     },
     Golden {
         name: "workspace-preset-preview",
         prepare: prepare_workspace_preset_preview,
-        hashes: [0x5c1bc4ed83e48e72, 0x121ea33401b3f1fd, 0x20656756a68b45d9],
+        hashes: [0x6bcbf9b5b2d3068e, 0x4a2145bda9288031, 0x94cebd8494cfbd2d],
     },
     Golden {
         name: "launchpad",
@@ -429,6 +434,10 @@ fn prepare_screening(app: &mut App) {
 
 fn prepare_options(app: &mut App) {
     dispatch(app, "OPTIONS AAPL CALL 190 200 30 25 5 0 100");
+}
+
+fn prepare_fixed_income(app: &mut App) {
+    dispatch(app, "BOND UST-5Y-REFERENCE USD 100 4.5 4.25 5 SEMI 0");
 }
 
 fn prepare_help(app: &mut App) {
