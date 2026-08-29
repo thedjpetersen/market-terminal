@@ -14,7 +14,7 @@ use ratatui::{
 };
 
 use crate::ui::{
-    contains,
+    contains, is_primary_click,
     theme::{AMBER, BG, CYAN, INK, MUTED, NAV_BG},
 };
 
@@ -26,6 +26,14 @@ use super::{
 
 pub const DESK_ID: WorkspaceId = WorkspaceId::new("desk");
 const NEWS_MIN_HEIGHT: u16 = 30;
+const DEFAULT_MONITOR_PERCENT: u16 = 45;
+const DEFAULT_TOP_PERCENT: u16 = 55;
+const MIN_MONITOR_PERCENT: u16 = 30;
+const MAX_MONITOR_PERCENT: u16 = 70;
+const MIN_TOP_PERCENT: u16 = 40;
+const MAX_TOP_PERCENT: u16 = 75;
+const RESIZE_STEP: i16 = 5;
+const CONTROL_STRIP_WIDTH: u16 = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeskPane {
@@ -84,6 +92,92 @@ impl DeskPane {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DeskGeometry {
+    monitor_percent: u16,
+    top_percent: u16,
+}
+
+impl Default for DeskGeometry {
+    fn default() -> Self {
+        Self {
+            monitor_percent: DEFAULT_MONITOR_PERCENT,
+            top_percent: DEFAULT_TOP_PERCENT,
+        }
+    }
+}
+
+impl DeskGeometry {
+    fn new(monitor_percent: u16, top_percent: u16) -> Option<Self> {
+        (MIN_MONITOR_PERCENT..=MAX_MONITOR_PERCENT)
+            .contains(&monitor_percent)
+            .then_some(())?;
+        (MIN_TOP_PERCENT..=MAX_TOP_PERCENT)
+            .contains(&top_percent)
+            .then_some(Self {
+                monitor_percent,
+                top_percent,
+            })
+    }
+
+    fn adjust_monitor(&mut self, delta: i16) -> bool {
+        adjust_percent(
+            &mut self.monitor_percent,
+            delta,
+            MIN_MONITOR_PERCENT,
+            MAX_MONITOR_PERCENT,
+        )
+    }
+
+    fn adjust_top(&mut self, delta: i16) -> bool {
+        adjust_percent(
+            &mut self.top_percent,
+            delta,
+            MIN_TOP_PERCENT,
+            MAX_TOP_PERCENT,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeskResize {
+    MonitorLess,
+    MonitorMore,
+    TopLess,
+    TopMore,
+}
+
+impl DeskResize {
+    const fn action_id(self) -> &'static str {
+        match self {
+            Self::MonitorLess => "resize:columns:less",
+            Self::MonitorMore => "resize:columns:more",
+            Self::TopLess => "resize:rows:less",
+            Self::TopMore => "resize:rows:more",
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::MonitorLess => "Give Chart more width",
+            Self::MonitorMore => "Give Monitor more width",
+            Self::TopLess => "Give News more height",
+            Self::TopMore => "Give market panes more height",
+        }
+    }
+
+    fn parse(id: &str) -> Option<Self> {
+        [
+            Self::MonitorLess,
+            Self::MonitorMore,
+            Self::TopLess,
+            Self::TopMore,
+        ]
+        .into_iter()
+        .find(|control| control.action_id() == id)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct PaneArea {
     frame: Rect,
@@ -102,6 +196,7 @@ pub struct DeskWorkspace {
     chart: Box<dyn Workspace>,
     news: Box<dyn Workspace>,
     focused: DeskPane,
+    geometry: DeskGeometry,
 }
 
 impl DeskWorkspace {
@@ -115,6 +210,16 @@ impl DeskWorkspace {
             chart,
             news,
             focused: DeskPane::Monitor,
+            geometry: DeskGeometry::default(),
+        }
+    }
+
+    fn resize(&mut self, control: DeskResize) -> bool {
+        match control {
+            DeskResize::MonitorLess => self.geometry.adjust_monitor(-RESIZE_STEP),
+            DeskResize::MonitorMore => self.geometry.adjust_monitor(RESIZE_STEP),
+            DeskResize::TopLess => self.geometry.adjust_top(-RESIZE_STEP),
+            DeskResize::TopMore => self.geometry.adjust_top(RESIZE_STEP),
         }
     }
 
@@ -148,6 +253,12 @@ impl DeskWorkspace {
     }
 
     fn route_mouse(&mut self, event: MouseEvent, areas: DeskAreas) -> bool {
+        for (control, control_area) in desk_resize_control_areas(areas) {
+            if is_primary_click(event, control_area) {
+                self.resize(control);
+                return true;
+            }
+        }
         for (pane, pane_area) in [
             (DeskPane::Monitor, Some(areas.monitor)),
             (DeskPane::Chart, Some(areas.chart)),
@@ -182,19 +293,65 @@ impl Workspace for DeskWorkspace {
     }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
-        if let Some(pane) = invocation.args.first() {
-            match pane.to_ascii_uppercase().as_str() {
-                "MON" | "MONITOR" | "WATCHLIST" => self.select(DeskPane::Monitor),
-                "CHART" | "GRAPH" => self.select(DeskPane::Chart),
-                "NEWS" | "HEADLINES" => self.select(DeskPane::News),
-                _ => {}
+        let Some(operation) = invocation.args.first() else {
+            return true;
+        };
+        match operation.to_ascii_uppercase().as_str() {
+            "MON" | "MONITOR" | "WATCHLIST" if invocation.args.len() == 1 => {
+                self.select(DeskPane::Monitor)
             }
+            "CHART" | "GRAPH" if invocation.args.len() == 1 => self.select(DeskPane::Chart),
+            "NEWS" | "HEADLINES" if invocation.args.len() == 1 => self.select(DeskPane::News),
+            "COLUMNS" | "WIDTH" if invocation.args.len() == 2 => {
+                if let Some(percent) = parse_percent(
+                    &invocation.args[1],
+                    MIN_MONITOR_PERCENT,
+                    MAX_MONITOR_PERCENT,
+                ) {
+                    self.geometry.monitor_percent = percent;
+                }
+            }
+            "ROWS" | "HEIGHT" if invocation.args.len() == 2 => {
+                if let Some(percent) =
+                    parse_percent(&invocation.args[1], MIN_TOP_PERCENT, MAX_TOP_PERCENT)
+                {
+                    self.geometry.top_percent = percent;
+                }
+            }
+            "LAYOUT" if invocation.args.len() == 3 => {
+                if let (Ok(monitor), Ok(top)) = (
+                    invocation.args[1].parse::<u16>(),
+                    invocation.args[2].parse::<u16>(),
+                ) {
+                    if let Some(geometry) = DeskGeometry::new(monitor, top) {
+                        self.geometry = geometry;
+                    }
+                }
+            }
+            "RESET" if invocation.args.len() == 1 => self.geometry = DeskGeometry::default(),
+            _ => {}
         }
         true
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.resize(DeskResize::MonitorLess);
+                true
+            }
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.resize(DeskResize::MonitorMore);
+                true
+            }
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.resize(DeskResize::TopLess);
+                true
+            }
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => {
+                self.resize(DeskResize::TopMore);
+                true
+            }
             KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.select(self.focused.next(-1));
                 true
@@ -224,11 +381,11 @@ impl Workspace for DeskWorkspace {
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
-        self.route_mouse(event, desk_areas(area))
+        self.route_mouse(event, desk_areas_with_geometry(area, self.geometry))
     }
 
     fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
-        let areas = desk_areas(area);
+        let areas = desk_areas_with_geometry(area, self.geometry);
         let visible = [
             (DeskPane::Monitor, Some(areas.monitor)),
             (DeskPane::Chart, Some(areas.chart)),
@@ -244,6 +401,9 @@ impl Workspace for DeskWorkspace {
         let mut actions = Vec::new();
 
         for (pane, pane_area) in &visible {
+            // The pane destination owns its complete header so Left/Right keeps
+            // the direct pane-to-pane route. Resize controls are nested targets:
+            // mouse routing checks them first and follow hints still expose them.
             let header = Rect::new(
                 pane_area.frame.x,
                 pane_area.frame.y,
@@ -260,6 +420,15 @@ impl Workspace for DeskWorkspace {
             }
             actions.push(pane_action);
         }
+
+        actions.extend(
+            desk_resize_control_areas(areas)
+                .into_iter()
+                .filter(|(control, _)| resize_is_available(self.geometry, *control))
+                .map(|(control, area)| {
+                    WorkspaceAction::new(control.action_id(), control.label(), area)
+                }),
+        );
 
         for (pane, pane_area) in visible {
             let prefix = pane.child_action_prefix();
@@ -283,6 +452,9 @@ impl Workspace for DeskWorkspace {
     }
 
     fn activate_action(&mut self, id: &str) -> bool {
+        if let Some(control) = DeskResize::parse(id) {
+            return self.resize(control);
+        }
         for pane in DeskPane::ALL {
             if id == pane.action_id() {
                 self.select(pane);
@@ -325,7 +497,7 @@ impl Workspace for DeskWorkspace {
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
-        let areas = desk_areas(area);
+        let areas = desk_areas_with_geometry(area, self.geometry);
         render_pane(
             frame,
             areas.monitor,
@@ -363,6 +535,7 @@ impl Workspace for DeskWorkspace {
                 ),
             );
         }
+        render_resize_controls(frame, areas, self.geometry);
     }
 
     fn capture_view(&self) -> WorkspaceViewState {
@@ -370,6 +543,14 @@ impl Workspace for DeskWorkspace {
             .with_field(
                 "focused_pane",
                 ViewValue::Text(self.focused.label().to_owned()),
+            )
+            .with_field(
+                "monitor_percent",
+                ViewValue::Unsigned(u64::from(self.geometry.monitor_percent)),
+            )
+            .with_field(
+                "top_percent",
+                ViewValue::Unsigned(u64::from(self.geometry.top_percent)),
             )
             .with_child(self.monitor.capture_view())
             .with_child(self.chart.capture_view())
@@ -398,6 +579,23 @@ impl Workspace for DeskWorkspace {
                 }
             }
         }
+        self.geometry = DeskGeometry::default();
+        restore_geometry_field(
+            state,
+            "monitor_percent",
+            MIN_MONITOR_PERCENT,
+            MAX_MONITOR_PERCENT,
+            &mut self.geometry.monitor_percent,
+            &mut report,
+        );
+        restore_geometry_field(
+            state,
+            "top_percent",
+            MIN_TOP_PERCENT,
+            MAX_TOP_PERCENT,
+            &mut self.geometry.top_percent,
+            &mut report,
+        );
         for child in &state.children {
             let child_report = DeskPane::ALL
                 .into_iter()
@@ -423,22 +621,158 @@ impl Workspace for DeskWorkspace {
     }
 }
 
-fn desk_areas(area: Rect) -> DeskAreas {
+fn adjust_percent(value: &mut u16, delta: i16, minimum: u16, maximum: u16) -> bool {
+    let adjusted =
+        (i32::from(*value) + i32::from(delta)).clamp(i32::from(minimum), i32::from(maximum)) as u16;
+    if adjusted == *value {
+        return false;
+    }
+    *value = adjusted;
+    true
+}
+
+fn parse_percent(value: &str, minimum: u16, maximum: u16) -> Option<u16> {
+    value
+        .parse::<u16>()
+        .ok()
+        .filter(|percent| (minimum..=maximum).contains(percent))
+}
+
+fn restore_geometry_field(
+    state: &WorkspaceViewState,
+    field: &str,
+    minimum: u16,
+    maximum: u16,
+    destination: &mut u16,
+    report: &mut ViewRestoreReport,
+) {
+    let Some(value) = state.fields.get(field) else {
+        return;
+    };
+    let restored = value
+        .as_unsigned()
+        .and_then(|value| u16::try_from(value).ok())
+        .filter(|value| (minimum..=maximum).contains(value));
+    if let Some(value) = restored {
+        *destination = value;
+        report.restored_fields += 1;
+    } else {
+        report.skipped_fields += 1;
+        report.warnings.push(format!(
+            "desk {field} must be between {minimum} and {maximum} percent"
+        ));
+    }
+}
+
+fn desk_areas_with_geometry(area: Rect, geometry: DeskGeometry) -> DeskAreas {
     let (top, news) = if area.height >= NEWS_MIN_HEIGHT {
-        let rows =
-            Layout::vertical([Constraint::Percentage(55), Constraint::Percentage(45)]).split(area);
+        let rows = Layout::vertical([
+            Constraint::Percentage(geometry.top_percent),
+            Constraint::Percentage(100 - geometry.top_percent),
+        ])
+        .split(area);
         (rows[0], Some(pane_area(rows[1])))
     } else {
         let top = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
         (top, None)
     };
-    let columns =
-        Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)]).split(top);
+    let columns = Layout::horizontal([
+        Constraint::Percentage(geometry.monitor_percent),
+        Constraint::Percentage(100 - geometry.monitor_percent),
+    ])
+    .split(top);
     DeskAreas {
         monitor: pane_area(columns[0]),
         chart: pane_area(columns[1]),
         news,
     }
+}
+
+fn resize_control_strip(frame: Rect) -> Option<Rect> {
+    (frame.width >= 24).then(|| {
+        Rect::new(
+            frame.right().saturating_sub(CONTROL_STRIP_WIDTH),
+            frame.y,
+            CONTROL_STRIP_WIDTH,
+            1,
+        )
+    })
+}
+
+fn desk_resize_control_areas(areas: DeskAreas) -> Vec<(DeskResize, Rect)> {
+    let mut controls = Vec::with_capacity(4);
+    if let Some(strip) = resize_control_strip(areas.monitor.frame) {
+        controls.push((
+            DeskResize::MonitorLess,
+            Rect::new(strip.x.saturating_add(6), strip.y, 3, 1),
+        ));
+        controls.push((
+            DeskResize::MonitorMore,
+            Rect::new(strip.x.saturating_add(9), strip.y, 3, 1),
+        ));
+    }
+    if let Some(strip) = areas.news.and_then(|news| resize_control_strip(news.frame)) {
+        controls.push((
+            DeskResize::TopLess,
+            Rect::new(strip.x.saturating_add(6), strip.y, 3, 1),
+        ));
+        controls.push((
+            DeskResize::TopMore,
+            Rect::new(strip.x.saturating_add(9), strip.y, 3, 1),
+        ));
+    }
+    controls
+}
+
+fn resize_is_available(geometry: DeskGeometry, control: DeskResize) -> bool {
+    match control {
+        DeskResize::MonitorLess => geometry.monitor_percent > MIN_MONITOR_PERCENT,
+        DeskResize::MonitorMore => geometry.monitor_percent < MAX_MONITOR_PERCENT,
+        DeskResize::TopLess => geometry.top_percent > MIN_TOP_PERCENT,
+        DeskResize::TopMore => geometry.top_percent < MAX_TOP_PERCENT,
+    }
+}
+
+fn render_resize_controls(frame: &mut Frame, areas: DeskAreas, geometry: DeskGeometry) {
+    if let Some(strip) = resize_control_strip(areas.monitor.frame) {
+        render_resize_control_strip(
+            frame,
+            strip,
+            'W',
+            geometry.monitor_percent,
+            resize_is_available(geometry, DeskResize::MonitorLess),
+            resize_is_available(geometry, DeskResize::MonitorMore),
+        );
+    }
+    if let Some(strip) = areas.news.and_then(|news| resize_control_strip(news.frame)) {
+        render_resize_control_strip(
+            frame,
+            strip,
+            'T',
+            geometry.top_percent,
+            resize_is_available(geometry, DeskResize::TopLess),
+            resize_is_available(geometry, DeskResize::TopMore),
+        );
+    }
+}
+
+fn render_resize_control_strip(
+    frame: &mut Frame,
+    area: Rect,
+    axis: char,
+    percent: u16,
+    less_enabled: bool,
+    more_enabled: bool,
+) {
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(format!(" {axis}{percent:02}% "), MUTED),
+            Span::styled("[-]", if less_enabled { AMBER } else { MUTED }),
+            Span::styled("[+]", if more_enabled { AMBER } else { MUTED }),
+        ]))
+        .style(Style::new().bg(NAV_BG.into())),
+        area,
+    );
 }
 
 fn pane_area(frame: Rect) -> PaneArea {
@@ -641,7 +975,7 @@ mod tests {
         let (news, _, news_mouse) = stub("NEWS CHILD");
         let mut desk = DeskWorkspace::new(monitor, chart, news);
         let area = Rect::new(0, 0, 160, 42);
-        let areas = desk_areas(area);
+        let areas = desk_areas_with_geometry(area, DeskGeometry::default());
 
         assert!(desk.handle_mouse(click(areas.chart.body.x + 2, areas.chart.body.y + 2), area));
         assert!(desk.handle_mouse(
@@ -692,8 +1026,20 @@ mod tests {
 
         let actions = desk.actions(full);
         assert_eq!(
-            actions.iter().map(|action| &*action.id).collect::<Vec<_>>(),
-            ["pane:monitor", "pane:chart", "pane:news"]
+            actions
+                .iter()
+                .take(7)
+                .map(|action| &*action.id)
+                .collect::<Vec<_>>(),
+            [
+                "pane:monitor",
+                "pane:chart",
+                "pane:news",
+                "resize:columns:less",
+                "resize:columns:more",
+                "resize:rows:less",
+                "resize:rows:more",
+            ]
         );
         assert!(actions[0].preferred);
         assert!(desk.activate_action("pane:chart"));
@@ -708,6 +1054,9 @@ mod tests {
 
         let short = desk.actions(Rect::new(0, 0, 160, 20));
         assert!(!short.iter().any(|action| action.id == "pane:news"));
+        assert!(!short
+            .iter()
+            .any(|action| action.id.starts_with("resize:rows:")));
         assert!(
             short
                 .iter()
@@ -715,6 +1064,108 @@ mod tests {
                 .unwrap()
                 .preferred
         );
+    }
+
+    #[test]
+    fn commands_and_alt_arrows_resize_within_bounded_geometry() {
+        let (monitor, _, _) = stub("MONITOR CHILD");
+        let (chart, _, _) = stub("CHART CHILD");
+        let (news, _, _) = stub("NEWS CHILD");
+        let mut desk = DeskWorkspace::new(monitor, chart, news);
+
+        desk.handle_command(&CommandInvocation {
+            function: "DESK".to_owned(),
+            args: vec!["LAYOUT".to_owned(), "60".to_owned(), "65".to_owned()],
+        });
+        assert_eq!(desk.geometry, DeskGeometry::new(60, 65).unwrap());
+
+        desk.handle_command(&CommandInvocation {
+            function: "DESK".to_owned(),
+            args: vec!["LAYOUT".to_owned(), "10".to_owned(), "90".to_owned()],
+        });
+        assert_eq!(desk.geometry, DeskGeometry::new(60, 65).unwrap());
+
+        desk.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT));
+        desk.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT));
+        assert_eq!(desk.geometry, DeskGeometry::new(55, 60).unwrap());
+
+        for _ in 0..20 {
+            desk.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+            desk.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::ALT));
+        }
+        assert_eq!(desk.geometry, DeskGeometry::new(70, 75).unwrap());
+        assert!(!desk.activate_action("resize:columns:more"));
+        assert!(!desk.activate_action("resize:rows:more"));
+
+        desk.handle_command(&CommandInvocation {
+            function: "DESK".to_owned(),
+            args: vec!["RESET".to_owned()],
+        });
+        assert_eq!(desk.geometry, DeskGeometry::default());
+    }
+
+    #[test]
+    fn resize_controls_share_mouse_focus_and_render_geometry() {
+        let (monitor, _, _) = stub("MONITOR CHILD");
+        let (chart, _, _) = stub("CHART CHILD");
+        let (news, _, _) = stub("NEWS CHILD");
+        let mut desk = DeskWorkspace::new(monitor, chart, news);
+        let area = Rect::new(0, 0, 160, 42);
+        let before = desk_areas_with_geometry(area, desk.geometry);
+        let actions = desk.actions(area);
+        let pane = actions
+            .iter()
+            .find(|action| action.id == "pane:monitor")
+            .unwrap();
+        let wider = actions
+            .iter()
+            .find(|action| action.id == "resize:columns:more")
+            .unwrap();
+        assert!(contains(pane.area, wider.area.x, wider.area.y));
+
+        assert!(desk.handle_mouse(click(wider.area.x + 1, wider.area.y), area));
+        assert_eq!(desk.geometry.monitor_percent, 50);
+        let after = desk_areas_with_geometry(area, desk.geometry);
+        assert!(after.monitor.frame.width > before.monitor.frame.width);
+        assert_eq!(after.chart.frame.x, after.monitor.frame.right());
+
+        assert!(desk.activate_action("resize:rows:less"));
+        assert_eq!(desk.geometry.top_percent, 50);
+    }
+
+    #[test]
+    fn saved_view_restores_geometry_and_degrades_invalid_percentages() {
+        let (monitor, _, _) = stub("MONITOR CHILD");
+        let (chart, _, _) = stub("CHART CHILD");
+        let (news, _, _) = stub("NEWS CHILD");
+        let mut source = DeskWorkspace::new(monitor, chart, news);
+        source.geometry = DeskGeometry::new(65, 70).unwrap();
+        source.select(DeskPane::Chart);
+        let state = source.capture_view();
+
+        let (monitor, _, _) = stub("MONITOR CHILD");
+        let (chart, _, _) = stub("CHART CHILD");
+        let (news, _, _) = stub("NEWS CHILD");
+        let mut restored = DeskWorkspace::new(monitor, chart, news);
+        let report = restored.restore_view(&state);
+        assert_eq!(restored.geometry, source.geometry);
+        assert_eq!(restored.focused, DeskPane::Chart);
+        assert_eq!(report.restored_fields, 3);
+        assert_eq!(report.skipped_fields, 0);
+
+        let invalid = WorkspaceViewState::new(DESK_ID.as_str())
+            .with_field("monitor_percent", ViewValue::Unsigned(10))
+            .with_field("top_percent", ViewValue::Text("wide".to_owned()));
+        let report = restored.restore_view(&invalid);
+        assert_eq!(restored.geometry, DeskGeometry::default());
+        assert_eq!(report.skipped_fields, 2);
+        assert_eq!(report.warnings.len(), 2);
+
+        let legacy = WorkspaceViewState::new(DESK_ID.as_str());
+        restored.geometry = DeskGeometry::new(60, 65).unwrap();
+        let report = restored.restore_view(&legacy);
+        assert_eq!(restored.geometry, DeskGeometry::default());
+        assert_eq!(report.skipped_fields, 0);
     }
 
     #[test]
@@ -735,7 +1186,9 @@ mod tests {
             .unwrap();
 
         assert!(contains(
-            desk_areas(area).chart.body,
+            desk_areas_with_geometry(area, DeskGeometry::default())
+                .chart
+                .body,
             child.area.x,
             child.area.y
         ));

@@ -159,6 +159,12 @@ move to its own crate later without changing its public vocabulary.
   Chart, and News pane headers support spatial focus and follow hints, hidden
   responsive panes are excluded, and nested child actions retain their rendered
   rectangles behind collision-free pane namespaces.
+- **Complete:** P1 configurable Desk geometry: bounded width and height ratios
+  are adjustable through Alt-arrows, exact atomic commands, mouse controls, and
+  follow hints while bare arrows preserve direct pane routing. One geometry model drives rendering,
+  hit testing, child routing, and action rectangles; schema-v2 saved views retain
+  both axes across restart with legacy defaults and explicit invalid-state
+  degradation.
 - **Complete:** Monitor action routing from a shared render/mouse/focus geometry:
   visible instrument rows open Security, sort field and direction are distinct,
   columns and refresh are addressable, narrow controls are viewport-clipped, and
@@ -252,12 +258,13 @@ move to its own crate later without changing its public vocabulary.
   current news, and deterministic ranked priorities with exact drill-down
   commands. A schema-v2 saved-view catalog now restores workspace order and
   typed nested Desk/Chart state across restart with migration and explicit
-  degradation. Import/export, typed Launchpad objects, remaining workspace
-  capture, and unified discovery remain.
+  degradation. Launchpad now has typed objects plus bounded atomic import/export,
+  Spreadsheet has typed workbook/sheet/viewport recovery, and Desk split
+  geometry is configurable and restart-safe. Remaining workspace capture and
+  unified discovery remain.
 - **Next:** extend typed view capture through the remaining workspaces, then
-  execute the remaining P1 typed-object, import/export, and unified-discovery
-  packages before the remaining Stage 2 risk, screening, and alert-rule
-  families. Provider availability
+  execute the P1 unified-discovery package before the remaining Stage 2 risk,
+  screening, and alert-rule families. Provider availability
   extends the deployment surface; deterministic fixtures remain the acceptance
   baseline and opt-in live contracts verify real provider behavior.
 
@@ -336,7 +343,7 @@ continues.
 | GO bar, command palette, function shortcuts | Covered | Typed command parser, exact registry, command history, AI fallback, Help | Add fuzzy discovery over every new parity command and action as those commands land. |
 | Mission Control, launchpad, ticker tape | Partial | Live pulse, imported portfolio, provider events, source health, saved work, inspectable priority ranking, persistent editable typed Launchpad with portable import/export, typed Desk/Chart/Spreadsheet saved views, and versioned role presets | Add recoverable state for the remaining workspaces and a denser configurable ticker/pulse surface. |
 | Keyboard navigation and icon rail | Covered | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, Chart periods/studies/comparisons/inspection/modes/promotion/refresh, modal-safe News filters/headlines/story/calendar/reader actions, Overview periods/cards/live holdings/headlines/context controls, Alerts rows/mutations/Security/refresh controls, and Spreadsheet cells/rows/formula/tabs/workflow controls | Preserve the action and modal-trapping contracts as new controls and overlays are added. |
-| Saved views and workspace presets | Partial | Workspace order, active workspace, role presets, and schema-v2 nested Desk/Chart plus workbook/sheet/cell/viewport Spreadsheet state persist with migration and degraded recovery | Extend typed capture to research tabs, filters, sort, columns, remaining tables, and configurable pane geometry. |
+| Saved views and workspace presets | Partial | Workspace order, active workspace, role presets, schema-v2 nested Desk/Chart state with bounded split geometry, and workbook/sheet/cell/viewport Spreadsheet state persist with migration and degraded recovery | Extend typed capture to research tabs, filters, sort, columns, and remaining tables. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
 | Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
 | Snapshot/streaming data and provider fallback | Partial | Yahoo, Alpha Vantage, Alpaca, Finnhub, bounded workers, coalescing, LKG cache, replay | Add capability-aware provider waterfall, durable bar cache, session calendars, health routing, and cross-provider provenance. |
@@ -570,9 +577,21 @@ modes. Spreadsheet now captures its durable workbook identity, stable worksheet
 name with ordinal fallback, selected cell, and row/column viewport without
 duplicating workbook data, clipboard contents, or undo history. Exact restart,
 renamed-sheet fallback, missing-workbook, and unknown-future-field tests lock its
-recovery semantics. A keyboard-only restart test locks the multi-pane round
-trip. P1 exit still requires capture adoption for the remaining research and
-table workspaces, configurable split geometry, and unified discovery.
+recovery semantics. Desk now owns a bounded 30–70% Monitor-width ratio and
+40–75% market-row-height ratio. Alt-arrows, exact `DESK COLUMNS`/`ROWS`/`LAYOUT`
+commands, `DESK RESET`, pointer controls, and follow hints all mutate the same
+geometry model used by rendering and child routing. Bare arrows continue to
+route directly between pane headers instead of stopping at nested resize
+buttons. At a
+bound the unavailable action disappears; on short terminals News and its row
+controls remain excluded. Saved views persist both axes, old views restore the
+45/55 defaults, invalid fields produce degraded reports, and an atomic two-axis
+command never partially applies. Unit evidence covers commands, clamping,
+pointer/action geometry, legacy and malformed restoration; the keyboard-only
+restart test now locks focus, nested Chart state, and exact split geometry. A
+three-size semantic golden plus a native full-color capture lock the responsive
+surface. P1 exit still requires capture adoption for the remaining research and
+table workspaces and unified discovery.
 
 ### P2 — Market-data fabric, microstructure, and chart workstation
 

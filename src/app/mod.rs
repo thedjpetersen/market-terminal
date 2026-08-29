@@ -3106,6 +3106,34 @@ mod tests {
         );
 
         app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        let resize_code = app
+            .shell_hints()
+            .unwrap()
+            .1
+            .iter()
+            .find(|hint| {
+                matches!(
+                    &hint.target,
+                    ShellHintTarget::WorkspaceAction { action, .. }
+                        if action == "resize:columns:more"
+                )
+            })
+            .unwrap()
+            .code
+            .clone();
+        for character in resize_code.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        assert_eq!(
+            app.workspaces
+                .capture_view(DESK_ID)
+                .unwrap()
+                .fields
+                .get("monitor_percent"),
+            Some(&ViewValue::Unsigned(50))
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
         let monitor_row_code = app
             .shell_hints()
             .unwrap()
@@ -4080,6 +4108,8 @@ mod tests {
 
         app.command = "DESK CHART".to_owned();
         app.execute_command();
+        app.command = "DESK LAYOUT 60 65".to_owned();
+        app.execute_command();
         app.handle_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
@@ -4090,6 +4120,14 @@ mod tests {
         let expected = app.saved_views.views[0].workspace_state.clone();
         assert_eq!(expected.workspace, DESK_ID.as_str());
         assert_eq!(expected.children.len(), 3);
+        assert_eq!(
+            expected.fields.get("monitor_percent"),
+            Some(&ViewValue::Unsigned(60))
+        );
+        assert_eq!(
+            expected.fields.get("top_percent"),
+            Some(&ViewValue::Unsigned(65))
+        );
 
         app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
         let mut restarted = bootstrap::demo_app()

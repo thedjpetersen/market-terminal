@@ -51,6 +51,11 @@ const GOLDENS: &[Golden] = &[
         hashes: [0x759a01e13135056b, 0x2ebeefd55789d13e, 0x0947fe47f37b361f],
     },
     Golden {
+        name: "desk-layout",
+        prepare: prepare_desk_layout,
+        hashes: [0x25721fb84a222df1, 0x2086e600fe23b906, 0x22aba07c701e79e0],
+    },
+    Golden {
         name: "spreadsheet-error",
         prepare: prepare_spreadsheet_error,
         hashes: [0xe20f49fbabedc1bc, 0x6cc81e54570bde28, 0xbb7a539b51f8bd24],
@@ -252,6 +257,10 @@ fn prepare_workspace_preset_preview(app: &mut App) {
 
 fn prepare_launchpad(app: &mut App) {
     dispatch(app, "LAUNCH");
+}
+
+fn prepare_desk_layout(app: &mut App) {
+    dispatch(app, "DESK LAYOUT 60 65");
 }
 
 fn prepare_risk(app: &mut App) {

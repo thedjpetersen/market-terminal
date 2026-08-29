@@ -60,7 +60,7 @@
       "upstream_maturity": "substantive",
       "reference_files": ["frontend/src/pages/Launchpad.tsx", "frontend/src/components/layout/LaunchpadWorkspace.tsx", "frontend/src/components/layout/TemplateGallery.tsx", "frontend/tests/e2e/workspace-templates.spec.ts"],
       "acceptance_tests": ["LAUNCHPAD-EDIT", "LAUNCHPAD-PRESET", "LAUNCHPAD-RESTART"],
-      "gap": "Versioned Trader, Quant, PM, Risk, and Ops seeds have safe modal preview and crash-safe return. Launchpad now has a responsive bounded typed grid for commands, canonical instruments, saved screens, portfolios, workbooks, and saved layouts; stable identities; add/rename/reorder/guarded-remove/reset; keyboard/pointer/follow routing; schema-v1 migration; private bounded atomic import/export; background crash-safe persistence; and restart plus shell-layout routing evidence. Complete remaining saved pane contents, configurable geometry, and unified discovery to close P1 parity."
+      "gap": "Versioned Trader, Quant, PM, Risk, and Ops seeds have safe modal preview and crash-safe return. Launchpad now has a responsive bounded typed grid for commands, canonical instruments, saved screens, portfolios, workbooks, and saved layouts; stable identities; add/rename/reorder/guarded-remove/reset; keyboard/pointer/follow routing; schema-v1 migration; private bounded atomic import/export; background crash-safe persistence; and restart plus shell-layout routing evidence. Desk geometry is now keyboard, command, pointer, and follow-hint configurable and saved while bare arrows retain direct pane routing. Complete remaining saved pane contents and unified discovery to close P1 parity."
     },
     {
       "id": "OTUI-005",
@@ -71,7 +71,7 @@
       "upstream_maturity": "mixed",
       "reference_files": ["backend/saved_views/routes.py", "backend/api/routes/user_layouts.py", "frontend/src/components/savedViews/SavedViewsControl.tsx", "frontend/src/pages/SavedViewsPage.tsx"],
       "acceptance_tests": ["VIEW-ROUNDTRIP", "VIEW-MIGRATION", "VIEW-MISSING-CAPABILITY"],
-      "gap": "Schema-v2 saved views now persist stable identity/revision, workspace order, active destination, nested Desk pane focus, typed Chart instrument/period/normalization/comparison/study/inspection/viewport/display state, and Spreadsheet workbook/sheet/cell/viewport state. V1 migration, keyboard-only and Spreadsheet restart round trips, renamed-sheet ordinal fallback, missing-workbook handling, and unknown-field degradation are locked. Extend capture to remaining research tabs, filters, sort, columns, table selections/scroll, and configurable split geometry."
+      "gap": "Schema-v2 saved views now persist stable identity/revision, workspace order, active destination, nested Desk pane focus and bounded split geometry, typed Chart instrument/period/normalization/comparison/study/inspection/viewport/display state, and Spreadsheet workbook/sheet/cell/viewport state. V1 migration, keyboard-only and Spreadsheet restart round trips, legacy Desk defaults, invalid-geometry degradation, renamed-sheet ordinal fallback, missing-workbook handling, and unknown-field degradation are locked. Extend capture to remaining research tabs, filters, sort, columns, and table selections/scroll."
     },
     {
       "id": "OTUI-006",

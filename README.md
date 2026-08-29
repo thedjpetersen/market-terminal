@@ -16,8 +16,8 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
 - Mission Control — ranked actionable items, live market pulse, imported
   portfolio state, provider-backed events, source health, saved work, and
   current news with explicit offline and missing-data states
-- Desk — responsive Monitor and Chart panes above News, with Tab/1/2/3 pane
-  focus and click routing
+- Desk — recoverable, bounded Monitor/Chart and market/News split geometry,
+  with keyboard, pointer, spatial-focus, and follow-hint routing
 - Markets — external listed-instrument snapshots, with unsupported cross-asset
   and analytics datasets called out instead of mocked
 - Security — quote/chart, financials, raw SEC Form 4 insider transactions,
@@ -105,6 +105,28 @@ directly routable inside the split Desk. On short terminals the News pane yields
 instead of crushing the market panels and is removed from routing; use `NEWS`
 for the full feed.
 
+Use `Alt+Left`/`Alt+Right` to give Chart/Monitor five percentage points more
+width and `Alt+Up`/`Alt+Down` to give News/the market row five percentage points
+more height. The visible `W…% [-][+]` and `T…% [-][+]` header controls expose
+the same operations to the mouse and `F` hints. Pane headers deliberately
+remain the direct bare-arrow route; their
+nested resize buttons remain available through `F`. Geometry is deliberately
+bounded: Monitor occupies 30–70% of the width,
+and the upper market row occupies 40–75% of the height. Commands provide exact,
+atomic changes and a stable reset:
+
+```text
+DESK COLUMNS 60
+DESK ROWS 65
+DESK LAYOUT 60 65
+DESK RESET
+```
+
+Rendering, hit testing, pane-body routing, spatial actions, and follow labels all
+derive from the same current geometry. At a bound, the unavailable direction is
+removed from action routing. On short terminals the News pane still yields and
+its row controls are removed.
+
 Run `HELP` from the command bar—or press `F1`—to open the command and controls
 guide without leaving the current workspace. Close it with `Esc`, `Q`, `F1`,
 the on-screen close button, or by selecting a workspace tab.
@@ -134,9 +156,11 @@ VIEW DELETE Morning Research
 
 Saved views have stable numeric IDs, case-insensitive names, monotonic
 revisions, and independent crash-safe persistence. They restore workspace order
-plus the active workspace; Desk views additionally retain the focused pane and
-nested Monitor, Chart, and News state. Chart state includes canonical instrument
-identity, period, normalization, comparisons, studies, inspection cursor,
+plus the active workspace; Desk views additionally retain the focused pane,
+bounded column/row percentages, and nested Monitor, Chart, and News state.
+Legacy Desk views recover the original 45/55 geometry; malformed geometry
+degrades explicitly without discarding valid child state. Chart state includes
+canonical instrument identity, period, normalization, comparisons, studies, inspection cursor,
 zoom/pan window, and display modes. Spreadsheet views retain the durable
 workbook identity, stable worksheet name with ordinal fallback, selected cell,
 and row/column viewport. Workbook cells, clipboard contents, and undo history
@@ -773,6 +797,10 @@ mockups.
 ### Typed Launchpad
 
 ![Persistent typed Launchpad for commands, instruments, screens, portfolios, workbooks, and saved layouts](docs/screenshots/launchpad.png)
+
+### Recoverable split Desk
+
+![Monitor, Chart, and News composed in a keyboard-resizable saved Desk layout](docs/screenshots/desk.png)
 
 | Research overview | Live-style market monitor |
 | --- | --- |

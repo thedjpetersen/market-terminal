@@ -28,8 +28,10 @@ Alert documents are sampled at startup so rendering performs no filesystem I/O.
   catalog, and bounded Launchpad tile document are eligible for crash-safe
   local persistence. Saved views contain user-authored labels, stable local
   IDs/revisions, workspace identifiers/order, and typed feature-owned view
-  fields. Desk/Chart fields can include canonical instrument identity, periods,
-  studies, comparisons, cursor/viewport positions, and display modes.
+  fields. Desk fields include bounded Monitor-width and market-row-height
+  percentages plus the focused pane and nested child envelopes. Chart fields
+  can include canonical instrument identity, periods, studies, comparisons,
+  cursor/viewport positions, and display modes.
   Spreadsheet view fields include the local workbook ID, worksheet name and
   ordinal fallback, selected cell, and viewport origin; cell content remains in
   the separately versioned workbook document. Saved views do not persist

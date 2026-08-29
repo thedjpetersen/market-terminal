@@ -34,8 +34,16 @@ bootstrap ──▶ app kernel
   `capture_view`/`restore_view`; composed workspaces nest child envelopes. The
   shell validates depth, field, list, text, workspace, and catalog bounds,
   persists a versioned catalog through the opaque feature-document repository,
-  and reports skipped or unavailable capabilities on restore. Desk and Chart
-  are the first rich adopters. Unknown fields remain inert data, so a newer
+  and reports skipped or unavailable capabilities on restore. Desk owns a
+  bounded geometry value object alongside its child workspaces: one typed state
+  stores Monitor width and top-row height, while the same computed rectangles
+  drive rendering, mouse hit testing, pane-body routing, resize buttons,
+  spatial focus, and follow hints. Keyboard steps clamp at declared bounds;
+  exact layout commands validate both axes before mutating, so a malformed
+  two-axis request cannot partially resize the Desk. Legacy views restore the
+  original geometry and invalid percentages produce a degraded report without
+  preventing valid pane or child restoration. Desk and Chart are the first rich
+  adopters. Unknown fields remain inert data, so a newer
   snapshot can degrade on an older binary without coupling migrations to the
   registry or panicking at startup. Session and saved-view documents remain
   independent failure domains.
@@ -223,10 +231,13 @@ hints remain shell-owned, but their feature targets and activation semantics do
 not leak into the shell; Portfolio's tabs, security rows, and reload control are
 the initial leaf reference implementation. Desk is the composition reference:
 it registers visible pane headers and namespaces child-workspace actions without
-rewriting their body rectangles or activation semantics. The same action
-snapshot drives follow badges, spatial focus styling, arrow routing, activation
-revalidation, resize recovery, and async-state recovery, so the shell never
-keeps a second geometry model. Security Research is the richer table/action
+rewriting their body rectangles or activation semantics. Its bounded split
+geometry is app-kernel presentation state rather than Monitor, Chart, or News
+domain state. The same geometry snapshot drives pane rendering, pointer targets,
+header resize controls, child body rectangles, follow badges, spatial focus
+styling, arrow routing, activation revalidation, saved-view recovery, resize
+recovery, and async-state recovery, so the shell never keeps a second geometry
+model. Security Research is the richer table/action
 reference: one shared layout supplies its mouse targets, research tabs, chart,
 Form 4 and filing rows, peer links, refresh action, and responsive follow/spatial
 rectangles. Activation rechecks the active view plus the symbol or accession

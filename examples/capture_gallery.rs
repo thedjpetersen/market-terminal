@@ -34,6 +34,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     capture(&output, &font, "overview", |_| {})?;
     capture(&output, &font, "monitor", |app| command(app, "MON MACRO"))?;
+    capture(&output, &font, "desk", |app| {
+        command(app, "DESK LAYOUT 60 65")
+    })?;
     capture(&output, &font, "charting", |app| {
         command(app, "CHART MSFT COMPARE SPY,QQQ 6M SMA20 NORMALIZE");
         app.handle_key(key(KeyCode::Char(',')));
