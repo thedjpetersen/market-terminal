@@ -298,11 +298,11 @@
       "capability": "Options chain, Greeks, IV, OI, flow, and strategies",
       "owner": "Derivatives",
       "priority": "P5",
-      "market_status": "missing",
+      "market_status": "partial",
       "upstream_maturity": "substantive",
       "reference_files": ["backend/fno/services/option_chain_fetcher.py", "backend/fno/services/greeks_engine.py", "backend/fno/services/strategy_builder.py", "frontend/tests/e2e/fno-option-chain.spec.ts", "frontend/tests/e2e/options-flow.spec.ts"],
       "acceptance_tests": ["OPTION-CONTRACT-IDENTITY", "GREEKS-REFERENCE-CASES", "CHAIN-PARTIAL-ENTITLEMENT", "STRATEGY-PAYOFF"],
-      "gap": "Add contract identity, quote quality, chains, transparent model/provider Greeks, IV term/skew, OI/PCR/flow, expiries, and multi-leg payoff/scenario tools with multipliers and caveats."
+      "gap": "The first bounded slice now provides a versioned European Black-Scholes reference model, independently checked price/Greeks, explicit conventions, provider separation, multipliers, deterministic spot/volatility scenarios, and typed recovery. Add licensed chain contract identity/quality/degraded states, provider IV/Greeks, term/skew, OI/PCR/flow, calendars, early exercise/dividends, and multi-leg payoff tools."
     },
     {
       "id": "OTUI-027",

@@ -20,7 +20,7 @@
       "disposition": "rendered",
       "scenario": "help-directory",
       "reason": "The live Help catalog renders every exact shell and workspace command.",
-      "semantic_hash": "54aebbd840a66d91"
+      "semantic_hash": "612d911ff7b85923"
     },
     {
       "id": "otui-001-empty",

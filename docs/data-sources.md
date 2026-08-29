@@ -30,6 +30,12 @@ the exact source and quality labels and derives a content-addressed input versio
 it does not replace missing history, join providers, infer corporate actions, or
 send any order.
 
+Options currently consumes no provider data. Its spot, strike, calendar days,
+annual volatility, continuously compounded rates/dividends, right, and multiplier
+are explicit user inputs. The terminal labels every output as model-only and does
+not infer bid/ask, provider IV/Greeks, OI, volume, chain membership, venue, or
+calendar state. Saved views retain only those typed inputs and presentation state.
+
 ## Local shell, navigation, and presentation state
 
 - **Surfaces:** command routing, unified discovery and Help, workspace/panel

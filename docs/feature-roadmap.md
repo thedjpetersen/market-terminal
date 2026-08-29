@@ -311,6 +311,14 @@ move to its own crate later without changing its public vocabulary.
   recovery, spatial/follow actions, three-size rendering, adversarial
   no-look-ahead/cost/reproduction tests, and a 5,000-bar p95 gate lock the slice.
   It remains explicitly research-only with no order path.
+- **Complete:** first bounded P5 Options slice. `OPTIONS` owns validated explicit
+  spot/strike/expiry/volatility/rate/dividend/right/multiplier inputs, a versioned
+  European Black-Scholes reference model, independently checked price and Greeks,
+  explicit expiry behavior, put-call parity evidence, a deterministic 5×3
+  spot/volatility scenario grid, input digests, typed saved views, and responsive
+  keyboard/mouse/spatial/follow interaction. Model and provider fields are
+  separated fail-closed: no chain, quote, provider IV/Greeks, OI, flow, venue,
+  calendar, or order is fabricated.
 - **Next:** add P2/P3 hotlists/breadth/heatmaps, Screening
   arithmetic and whole-result promotion, factor research, and compound alert
   families. Provider availability
@@ -401,11 +409,11 @@ continues.
 | Security Hub and equity research | Partial | Profile, financials, filings, SEC Form 4, news, basic peer/estimate states | Add statements/trends, estimates/revisions, earnings, ESG, corporate actions, dividends, shareholding history, richer peers, and multi-market identity. |
 | Advanced screener and factor dashboard | Partial | Production `SCREEN` workspace over versioned point-in-time Watchlist/Market Data universes, bounded nested `AND`/`OR`/`NOT` AST, dimension-checked thresholds, tri-state fail-closed nulls, deterministic ranking/ties, coverage/exclusion/why-ranked evidence, crash-safe migration-safe definitions, configurable 1-256-frame immutable history with verified exact replay, health audit, manifest-first repair, saved views, and Security/Chart/Monitor/Spreadsheet routing | Add arithmetic formula nodes and broader field dimensions, whole-result atomic promotion, fundamentals and factors, neutralized composites, and factor history/IC/turnover. |
 | Tool-using AI research | Partial | Codex/OpenRouter chat, validated UI intents, bounded article reading | Add screen-aware read tools, research retrieval, cited artifacts, provider routing, debate, bounded strategy research, and local-model fallback. |
-| Futures and options suite | Missing | Stage 3 domain placeholder only | Add chains, Greeks/IV, OI/PCR/flow, strategies, futures basis/curve, expiry calendar, scenario tools, and delayed/entitled data states. |
+| Futures and options suite | Partial | Production `OPTIONS` workspace with a versioned European Black-Scholes reference model, independently checked price/Greeks, explicit conventions and provider separation, contract multipliers, typed recovery, and deterministic spot/volatility scenarios | Add licensed chains and contract identity, provider IV/Greeks, OI/PCR/flow, term/skew/heatmaps, early-exercise/dividend models, multi-leg payoff tools, futures basis/curve, expiry calendars, and stale/partial/entitlement states. |
 | Portfolio accounting and attribution | Partial | Exact positions, cash/activity, valuations/TWR, lots, realized gains, fills, single/multi-period attribution | Add portfolio CRUD/transaction truth, allocation views, benchmark history, dividends, multi-portfolio comparison, and rebalance evidence. |
 | Risk, stress, and correlation | Partial | Concentration and explicit non-cash shock plus flow-adjusted historical/EWMA volatility, drawdown/recovery, historical/Gaussian VaR/CVaR, Sharpe/Sortino, beta, correlation, tracking error, and information ratio over versioned per-currency valuations | Add marginal/component risk, rolling correlation, PCA/factor exposure, scenario library, Monte Carlo, clustering, and cross-asset dependency views. |
 | Paper trading, journal, TCA, position sizing | Missing | Verified broker executions are strictly read-only | Add visibly simulated orders/fills, sizing, journal and behavior analytics, execution-cost models, TCA, approvals, and immutable paper audit state. Live routing remains excluded. |
-| Backtesting, Model Lab, robustness | Missing | Deterministic market replay is infrastructure, not a strategy backtester | Add look-ahead-safe engine, costs/fills, templates, walk-forward and parameter sweeps, robustness, experiment tracking, tear sheets, and governance. |
+| Backtesting, Model Lab, robustness | Partial | Production `BACKTEST` workspace with close-to-next-open timing, immutable integer inputs, explicit costs, fill/equity/drawdown/turnover reconciliation, hashes, and typed recovery | Add calendars, corporate actions, universes, richer lifecycle/fills/costs, templates, persistence/export, benchmarks, walk-forward and parameter sweeps, robustness, experiment tracking, tear sheets, and governance. |
 | Portfolio Lab and optimizer | Missing | Performance/attribution calculators cover realized portfolios only | Add portfolio backtests, weighting/rebalancing, strategy blends, optimizer constraints, correlation, attribution, and reproducible run comparison. |
 | Cockpit and intelligence timeline | Partial | Overview composes positions and news | Add ranked portfolio risks, catalysts, alerts, movers and model signals plus a source-linked chronological event timeline. |
 | Cross-asset and macro workspaces | Missing | Markets explicitly marks unsupported datasets unavailable | Add FX, commodities, crypto, ETF, mutual-fund, bond, yield-curve, economics, and sector-rotation contexts through licensed adapters. |
@@ -921,6 +929,14 @@ than a universal instrument bag.
   contract identity, quote quality, and venue calendars. Add Black-Scholes as an
   initial transparent reference model, then dividends/rates/early-exercise models
   only with independent cases; show model Greeks separately from provider Greeks.
+  - **Delivered foundation:** `OPTIONS` provides the initial transparent European
+    Black-Scholes model over bounded explicit inputs, independently referenced
+    price/Greeks and put-call parity, expiry semantics, multiplier-preserving
+    scenarios, input digest, typed recovery, and conspicuous model-only/provider-
+    absent disclosure.
+  - **Still required:** licensed chains and contract identity, provider quality
+    and degraded states, venue calendars, provider Greeks/IV, early exercise and
+    discrete dividends, volatility surfaces, OI/flow, and multi-leg strategies.
 - Add IV term structure/skew, Greeks, OI build-up, PCR, unusual flow, strike
   heatmaps, expiry/roll calendar, and a multi-leg strategy builder with payoff,
   scenario, max gain/loss caveats, breakevens, net premium, and contract multipliers.
@@ -1099,6 +1115,7 @@ not an automatic expansion of this commitment.
 | Portfolio & Risk | books, positions, lots, P&L, attribution, exposures, scenarios | Instrument Master, Market Data, pricing/risk engines | `PositionChanged`, `RiskCalculated` |
 | Screening & Analytics | universes, filters, rankings, comparables, reusable studies | Instrument Master, Market Data, fundamentals | saved screens and result sets |
 | Backtesting | immutable research inputs, timing, simulated ledger, metrics, reproducible run artifacts | point-in-time history and later paper-execution contracts | versioned research run artifacts |
+| Options | explicit contract/model inputs, transparent reference pricing, model Greeks, deterministic scenarios | future derivatives chain/rate/calendar ports | versioned model analytics and research navigation intents |
 | Alerts | alert rules, schedules, delivery state, acknowledgement | events exposed by other contexts, notification adapters | `AlertTriggered` |
 | Trading & Orders | order intent, validation, routing, fills, allocations | Instrument Master, Market Data, Portfolio, broker adapters | `OrderStateChanged`, `FillReceived` |
 | Collaboration & Export | notes, snapshots, reports, CSV/JSON export | read models from other contexts | exported artifact metadata |

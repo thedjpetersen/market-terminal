@@ -8,6 +8,7 @@ pub mod launchpad;
 pub mod market_data;
 pub mod markets;
 pub mod news;
+pub mod options;
 pub mod overview;
 pub mod persistence;
 pub mod portfolio;

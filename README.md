@@ -164,6 +164,16 @@ This is research replay—not paper or live trading—and does not model corpora
 actions, calendars, borrow, leverage, partial fills, impact, dividends, or taxes.
 See [the Backtesting contract](docs/backtesting.md).
 
+`OPTIONS`/`OPT` opens the first P5 derivatives slice: a transparent European
+Black-Scholes reference model over explicit user inputs. For example,
+`OPTIONS AAPL CALL 190 200 30 25 5 0 100` prices a 30-calendar-day call with
+25% annual volatility, 5% continuous rate, no dividend yield, and a 100-share
+multiplier. The workspace separates price, intrinsic/time value, analytic Greeks,
+and a deterministic 5×3 spot/volatility scenario grid; model version, ACT/365
+convention, units, multiplier, disclosures, and an input digest remain visible.
+It intentionally loads no chain, quote, provider IV, OI, volume, or provider
+Greeks and cannot submit an order. See [the Options contract](docs/options.md).
+
 `DESK` (aliases `SPLIT` and `DASHBOARD`) opens the combined workspace adapted
 from `alphai-tui`. Press `Tab`/`Shift+Tab` or `1`/`2`/`3` to focus Monitor,
 Chart, or News. Clicking inside a pane focuses it and sends subsequent keys to
@@ -1077,6 +1087,7 @@ src/
 │   ├── watchlist/   monitor model + catalog port + workspace
 │   ├── charting/    chart specification + history port + workspace
 │   ├── backtesting/ immutable replay inputs + engine + audit workspace
+│   ├── options/     European reference model + Greeks + scenario workspace
 │   ├── chat/        IRC domain + gateway port + workspace
 │   ├── spreadsheet/ workbook domain + application + presentation
 │   └── assistant/   AI conversation domain + provider port + workspace

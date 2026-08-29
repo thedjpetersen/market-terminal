@@ -171,6 +171,14 @@ bootstrap ──▶ app kernel
   stale generations; failures retain a clearly labeled last valid artifact.
   Saved views keep bounded research configuration, never bars or results. See
   `docs/backtesting.md`.
+  Options is a separate P5 bounded context with no provider dependency in its
+  first slice. Its pure domain validates typed contract/model inputs, evaluates
+  a versioned European Black-Scholes reference model, publishes explicitly
+  scaled Greeks and deterministic spot/volatility scenarios, and hashes all
+  conventions-bearing inputs. The workspace owns parsing, rendering, navigation,
+  Chart intent, and typed saved-view recovery. No common equity field bag, Market
+  Data adapter, chain quote, or order path crosses this boundary. See
+  `docs/options.md`.
 - `foundation` contains only stable, narrowly shared value objects. Canonical
   instrument identity lives here; provider quote schemas and feature state do
   not.

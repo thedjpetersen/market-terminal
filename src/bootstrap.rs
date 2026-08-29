@@ -13,6 +13,7 @@ use crate::{
         market_data::MarketDataQuery,
         markets::{MarketsQuery, MarketsWorkspace},
         news::{NewsArticleOpener, NewsFeed, NewsWorkspace},
+        options::OptionsWorkspace,
         overview::{OverviewQuery, OverviewWorkspace, ID as OVERVIEW},
         portfolio::{PortfolioRepository, PortfolioWorkspace},
         risk::{RiskQuery, RiskWorkspace},
@@ -197,6 +198,7 @@ fn build_app(providers: AppProviders) -> App {
                 "portfolio".to_owned(),
                 "risk".to_owned(),
                 "news".to_owned(),
+                "options".to_owned(),
                 "spreadsheet".to_owned(),
             ],
         )),
@@ -238,6 +240,7 @@ fn build_app(providers: AppProviders) -> App {
             Some(opener) => NewsWorkspace::with_article_opener(news_query, opener),
             None => NewsWorkspace::new(news_query),
         }),
+        Box::new(OptionsWorkspace::new()),
         Box::new(spreadsheet_workspace),
     ]);
     App::new(workspaces, OVERVIEW)

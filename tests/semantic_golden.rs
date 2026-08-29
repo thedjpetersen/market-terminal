@@ -49,14 +49,19 @@ const GOLDENS: &[Golden] = &[
         hashes: [0x002fb95dfe8fd5db, 0x96ce681b90918f31, 0x39c6cbecb8897a07],
     },
     Golden {
+        name: "options-model",
+        prepare: prepare_options,
+        hashes: [0x6c109a0e38d556d9, 0x37db2f652388beb6, 0xb11a2e22c5e46443],
+    },
+    Golden {
         name: "help",
         prepare: prepare_help,
-        hashes: [0x38259c5200c969bd, 0x716e8c24f0f398f4, 0xf618b42208d90fcd],
+        hashes: [0xdc20b3b2561bd788, 0xd8274e10c2438e8f, 0x8794d4b70fe3273e],
     },
     Golden {
         name: "workspace-preset-preview",
         prepare: prepare_workspace_preset_preview,
-        hashes: [0x0c92cc352dd16d9a, 0x9d2329ccf8489e86, 0x74771149581602b1],
+        hashes: [0x5c1bc4ed83e48e72, 0x121ea33401b3f1fd, 0x20656756a68b45d9],
     },
     Golden {
         name: "launchpad",
@@ -420,6 +425,10 @@ fn prepare_screening(app: &mut App) {
         std::thread::sleep(std::time::Duration::from_millis(1));
         app.advance_tick();
     }
+}
+
+fn prepare_options(app: &mut App) {
+    dispatch(app, "OPTIONS AAPL CALL 190 200 30 25 5 0 100");
 }
 
 fn prepare_help(app: &mut App) {

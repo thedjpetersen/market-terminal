@@ -5,6 +5,7 @@ use market_terminal::{
     bootstrap,
     features::{
         backtesting::{run_backtest, BacktestBar, BacktestConfig},
+        options::{price_option, OptionModelInput},
         screening::{
             evaluate_screen, universe_content_digest, Comparison, ScreenClause, ScreenDefinition,
             ScreenExpression, ScreenField, ScreenSortDirection, UniverseMember, UniverseSnapshot,
@@ -37,6 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         visible_action_routing_case()?,
         responsive_theme_render_case()?,
         backtest_replay_case()?,
+        option_scenario_case()?,
         screening_evaluation_case()?,
         spreadsheet_edit_case()?,
     ];
@@ -55,6 +57,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+fn option_scenario_case() -> Result<CaseResult, Box<dyn Error>> {
+    let input = OptionModelInput::default();
+    let expected = price_option(&input)?.input_digest;
+    let p95_ms = measure(|_| {
+        let analytics = price_option(&input)?;
+        if analytics.input_digest != expected || analytics.scenarios.len() != 15 {
+            return Err("option model artifact changed".into());
+        }
+        Ok(())
+    })?;
+    Ok(CaseResult {
+        name: "option_scenario_grid",
+        p95_ms,
+        context: "black_scholes=true scenarios=15 digest=verified".to_owned(),
+    })
 }
 
 fn backtest_replay_case() -> Result<CaseResult, Box<dyn Error>> {
