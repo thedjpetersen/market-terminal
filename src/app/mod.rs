@@ -2318,6 +2318,7 @@ mod tests {
             portfolio::ID as PORTFOLIO,
             security::ID as SECURITY,
             spreadsheet::ID as SPREADSHEET,
+            watchlist::ID as MONITOR,
         },
     };
 
@@ -4236,6 +4237,59 @@ mod tests {
 
         assert_eq!(restarted.active_workspace(), NEWS);
         assert_eq!(restarted.workspaces.capture_view(NEWS).unwrap(), expected);
+        assert!(restarted
+            .command_feedback()
+            .is_some_and(|message| message.contains("VIEW RESTORED") && message.contains("EXACT")));
+    }
+
+    #[test]
+    fn typed_monitor_view_survives_restart_with_table_identity() {
+        let session = Arc::new(MemorySessionRepository::default());
+        let documents = Arc::new(MemoryFeatureRepository::default());
+        let mut app = bootstrap::demo_app()
+            .with_saved_view_repository(documents.clone())
+            .with_session_repository(session.clone());
+        app.settings_visible = false;
+        app.settings_first_run = false;
+
+        app.command = "MON MOVERS".to_owned();
+        app.execute_command();
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SHIFT));
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.command = "VIEW SAVE Movers Monitor".to_owned();
+        app.execute_command();
+
+        let expected = app.saved_views.views[0].workspace_state.clone();
+        assert_eq!(expected.workspace, MONITOR.as_str());
+        assert_eq!(
+            expected.fields.get("watchlist_id"),
+            Some(&ViewValue::Text("movers".to_owned()))
+        );
+        assert_eq!(
+            expected.fields.get("sort_field"),
+            Some(&ViewValue::Text("volume".to_owned()))
+        );
+        assert_eq!(
+            expected.fields.get("sort_direction"),
+            Some(&ViewValue::Text("ascending".to_owned()))
+        );
+        assert!(expected.fields.contains_key("selected_instrument_id"));
+
+        let mut restarted = bootstrap::demo_app()
+            .with_saved_view_repository(documents)
+            .with_session_repository(session);
+        restarted.settings_visible = false;
+        restarted.settings_first_run = false;
+        restarted.command = "VIEW RESTORE Movers Monitor".to_owned();
+        restarted.execute_command();
+
+        assert_eq!(restarted.active_workspace(), MONITOR);
+        assert_eq!(
+            restarted.workspaces.capture_view(MONITOR).unwrap(),
+            expected
+        );
         assert!(restarted
             .command_feedback()
             .is_some_and(|message| message.contains("VIEW RESTORED") && message.contains("EXACT")));

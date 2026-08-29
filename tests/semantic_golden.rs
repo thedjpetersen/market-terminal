@@ -2,11 +2,18 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use market_terminal::{
     app::{CommandInvocation, Workspace, WorkspaceRegistry},
     bootstrap,
-    features::news::{Headline, NewsFeed, NewsSnapshot, NewsWorkspace},
     features::overview::{
         LiveOverviewSnapshot, OverviewHealthState, OverviewPriority, OverviewQuery,
         OverviewSavedWork, OverviewSnapshot, OverviewSourceHealth, OverviewWorkspace,
         ID as OVERVIEW,
+    },
+    features::{
+        market_data::{
+            CanonicalInstrumentId, HistoryRequest, MarketDataError, MarketDataQuery, PriceBar,
+            QuoteSnapshot,
+        },
+        news::{Headline, NewsFeed, NewsSnapshot, NewsWorkspace},
+        watchlist::{WatchlistCatalog, WatchlistDefinition, WatchlistItem, WatchlistWorkspace},
     },
     runtime, App,
 };
@@ -155,6 +162,19 @@ fn filtered_news_events_match_semantic_goldens_at_standard_sizes() {
     );
 }
 
+#[test]
+fn recoverable_monitor_matches_semantic_goldens_at_standard_sizes() {
+    let expected = [0x7af12af6e074bac4, 0xf5eab5bf2b9b5b3f, 0x06d148df09f41ad2];
+    let actual = SIZES.map(|(width, height)| {
+        let workspace = recoverable_monitor_workspace();
+        render_monitor_hash(&workspace, width, height)
+    });
+    assert_eq!(
+        actual, expected,
+        "review the recoverable Monitor frame before updating hashes"
+    );
+}
+
 fn render_hash(prepare: fn(&mut App), width: u16, height: u16) -> u64 {
     let mut app = bootstrap::demo_app();
     prepare(&mut app);
@@ -178,6 +198,69 @@ fn render_news_hash(workspace: &NewsWorkspace, width: u16, height: u16) -> u64 {
         .draw(|frame| workspace.render(frame, frame.area()))
         .expect("render filtered News golden frame");
     semantic_hash(terminal.backend().buffer())
+}
+
+fn render_monitor_hash(workspace: &WatchlistWorkspace, width: u16, height: u16) -> u64 {
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| workspace.render(frame, frame.area()))
+        .expect("render recoverable Monitor golden frame");
+    semantic_hash(terminal.backend().buffer())
+}
+
+fn recoverable_monitor_workspace() -> WatchlistWorkspace {
+    let mut workspace =
+        WatchlistWorkspace::new(Arc::new(GoldenMarketData), Arc::new(GoldenWatchlistCatalog));
+    workspace.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+    workspace.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SHIFT));
+    workspace.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+    workspace.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    workspace
+}
+
+struct GoldenMarketData;
+
+impl MarketDataQuery for GoldenMarketData {
+    fn quote_snapshots(
+        &self,
+        _instruments: &[CanonicalInstrumentId],
+    ) -> Result<Vec<QuoteSnapshot>, MarketDataError> {
+        Err(MarketDataError::TemporarilyUnavailable(
+            "deterministic golden".to_owned(),
+        ))
+    }
+
+    fn price_history(&self, _request: &HistoryRequest) -> Result<Vec<PriceBar>, MarketDataError> {
+        Ok(Vec::new())
+    }
+}
+
+struct GoldenWatchlistCatalog;
+
+impl WatchlistCatalog for GoldenWatchlistCatalog {
+    fn load_watchlist(&self, name: Option<&str>) -> Option<WatchlistDefinition> {
+        let name = name.unwrap_or("MOVERS");
+        name.eq_ignore_ascii_case("MOVERS").then(|| {
+            WatchlistDefinition::new(
+                "movers",
+                "RECOVERABLE MOVERS",
+                ["NVDA", "META", "AAPL", "MSFT"]
+                    .into_iter()
+                    .map(|symbol| {
+                        WatchlistItem::new(
+                            CanonicalInstrumentId::new(format!(
+                                "us:xnas:{}",
+                                symbol.to_ascii_lowercase()
+                            )),
+                            symbol,
+                            symbol,
+                        )
+                    })
+                    .collect(),
+            )
+        })
+    }
 }
 
 fn semantic_hash(buffer: &ratatui::buffer::Buffer) -> u64 {

@@ -5,6 +5,7 @@
 //! Market Terminal's typed market-data ports; see `THIRD_PARTY_NOTICES.md`.
 
 use std::{
+    cell::Cell as StateCell,
     cmp::Ordering,
     collections::{HashMap, VecDeque},
     sync::{
@@ -24,7 +25,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppIntent, CommandInvocation, Workspace, WorkspaceAction, WorkspaceDescriptor},
+    app::{
+        AppIntent, CommandInvocation, ViewRestoreReport, ViewValue, Workspace, WorkspaceAction,
+        WorkspaceDescriptor, WorkspaceViewState,
+    },
     features::market_data::{
         DataQuality, MarketDataError, MarketDataQuery, Price, Quantity, QuoteSnapshot,
         QuoteSubscription, QuoteSubscriptionRequest, SubscriptionMetrics,
@@ -112,6 +116,23 @@ impl ColumnPreset {
             Self::Compact => "COMPACT",
         }
     }
+
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Configured => "configured",
+            Self::Trading => "trading",
+            Self::Compact => "compact",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "configured" => Some(Self::Configured),
+            "trading" => Some(Self::Trading),
+            "compact" => Some(Self::Compact),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +165,8 @@ pub struct WatchlistWorkspace {
     definition: WatchlistDefinition,
     rows: Vec<MonitorRow>,
     selected: usize,
+    viewport_top: StateCell<usize>,
+    viewport_rows: StateCell<usize>,
     column_preset: ColumnPreset,
     status: String,
     subscription: Option<Box<dyn QuoteSubscription>>,
@@ -199,6 +222,8 @@ impl WatchlistWorkspace {
             definition,
             rows: Vec::new(),
             selected: 0,
+            viewport_top: StateCell::new(0),
+            viewport_rows: StateCell::new(0),
             column_preset: ColumnPreset::Configured,
             status: String::new(),
             subscription: None,
@@ -215,6 +240,7 @@ impl WatchlistWorkspace {
         if let Some(definition) = self.catalog.load_watchlist(name) {
             self.definition = definition;
             self.selected = 0;
+            self.viewport_top.set(0);
             self.column_preset = ColumnPreset::Configured;
             self.reset_rows();
             self.refresh();
@@ -286,8 +312,7 @@ impl WatchlistWorkspace {
                             apply_quote(row, quote.clone());
                         }
                     }
-                    self.sort_rows();
-                    self.selected = self.selected.min(self.rows.len().saturating_sub(1));
+                    self.sort_rows_preserving_view();
                     self.status = format!("{} QUOTES LOADED", self.rows.len());
                 }
                 Err(error) => {
@@ -343,7 +368,7 @@ impl WatchlistWorkspace {
                         apply_quote(row, snapshot.clone());
                     }
                 }
-                self.sort_rows();
+                self.sort_rows_preserving_view();
                 self.status = stream_status(id.value(), metrics);
             }
             Err(MarketDataError::Cancelled) => {
@@ -365,18 +390,21 @@ impl WatchlistWorkspace {
             .selected
             .saturating_add_signed(delta)
             .min(self.rows.len() - 1);
+        self.reveal_selection();
     }
 
     fn cycle_sort(&mut self) {
         self.definition.sort.field = self.definition.sort.field.next();
         self.sort_rows();
         self.selected = 0;
+        self.viewport_top.set(0);
     }
 
     fn toggle_sort_direction(&mut self) {
         self.definition.sort.direction = self.definition.sort.direction.toggled();
         self.sort_rows();
         self.selected = 0;
+        self.viewport_top.set(0);
     }
 
     fn sort_rows(&mut self) {
@@ -390,6 +418,64 @@ impl WatchlistWorkspace {
                 SortDirection::Descending => order.reverse(),
             }
         });
+    }
+
+    fn sort_rows_preserving_view(&mut self) {
+        let selected = self
+            .rows
+            .get(self.selected)
+            .map(|row| row.item.instrument_id.clone());
+        let top = self
+            .rows
+            .get(self.viewport_top.get())
+            .map(|row| row.item.instrument_id.clone());
+        self.sort_rows();
+        if let Some(selected) = selected {
+            self.selected = self
+                .row_index(&selected)
+                .unwrap_or_else(|| self.selected.min(self.rows.len().saturating_sub(1)));
+        } else {
+            self.selected = self.selected.min(self.rows.len().saturating_sub(1));
+        }
+        if let Some(top) = top {
+            self.viewport_top
+                .set(self.row_index(&top).unwrap_or(self.viewport_top.get()));
+        }
+        self.reveal_selection();
+    }
+
+    fn row_index(&self, instrument_id: &crate::foundation::InstrumentId) -> Option<usize> {
+        self.rows
+            .iter()
+            .position(|row| &row.item.instrument_id == instrument_id)
+    }
+
+    fn reveal_selection(&self) {
+        let capacity = self.viewport_rows.get();
+        if capacity == 0 {
+            return;
+        }
+        let mut top = self.viewport_top.get();
+        if self.selected < top {
+            top = self.selected;
+        } else if self.selected >= top.saturating_add(capacity) {
+            top = self.selected.saturating_add(1).saturating_sub(capacity);
+        }
+        self.viewport_top.set(top);
+        self.clamp_viewport();
+    }
+
+    fn clamp_viewport(&self) {
+        let capacity = self.viewport_rows.get();
+        let maximum = self.rows.len().saturating_sub(capacity.max(1));
+        self.viewport_top.set(self.viewport_top.get().min(maximum));
+    }
+
+    fn update_viewport(&self, table: Rect) -> (usize, usize) {
+        let capacity = usize::from(table.height.saturating_sub(4));
+        self.viewport_rows.set(capacity);
+        self.reveal_selection();
+        (self.viewport_top.get(), capacity)
     }
 
     fn visible_columns(&self, available_width: u16) -> Vec<MonitorColumn> {
@@ -538,7 +624,9 @@ impl Workspace for WatchlistWorkspace {
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
         let areas = monitor_areas(area);
-        if let Some(index) = table_row_at(event, areas.table, self.rows.len()) {
+        let (viewport_top, viewport_rows) = self.update_viewport(areas.table);
+        if let Some(index) = table_row_at(event, areas.table, viewport_rows.min(self.rows.len())) {
+            let index = viewport_top.saturating_add(index);
             self.selected = index;
             return true;
         }
@@ -558,22 +646,29 @@ impl Workspace for WatchlistWorkspace {
 
     fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
         let areas = monitor_areas(area);
-        let visible_rows = usize::from(areas.table.height.saturating_sub(4)).min(self.rows.len());
-        let preferred_row = (self.selected < visible_rows)
-            .then_some(self.selected)
-            .or_else(|| (visible_rows > 0).then_some(0));
+        let (viewport_top, viewport_rows) = self.update_viewport(areas.table);
+        let visible_rows = viewport_rows.min(self.rows.len().saturating_sub(viewport_top));
+        let preferred_row = (self.selected >= viewport_top
+            && self.selected < viewport_top.saturating_add(visible_rows))
+        .then_some(self.selected)
+        .or_else(|| (visible_rows > 0).then_some(viewport_top));
         let mut actions = self
             .rows
             .iter()
+            .skip(viewport_top)
             .take(visible_rows)
             .enumerate()
-            .map(|(index, row)| {
+            .map(|(ordinal, row)| {
+                let index = viewport_top.saturating_add(ordinal);
                 let mut action = WorkspaceAction::new(
                     format!("row:{index}:{}", row.item.instrument_id.as_str()),
                     format!("Open {} security research", row.item.symbol),
                     Rect::new(
                         areas.table.x.saturating_add(1),
-                        areas.table.y.saturating_add(3 + index as u16),
+                        areas
+                            .table
+                            .y
+                            .saturating_add(3 + u16::try_from(ordinal).unwrap_or(u16::MAX)),
                         areas.table.width.saturating_sub(2),
                         1,
                     ),
@@ -646,6 +741,7 @@ impl Workspace for WatchlistWorkspace {
 
     fn render(&self, frame: &mut Frame, area: Rect) {
         let areas = monitor_areas(area);
+        let (viewport_top, viewport_rows) = self.update_viewport(areas.table);
         let quality_counts = quality_counts(&self.rows);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
@@ -675,19 +771,25 @@ impl Workspace for WatchlistWorkspace {
         let header = Row::new(columns.iter().map(|column| column.label()))
             .style(Style::new().fg(AMBER.into()).bold())
             .bottom_margin(1);
-        let rows = self.rows.iter().enumerate().map(|(index, row)| {
-            let selected = index == self.selected;
-            Row::new(
-                columns
-                    .iter()
-                    .map(|column| render_cell(row, *column, selected)),
-            )
-            .style(if selected {
-                Style::new().bg(CYAN.into()).fg(BG.into()).bold()
-            } else {
-                Style::new()
-            })
-        });
+        let rows = self
+            .rows
+            .iter()
+            .enumerate()
+            .skip(viewport_top)
+            .take(viewport_rows)
+            .map(|(index, row)| {
+                let selected = index == self.selected;
+                Row::new(
+                    columns
+                        .iter()
+                        .map(|column| render_cell(row, *column, selected)),
+                )
+                .style(if selected {
+                    Style::new().bg(CYAN.into()).fg(BG.into()).bold()
+                } else {
+                    Style::new()
+                })
+            });
         frame.render_widget(
             Table::new(rows, widths)
                 .header(header)
@@ -703,6 +805,345 @@ impl Workspace for WatchlistWorkspace {
         }
         frame.render_widget(Paragraph::new(Line::from(footer)), areas.footer);
     }
+
+    fn capture_view(&self) -> WorkspaceViewState {
+        let mut state = WorkspaceViewState::new(ID.as_str())
+            .with_field("watchlist_id", ViewValue::Text(self.definition.id.clone()))
+            .with_field(
+                "sort_field",
+                ViewValue::Text(sort_field_key(self.definition.sort.field).to_owned()),
+            )
+            .with_field(
+                "sort_direction",
+                ViewValue::Text(sort_direction_key(self.definition.sort.direction).to_owned()),
+            )
+            .with_field(
+                "column_preset",
+                ViewValue::Text(self.column_preset.key().to_owned()),
+            )
+            .with_field(
+                "configured_columns",
+                ViewValue::TextList(
+                    self.definition
+                        .visible_columns
+                        .iter()
+                        .map(|column| monitor_column_key(*column).to_owned())
+                        .collect(),
+                ),
+            );
+        if let Some(row) = self.rows.get(self.selected) {
+            state = state.with_field(
+                "selected_instrument_id",
+                ViewValue::Text(row.item.instrument_id.as_str().to_owned()),
+            );
+        }
+        if let Some(row) = self.rows.get(self.viewport_top.get()) {
+            state = state.with_field(
+                "top_instrument_id",
+                ViewValue::Text(row.item.instrument_id.as_str().to_owned()),
+            );
+        }
+        state
+    }
+
+    fn restore_view(&mut self, state: &WorkspaceViewState) -> ViewRestoreReport {
+        if !state.workspace.eq_ignore_ascii_case(ID.as_str()) {
+            return ViewRestoreReport::warning(format!(
+                "saved state belongs to {}, not monitor",
+                state.workspace
+            ));
+        }
+
+        let mut report = ViewRestoreReport::default();
+        if let Some(value) = state.fields.get("watchlist_id") {
+            match value.as_text().filter(|value| valid_view_token(value, 64)) {
+                Some(id) if id.eq_ignore_ascii_case(&self.definition.id) => {
+                    report.restored_fields += 1;
+                }
+                Some(id) => match self.catalog.load_watchlist(Some(id)) {
+                    Some(definition) => {
+                        self.definition = definition;
+                        self.reset_rows();
+                        self.refresh();
+                        self.start_subscription();
+                        report.restored_fields += 1;
+                    }
+                    None => {
+                        report.skipped_fields += 1;
+                        report
+                            .warnings
+                            .push("saved monitor watchlist is unavailable".to_owned());
+                    }
+                },
+                None => {
+                    report.skipped_fields += 1;
+                    report
+                        .warnings
+                        .push("saved monitor watchlist identity is invalid".to_owned());
+                }
+            }
+        }
+
+        restore_sort_field(state, &mut self.definition.sort.field, &mut report);
+        restore_sort_direction(state, &mut self.definition.sort.direction, &mut report);
+        restore_columns(state, &mut self.definition.visible_columns, &mut report);
+        if let Some(value) = state.fields.get("column_preset") {
+            match value.as_text().and_then(ColumnPreset::parse) {
+                Some(preset) => {
+                    self.column_preset = preset;
+                    report.restored_fields += 1;
+                }
+                None => {
+                    report.skipped_fields += 1;
+                    report
+                        .warnings
+                        .push("saved monitor column preset is unavailable".to_owned());
+                }
+            }
+        }
+
+        self.sort_rows();
+        self.selected = 0;
+        self.viewport_top.set(0);
+        restore_row_identity(
+            state,
+            "selected_instrument_id",
+            "selected row",
+            &self.rows,
+            &mut self.selected,
+            &mut report,
+        );
+        let mut top = 0;
+        restore_row_identity(
+            state,
+            "top_instrument_id",
+            "viewport anchor",
+            &self.rows,
+            &mut top,
+            &mut report,
+        );
+        self.viewport_top.set(top);
+        self.clamp_viewport();
+
+        const KNOWN_FIELDS: [&str; 7] = [
+            "watchlist_id",
+            "sort_field",
+            "sort_direction",
+            "column_preset",
+            "configured_columns",
+            "selected_instrument_id",
+            "top_instrument_id",
+        ];
+        let unknown = state
+            .fields
+            .keys()
+            .filter(|field| !KNOWN_FIELDS.contains(&field.as_str()))
+            .count();
+        if unknown > 0 {
+            report.skipped_fields += unknown;
+            report
+                .warnings
+                .push(format!("ignored {unknown} future monitor field(s)"));
+        }
+        if !state.children.is_empty() {
+            report.skipped_fields += state.children.len();
+            report.warnings.push(format!(
+                "ignored {} future monitor child state(s)",
+                state.children.len()
+            ));
+        }
+        report
+    }
+}
+
+fn sort_field_key(field: SortField) -> &'static str {
+    match field {
+        SortField::Symbol => "symbol",
+        SortField::Last => "last",
+        SortField::ChangePercent => "change_percent",
+        SortField::Volume => "volume",
+    }
+}
+
+fn parse_sort_field(value: &str) -> Option<SortField> {
+    match value {
+        "symbol" => Some(SortField::Symbol),
+        "last" => Some(SortField::Last),
+        "change_percent" => Some(SortField::ChangePercent),
+        "volume" => Some(SortField::Volume),
+        _ => None,
+    }
+}
+
+fn sort_direction_key(direction: SortDirection) -> &'static str {
+    match direction {
+        SortDirection::Ascending => "ascending",
+        SortDirection::Descending => "descending",
+    }
+}
+
+fn parse_sort_direction(value: &str) -> Option<SortDirection> {
+    match value {
+        "ascending" => Some(SortDirection::Ascending),
+        "descending" => Some(SortDirection::Descending),
+        _ => None,
+    }
+}
+
+fn monitor_column_key(column: MonitorColumn) -> &'static str {
+    match column {
+        MonitorColumn::Symbol => "symbol",
+        MonitorColumn::Last => "last",
+        MonitorColumn::Change => "change",
+        MonitorColumn::ChangePercent => "change_percent",
+        MonitorColumn::Bid => "bid",
+        MonitorColumn::Ask => "ask",
+        MonitorColumn::Volume => "volume",
+        MonitorColumn::DayRange => "day_range",
+        MonitorColumn::Sparkline => "sparkline",
+        MonitorColumn::Quality => "quality",
+        MonitorColumn::AsOf => "as_of",
+    }
+}
+
+fn parse_monitor_column(value: &str) -> Option<MonitorColumn> {
+    match value {
+        "symbol" => Some(MonitorColumn::Symbol),
+        "last" => Some(MonitorColumn::Last),
+        "change" => Some(MonitorColumn::Change),
+        "change_percent" => Some(MonitorColumn::ChangePercent),
+        "bid" => Some(MonitorColumn::Bid),
+        "ask" => Some(MonitorColumn::Ask),
+        "volume" => Some(MonitorColumn::Volume),
+        "day_range" => Some(MonitorColumn::DayRange),
+        "sparkline" => Some(MonitorColumn::Sparkline),
+        "quality" => Some(MonitorColumn::Quality),
+        "as_of" => Some(MonitorColumn::AsOf),
+        _ => None,
+    }
+}
+
+fn restore_sort_field(
+    state: &WorkspaceViewState,
+    target: &mut SortField,
+    report: &mut ViewRestoreReport,
+) {
+    let Some(value) = state.fields.get("sort_field") else {
+        return;
+    };
+    match value.as_text().and_then(parse_sort_field) {
+        Some(value) => {
+            *target = value;
+            report.restored_fields += 1;
+        }
+        None => {
+            report.skipped_fields += 1;
+            report
+                .warnings
+                .push("saved monitor sort field is unavailable".to_owned());
+        }
+    }
+}
+
+fn restore_sort_direction(
+    state: &WorkspaceViewState,
+    target: &mut SortDirection,
+    report: &mut ViewRestoreReport,
+) {
+    let Some(value) = state.fields.get("sort_direction") else {
+        return;
+    };
+    match value.as_text().and_then(parse_sort_direction) {
+        Some(value) => {
+            *target = value;
+            report.restored_fields += 1;
+        }
+        None => {
+            report.skipped_fields += 1;
+            report
+                .warnings
+                .push("saved monitor sort direction is unavailable".to_owned());
+        }
+    }
+}
+
+fn restore_columns(
+    state: &WorkspaceViewState,
+    target: &mut Vec<MonitorColumn>,
+    report: &mut ViewRestoreReport,
+) {
+    let Some(value) = state.fields.get("configured_columns") else {
+        return;
+    };
+    let parsed = value.as_text_list().and_then(|values| {
+        let columns = values
+            .iter()
+            .map(|value| parse_monitor_column(value))
+            .collect::<Option<Vec<_>>>()?;
+        (!columns.is_empty()
+            && columns.len() <= WatchlistDefinition::full_columns().len()
+            && columns.contains(&MonitorColumn::Symbol)
+            && columns
+                .iter()
+                .enumerate()
+                .all(|(index, column)| !columns[..index].contains(column)))
+        .then_some(columns)
+    });
+    match parsed {
+        Some(columns) => {
+            *target = columns;
+            report.restored_fields += 1;
+        }
+        None => {
+            report.skipped_fields += 1;
+            report
+                .warnings
+                .push("saved monitor column set is invalid".to_owned());
+        }
+    }
+}
+
+fn restore_row_identity(
+    state: &WorkspaceViewState,
+    field: &str,
+    label: &str,
+    rows: &[MonitorRow],
+    target: &mut usize,
+    report: &mut ViewRestoreReport,
+) {
+    let Some(value) = state.fields.get(field) else {
+        return;
+    };
+    match value.as_text().filter(|value| valid_view_token(value, 256)) {
+        Some(instrument_id) => match rows
+            .iter()
+            .position(|row| row.item.instrument_id.as_str() == instrument_id)
+        {
+            Some(index) => {
+                *target = index;
+                report.restored_fields += 1;
+            }
+            None => {
+                report.skipped_fields += 1;
+                report
+                    .warnings
+                    .push(format!("saved monitor {label} is no longer available"));
+            }
+        },
+        None => {
+            report.skipped_fields += 1;
+            report
+                .warnings
+                .push(format!("saved monitor {label} identity is invalid"));
+        }
+    }
+}
+
+fn valid_view_token(value: &str, maximum_bytes: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= maximum_bytes
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
 }
 
 fn monitor_areas(area: Rect) -> MonitorAreas {
@@ -1064,6 +1505,38 @@ mod tests {
         }
     }
 
+    struct LongCatalog;
+
+    impl WatchlistCatalog for LongCatalog {
+        fn load_watchlist(&self, name: Option<&str>) -> Option<WatchlistDefinition> {
+            if name.is_some_and(|name| !name.eq_ignore_ascii_case("long")) {
+                return None;
+            }
+            Some(
+                WatchlistDefinition::new(
+                    "long",
+                    "LONG RECOVERY MONITOR",
+                    (0..16)
+                        .map(|index| {
+                            WatchlistItem::new(
+                                CanonicalInstrumentId::new(format!("test:listed:s{index:02}")),
+                                format!("S{index:02}"),
+                                format!("Security {index:02}"),
+                            )
+                        })
+                        .collect(),
+                )
+                .with_columns(vec![
+                    MonitorColumn::Symbol,
+                    MonitorColumn::Last,
+                    MonitorColumn::ChangePercent,
+                    MonitorColumn::Volume,
+                    MonitorColumn::Quality,
+                ]),
+            )
+        }
+    }
+
     struct CountingMarketData {
         requests: Arc<AtomicUsize>,
     }
@@ -1260,6 +1733,164 @@ mod tests {
 
         assert_eq!(workspace.definition.sort.field, SortField::Last);
         assert_eq!(workspace.column_preset, ColumnPreset::Trading);
+    }
+
+    #[test]
+    fn typed_monitor_view_round_trips_sort_columns_selection_and_scroll() {
+        let mut source = WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(LongCatalog));
+        let area = Rect::new(0, 0, 100, 14);
+        source.actions(area);
+        source.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+        source.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::SHIFT));
+        source.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+        for _ in 0..11 {
+            source.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+        source.actions(area);
+
+        let saved = source.capture_view();
+        assert_eq!(
+            saved.fields.get("watchlist_id"),
+            Some(&ViewValue::Text("long".to_owned()))
+        );
+        assert_eq!(
+            saved.fields.get("sort_field"),
+            Some(&ViewValue::Text("last".to_owned()))
+        );
+        assert_eq!(
+            saved.fields.get("sort_direction"),
+            Some(&ViewValue::Text("descending".to_owned()))
+        );
+        assert_eq!(
+            saved.fields.get("column_preset"),
+            Some(&ViewValue::Text("trading".to_owned()))
+        );
+        assert_ne!(
+            saved.fields.get("selected_instrument_id"),
+            saved.fields.get("top_instrument_id")
+        );
+
+        let mut restored = WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(LongCatalog));
+        let report = restored.restore_view(&saved);
+
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(report.skipped_fields, 0);
+        assert_eq!(restored.capture_view(), saved);
+        let actions = restored.actions(area);
+        let selected_id = saved
+            .fields
+            .get("selected_instrument_id")
+            .and_then(ViewValue::as_text)
+            .unwrap();
+        assert!(actions
+            .iter()
+            .any(|action| { action.preferred && action.id.ends_with(selected_id) }));
+    }
+
+    #[test]
+    fn monitor_view_degrades_each_invalid_or_retired_field_independently() {
+        let mut workspace =
+            WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(StubCatalog));
+        let state = WorkspaceViewState::new(ID.as_str())
+            .with_field("watchlist_id", ViewValue::Text("retired".to_owned()))
+            .with_field("sort_field", ViewValue::Text("alpha".to_owned()))
+            .with_field("sort_direction", ViewValue::Text("sideways".to_owned()))
+            .with_field(
+                "configured_columns",
+                ViewValue::TextList(vec!["last".to_owned(), "last".to_owned()]),
+            )
+            .with_field("column_preset", ViewValue::Text("dense".to_owned()))
+            .with_field(
+                "selected_instrument_id",
+                ViewValue::Text("missing:instrument".to_owned()),
+            )
+            .with_field("future_field", ViewValue::Boolean(true))
+            .with_child(WorkspaceViewState::new("future"));
+
+        let report = workspace.restore_view(&state);
+
+        assert_eq!(report.restored_fields, 0);
+        assert_eq!(report.skipped_fields, 8);
+        assert_eq!(workspace.definition.id, "DEFAULT");
+        assert_eq!(workspace.definition.sort.field, SortField::Symbol);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("watchlist is unavailable")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("future monitor field")));
+    }
+
+    #[test]
+    fn monitor_view_matches_rows_by_identity_after_catalog_reordering() {
+        struct ReorderedCatalog;
+        impl WatchlistCatalog for ReorderedCatalog {
+            fn load_watchlist(&self, _name: Option<&str>) -> Option<WatchlistDefinition> {
+                Some(WatchlistDefinition::new(
+                    "reordered",
+                    "REORDERED",
+                    ["MSFT", "AAPL"]
+                        .into_iter()
+                        .map(|symbol| {
+                            WatchlistItem::new(
+                                CanonicalInstrumentId::new(symbol.to_ascii_lowercase()),
+                                symbol,
+                                symbol,
+                            )
+                        })
+                        .collect(),
+                ))
+            }
+        }
+        let state = WorkspaceViewState::new(ID.as_str())
+            .with_field("watchlist_id", ViewValue::Text("reordered".to_owned()))
+            .with_field("selected_instrument_id", ViewValue::Text("msft".to_owned()))
+            .with_field("top_instrument_id", ViewValue::Text("aapl".to_owned()));
+        let mut workspace =
+            WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(ReorderedCatalog));
+
+        let report = workspace.restore_view(&state);
+
+        assert_eq!(report.restored_fields, 3);
+        assert_eq!(workspace.rows[workspace.selected].item.symbol, "MSFT");
+        assert_eq!(
+            workspace.rows[workspace.viewport_top.get()].item.symbol,
+            "AAPL"
+        );
+    }
+
+    #[test]
+    fn live_resorts_preserve_and_keep_the_selected_instrument_visible() {
+        let mut workspace =
+            WatchlistWorkspace::new(Arc::new(StubMarketData), Arc::new(LongCatalog));
+        workspace.viewport_rows.set(4);
+        workspace.selected = 10;
+        workspace.viewport_top.set(8);
+        let selected = workspace.rows[10].item.instrument_id.clone();
+        for (index, row) in workspace.rows.iter_mut().enumerate() {
+            row.quote = Some(
+                StubMarketData
+                    .quote_snapshots(std::slice::from_ref(&row.item.instrument_id))
+                    .unwrap()
+                    .remove(0),
+            );
+            row.quote.as_mut().unwrap().last = Some(Price::new((16 - index) as f64));
+        }
+        workspace.definition.sort = crate::features::watchlist::SortSpec {
+            field: SortField::Last,
+            direction: SortDirection::Ascending,
+        };
+
+        workspace.sort_rows_preserving_view();
+
+        assert_eq!(
+            workspace.rows[workspace.selected].item.instrument_id,
+            selected
+        );
+        assert!(workspace.viewport_top.get() <= workspace.selected);
+        assert!(workspace.selected < workspace.viewport_top.get() + 4);
     }
 
     #[test]

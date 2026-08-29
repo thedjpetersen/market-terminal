@@ -38,6 +38,12 @@ Alert documents are sampled at startup so rendering performs no filesystem I/O.
   topic, and symbol filters, unread/saved filter flags, the Stories/Events
   subview, and optional provider story ID. They exclude headline or article
   content, publisher URLs, reader state, read history, and bookmark membership.
+  Monitor fields include the watchlist ID, stable sort and column keys, column
+  preset, selected canonical instrument ID, and top visible instrument ID.
+  They exclude quote snapshots, provider timestamps, subscription metrics,
+  bounded session traces, and rendered sparklines; those remain live market
+  data. A restored watchlist is resolved through the Watchlist-owned catalog,
+  and unavailable lists, columns, or instruments are reported as degraded.
   Spreadsheet view fields include the local workbook ID, worksheet name and
   ordinal fallback, selected cell, and viewport origin; cell content remains in
   the separately versioned workbook document. Saved views do not persist

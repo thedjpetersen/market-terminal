@@ -61,6 +61,17 @@ bootstrap ──▶ app kernel
   overconstrained layout to the table solver. The in-terminal reader is a trapped
   transient modal rather than layout state; article bodies, publisher URLs, read
   history, and bookmarks remain in their owning News data/session boundary.
+  Monitor owns a provider-neutral table schema over the same envelope:
+  watchlist identity, sort field/direction, stable configured-column keys,
+  active column preset, selected canonical instrument, and top-visible
+  instrument. Restoration resolves the list through the Watchlist catalog,
+  validates columns as a unique set that retains Symbol identity, sorts before
+  rematching row and viewport anchors, and degrades retired identities
+  independently. Rendering, mouse rows, spatial actions, and follow hints share
+  one viewport window. Live quote and stream re-sorts preserve the selected
+  instrument by identity and move the window only as needed to keep it visible;
+  provider snapshots, trace samples, and stream status never cross into shell
+  persistence.
   Unknown fields remain inert data, so a newer snapshot can degrade on an older
   binary without coupling migrations to the registry or panicking at startup.
   Session and saved-view documents remain independent failure domains.

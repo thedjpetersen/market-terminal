@@ -169,7 +169,13 @@ different document. News views retain region, topic, symbol, unread, and saved
 filters; the Stories/Events subview; and selected story identity. Selection
 follows the story when a refreshed feed reorders rows; a missing story falls
 back visibly. Reader modals, article text, URLs, read history, and bookmarks
-remain outside layout storage. Spreadsheet views retain the durable workbook
+remain outside layout storage. Monitor views retain the watchlist identity,
+sort field and direction, exact configured column keys, active column preset,
+selected canonical instrument, and top visible instrument. Selection stays on
+the same instrument when live quotes reorder the table; long lists scroll to
+keep it visible, and removed lists or instruments degrade explicitly. Quotes,
+session sparklines, subscription metrics, and provider status remain live data,
+not saved layout content. Spreadsheet views retain the durable workbook
 identity, stable worksheet name with ordinal fallback, selected cell, and
 row/column viewport. Workbook cells, clipboard contents, and undo history remain
 in their owning document/session boundaries rather than being copied into a
