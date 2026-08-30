@@ -8,7 +8,11 @@ use market_terminal_engine::{execute, EngineRequest, ENGINE_OPERATION_NAMES, ENG
 use serde_json::Value;
 
 fn repository_file(path: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("TUI crate should live under <repository>/crates")
+        .join(path)
 }
 
 #[test]

@@ -8,28 +8,28 @@
       "commands": ["HELP", "DISCOVER"],
       "help_entries": ["HELP", "DISCOVER"],
       "implementation_files": [
-        "src/app/discovery.rs",
-        "src/app/mod.rs",
-        "src/app/workspace.rs",
-        "src/features/launchpad/workspace.rs",
-        "src/ui/mod.rs"
+        "crates/market-terminal-tui/src/app/discovery.rs",
+        "crates/market-terminal-tui/src/app/mod.rs",
+        "crates/market-terminal-tui/src/app/workspace.rs",
+        "crates/market-terminal-tui/src/features/launchpad/workspace.rs",
+        "crates/market-terminal-tui/src/ui/mod.rs"
       ],
       "semantic_goldens": ["help"],
       "contract_tests": [
         {
-          "file": "src/app/workspace.rs",
+          "file": "crates/market-terminal-tui/src/app/workspace.rs",
           "test": "registry_resolves_exact_commands_and_hotkeys"
         },
         {
-          "file": "src/app/mod.rs",
+          "file": "crates/market-terminal-tui/src/app/mod.rs",
           "test": "enter_opens_help_command_details_then_invokes_the_exact_command"
         },
         {
-          "file": "src/app/mod.rs",
+          "file": "crates/market-terminal-tui/src/app/mod.rs",
           "test": "unified_discovery_searches_every_destination_class_and_invokes_exact_commands"
         },
         {
-          "file": "src/app/mod.rs",
+          "file": "crates/market-terminal-tui/src/app/mod.rs",
           "test": "discovery_delete_confirmation_does_not_cross_saved_view_revisions"
         }
       ],
@@ -47,22 +47,22 @@
       "commands": ["HELP"],
       "help_entries": ["HELP"],
       "implementation_files": [
-        "src/app/mod.rs",
-        "src/app/workspace.rs",
-        "src/ui/mod.rs"
+        "crates/market-terminal-tui/src/app/mod.rs",
+        "crates/market-terminal-tui/src/app/workspace.rs",
+        "crates/market-terminal-tui/src/ui/mod.rs"
       ],
       "semantic_goldens": ["panel-focus", "follow-hints"],
       "contract_tests": [
         {
-          "file": "src/app/mod.rs",
+          "file": "crates/market-terminal-tui/src/app/mod.rs",
           "test": "spatial_focus_prefers_aligned_neighbors_and_never_wraps"
         },
         {
-          "file": "src/app/mod.rs",
+          "file": "crates/market-terminal-tui/src/app/mod.rs",
           "test": "follow_hint_codes_are_prefix_free_and_compact"
         },
         {
-          "file": "src/app/mod.rs",
+          "file": "crates/market-terminal-tui/src/app/mod.rs",
           "test": "news_reader_traps_shell_navigation_and_limits_follow_hints_to_the_modal"
         }
       ],
@@ -80,18 +80,18 @@
       "commands": ["THEME NORD"],
       "help_entries": ["THEME"],
       "implementation_files": [
-        "src/app/mod.rs",
-        "src/ui/mod.rs",
-        "src/ui/theme.rs"
+        "crates/market-terminal-tui/src/app/mod.rs",
+        "crates/market-terminal-tui/src/ui/mod.rs",
+        "crates/market-terminal-tui/src/ui/theme.rs"
       ],
       "semantic_goldens": ["overview", "help"],
       "contract_tests": [
         {
-          "file": "src/app/mod.rs",
+          "file": "crates/market-terminal-tui/src/app/mod.rs",
           "test": "theme_command_and_function_keys_select_and_persist_presets"
         },
         {
-          "file": "src/ui/theme.rs",
+          "file": "crates/market-terminal-tui/src/ui/theme.rs",
           "test": "cycle_reaches_every_preset_and_wraps"
         }
       ],

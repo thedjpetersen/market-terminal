@@ -20,14 +20,14 @@ contract is reviewed and intentionally updated.
 Check the current package:
 
 ```bash
-cargo run --example export_web_contracts -- --check
-cargo test --test web_contracts
+cargo run -p market-terminal-tui --example export_web_contracts -- --check
+cargo test -p market-terminal-tui --test web_contracts
 ```
 
 After an intentional Rust wire change, regenerate the fixture corpus:
 
 ```bash
-cargo run --example export_web_contracts -- --write
+cargo run -p market-terminal-tui --example export_web_contracts -- --write
 git diff -- contracts/web/v3
 ```
 

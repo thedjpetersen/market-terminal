@@ -76,6 +76,14 @@ I/O while rendering. Persistent workspaces do not substitute deterministic
 gallery analytics when an external source is missing; the separate gallery
 host remains available for screenshots and tests.
 
+The repository root is a virtual Cargo workspace: the native product lives in
+the dedicated `market-terminal-tui` package, while the engine, application
+services, deployment adapters, and HTTP host are independent sibling packages.
+The production TUI and web API cannot import one another. Cross-host contract
+tests may compose both as development dependencies. Both hosts reuse the same
+versioned engine contracts instead of maintaining separate analytical
+implementations.
+
 The analytical core is also available without Ratatui. Host-neutral engine and
 application crates expose versioned Backtest, Options, Fixed Income, comparison,
 and read-only research-artifact contracts behind tenant/principal capability
@@ -958,7 +966,8 @@ performance contract are in [`docs/spreadsheet.md`](docs/spreadsheet.md).
 ## Diagnostics and quality gates
 
 Set `RUST_LOG` to opt into newline-delimited JSON tracing without changing the
-normal terminal display, for example `RUST_LOG=market_terminal=debug cargo run`.
+normal terminal display, for example
+`RUST_LOG=market_terminal=debug cargo run -p market-terminal-tui`.
 CI rejects Clippy warnings, test failures, architecture-boundary violations,
 release-build failures, semantic frame changes at standard terminal sizes, and
 any covered parity capability whose checked-in evidence does not resolve to a
@@ -1028,7 +1037,7 @@ required.
 Regenerate every PNG and recording from the native Ratatui buffer with:
 
 ```bash
-cargo run --example capture_gallery -- docs/screenshots docs/asciinema
+cargo run -p market-terminal-tui --example capture_gallery -- docs/screenshots docs/asciinema
 ```
 
 ## Run locally
@@ -1036,26 +1045,26 @@ cargo run --example capture_gallery -- docs/screenshots docs/asciinema
 Install Rust, then:
 
 ```bash
-cargo run --release
+cargo run -p market-terminal-tui --release
 ```
 
 Run unit tests:
 
 ```bash
-cargo test
+cargo test --workspace --all-features
 ```
 
 Run the opt-in contracts against the configured live providers serially. The
 serial setting respects the public Alpha Vantage demo-key request limit:
 
 ```bash
-cargo test --lib -- --ignored --nocapture --test-threads=1
+cargo test -p market-terminal-tui --lib -- --ignored --nocapture --test-threads=1
 ```
 
 Create a release binary:
 
 ```bash
-cargo build --release
+cargo build -p market-terminal-tui --release
 ```
 
 ## AI command plane
@@ -1069,7 +1078,7 @@ to return to the panel underneath. The interactive binary loads an ignored
 ```bash
 codex login # choose Sign in with ChatGPT
 cp .env.example .env
-cargo run --release
+cargo run -p market-terminal-tui --release
 ```
 
 The default provider keeps one Codex app-server process warm and uses its cached
@@ -1129,7 +1138,7 @@ export IRC_PORT="6697"                 # optional; inferred from IRC_TLS
 export IRC_TLS="true"                  # true by default
 export IRC_NICKNAME="market-terminal"
 export IRC_CHANNEL="#market-terminal"
-cargo run --release
+cargo run -p market-terminal-tui --release
 ```
 
 Optional `IRC_SERVER_PASSWORD` and `IRC_NICKSERV_PASSWORD` values are passed
@@ -1168,6 +1177,8 @@ the composition root.
 
 ```text
 crates/
+├── market-terminal-tui/    native Ratatui/Crossterm host, feature workspaces,
+│                           provider adapters, persistence, and composition root
 ├── market-terminal-engine/ host-neutral Backtesting, Options, Fixed Income,
 │                           and a versioned request/response API
 ├── market-terminal-application/ tenant identity, capabilities, budgets, analytical
@@ -1177,7 +1188,11 @@ crates/
 ├── market-terminal-credential-store/ private digest-only credential adapter
 ├── market-terminal-artifact-store/ tenant-isolated local read-only adapter
 └── market-terminal-api/    authenticated HTTP adapter over application services
-src/
+```
+
+`crates/market-terminal-tui/src/` contains:
+
+```text
 ├── app/             lifecycle, input modes, workspace contract and registry
 ├── features/        bounded contexts packaged by feature
 │   ├── overview/    domain + port + workspace

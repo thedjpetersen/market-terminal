@@ -5,7 +5,7 @@ use serde_json::Value;
 const PINNED_REFERENCE: &str = "fc16fd646405aec7a5525387be89c0cb376137c5";
 
 fn ledger() -> Value {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let path = repository_root()
         .join("docs")
         .join("openterminalui-parity-ledger.json");
     let raw = fs::read_to_string(path).expect("parity ledger should be readable");
@@ -22,6 +22,10 @@ fn evidence() -> Value {
 
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("TUI crate should live under <repository>/crates")
+        .to_owned()
 }
 
 fn strings<'a>(value: &'a Value, field: &str) -> Vec<&'a str> {
@@ -212,8 +216,10 @@ fn validate_capability_evidence(ledger: &Value, evidence: &Value) -> Result<(), 
         .into_iter()
         .map(|entry| entry.command)
         .collect::<BTreeSet<_>>();
-    let golden_source = read_repository_file("tests/semantic_golden.rs")?;
-    let performance_source = read_repository_file("examples/performance_gate.rs")?;
+    let golden_source =
+        read_repository_file("crates/market-terminal-tui/tests/semantic_golden.rs")?;
+    let performance_source =
+        read_repository_file("crates/market-terminal-tui/examples/performance_gate.rs")?;
 
     for entry in entries {
         let id = entry["id"]

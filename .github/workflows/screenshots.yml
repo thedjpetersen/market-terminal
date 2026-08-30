@@ -4,9 +4,11 @@ on:
     paths:
       - .github/workflows/screenshots.yml
       - Cargo.toml
-      - examples/capture_gallery.rs
+      - crates/market-terminal-engine/**
+      - crates/market-terminal-tui/Cargo.toml
+      - crates/market-terminal-tui/examples/capture_gallery.rs
       - README.md
-      - src/**
+      - crates/market-terminal-tui/src/**
   workflow_dispatch:
 jobs:
   capture:
@@ -15,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo run --example capture_gallery -- target/screenshots target/asciinema
+      - run: cargo run -p market-terminal-tui --example capture_gallery -- target/screenshots target/asciinema
       - uses: actions/upload-artifact@v4
         with:
           name: market-terminal-screenshots

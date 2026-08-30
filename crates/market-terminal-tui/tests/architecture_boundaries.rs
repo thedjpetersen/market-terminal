@@ -49,6 +49,79 @@ fn assert_absent(path: &Path, source: &str, needle: &str, reason: &str) {
 
 fn manifest_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("TUI crate should live under <repository>/crates")
+        .to_owned()
+}
+
+fn tui_root() -> PathBuf {
+    manifest_root().join("crates/market-terminal-tui")
+}
+
+fn manifest_section<'a>(manifest: &'a str, section: &str) -> &'a str {
+    let heading = format!("[{section}]");
+    manifest
+        .split_once(&heading)
+        .map(|(_, remainder)| remainder.split("\n[").next().unwrap_or(remainder))
+        .unwrap_or("")
+}
+
+#[test]
+fn virtual_workspace_separates_the_native_and_web_hosts() {
+    let root = manifest_root();
+    let workspace_manifest =
+        fs::read_to_string(root.join("Cargo.toml")).expect("workspace manifest");
+    assert_absent(
+        &root.join("Cargo.toml"),
+        &workspace_manifest,
+        "[package]",
+        "the repository root must remain a virtual workspace, not an implicit native host",
+    );
+    for member in [
+        "market-terminal-engine",
+        "market-terminal-application",
+        "market-terminal-api",
+        "market-terminal-tui",
+    ] {
+        assert!(
+            workspace_manifest.contains(&format!("\"crates/{member}\"")),
+            "virtual workspace must register {member}"
+        );
+    }
+
+    let tui = tui_root();
+    let tui_manifest = fs::read_to_string(tui.join("Cargo.toml")).expect("TUI manifest");
+    assert!(tui_manifest.contains("name = \"market-terminal-tui\""));
+    assert!(tui_manifest.contains("name = \"market-terminal\""));
+    let tui_dependencies = manifest_section(&tui_manifest, "dependencies");
+    assert!(
+        tui_dependencies.contains("market-terminal-engine"),
+        "native analytics must use the shared engine"
+    );
+    for forbidden in [
+        "market-terminal-api",
+        "market-terminal-admission",
+        "market-terminal-auth",
+        "market-terminal-credential-store",
+        "market-terminal-artifact-store",
+    ] {
+        assert_absent(
+            &tui.join("Cargo.toml"),
+            tui_dependencies,
+            forbidden,
+            "the native host cannot depend on web transport or web deployment adapters",
+        );
+    }
+
+    let api_manifest = fs::read_to_string(root.join("crates/market-terminal-api/Cargo.toml"))
+        .expect("API manifest");
+    assert_absent(
+        &root.join("crates/market-terminal-api/Cargo.toml"),
+        manifest_section(&api_manifest, "dependencies"),
+        "market-terminal-tui",
+        "the web host cannot import the native terminal host",
+    );
 }
 
 #[test]
@@ -111,7 +184,7 @@ fn extracted_engine_is_host_neutral_and_terminal_facades_are_thin() {
     }
 
     for feature in ["backtesting", "options", "fixed_income"] {
-        let facade = root.join(format!("src/features/{feature}/domain.rs"));
+        let facade = tui_root().join(format!("src/features/{feature}/domain.rs"));
         let source = production_source(&facade);
         assert!(
             source.contains("pub use market_terminal_engine::"),
@@ -139,6 +212,7 @@ fn application_services_are_host_neutral_and_own_engine_execution_policy() {
     );
     for dependency in [
         "market-terminal =",
+        "market-terminal-tui",
         "axum",
         "tokio",
         "reqwest",
@@ -244,6 +318,7 @@ fn web_api_depends_on_application_services_without_importing_the_native_product(
     );
     for dependency in [
         "market-terminal =",
+        "market-terminal-tui",
         "market-terminal-engine",
         "ratatui",
         "crossterm",
@@ -297,6 +372,7 @@ fn local_artifact_store_implements_the_application_port_at_the_host_edge() {
     );
     for dependency in [
         "market-terminal =",
+        "market-terminal-tui",
         "market-terminal-engine",
         "market-terminal-api",
         "axum",
@@ -361,6 +437,7 @@ fn credential_resolution_is_host_neutral_and_the_store_stays_at_the_host_edge() 
     );
     for dependency in [
         "market-terminal =",
+        "market-terminal-tui",
         "market-terminal-engine",
         "market-terminal-api",
         "axum",
@@ -418,6 +495,7 @@ fn credential_resolution_is_host_neutral_and_the_store_stays_at_the_host_edge() 
     }
     for dependency in [
         "market-terminal =",
+        "market-terminal-tui",
         "market-terminal-engine",
         "market-terminal-api",
         "axum",
@@ -481,6 +559,7 @@ fn aggregate_admission_is_host_neutral_and_precedes_application_dispatch() {
     );
     for dependency in [
         "market-terminal =",
+        "market-terminal-tui",
         "market-terminal-engine",
         "market-terminal-api",
         "market-terminal-auth",
@@ -554,7 +633,7 @@ fn aggregate_admission_is_host_neutral_and_precedes_application_dispatch() {
 
 #[test]
 fn bounded_contexts_do_not_import_adapters_or_each_other() {
-    let features = manifest_root().join("src/features");
+    let features = tui_root().join("src/features");
     let mut contexts = fs::read_dir(&features)
         .expect("feature directory")
         .filter_map(|entry| {
@@ -595,7 +674,7 @@ fn bounded_contexts_do_not_import_adapters_or_each_other() {
 
 #[test]
 fn domain_and_port_layers_do_not_depend_on_shell_or_rendering() {
-    let features = manifest_root().join("src/features");
+    let features = tui_root().join("src/features");
 
     for path in rust_sources(&features) {
         let is_domain = path
@@ -630,7 +709,7 @@ fn domain_and_port_layers_do_not_depend_on_shell_or_rendering() {
 
 #[test]
 fn foundation_and_ui_keep_their_stable_dependency_direction() {
-    let root = manifest_root();
+    let root = tui_root();
     for path in rust_sources(&root.join("src/foundation")) {
         let source = production_source(&path);
         for needle in [

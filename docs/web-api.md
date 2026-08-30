@@ -171,10 +171,11 @@ configuration it cannot load user artifacts; with the explicit local adapter it
 can only list and retrieve the authenticated tenant's documents. The reusable
 API library remains adapter-injected and cannot save or delete. The binary's
 concrete store is selected only at the composition root and refuses insecure
-Unix roots or symlinked catalog entries. `tests/architecture_boundaries.rs`
-enforces `API library -> auth/admission/application ports <- adapters` and rejects native
-package, feature, provider-client, terminal, runtime, and network boundary
-violations in reusable layers.
+Unix roots or symlinked catalog entries.
+`crates/market-terminal-tui/tests/architecture_boundaries.rs`
+enforces `API library -> auth/admission/application ports <- adapters` and
+rejects native package, feature, provider-client, terminal, runtime, and network
+boundary violations in reusable layers.
 
 Before a browser launch, add interactive password/OIDC and cookie-session
 issuance, CSRF/origin policy, and a service-backed resolver with hot revocation;

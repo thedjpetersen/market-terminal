@@ -52,8 +52,9 @@ crate alone and cannot accidentally import the raw engine dispatcher.
 The crate may depend on the engine and deterministic serialization libraries. It
 may not depend on HTTP, async runtimes, clocks, environment variables,
 filesystems, sockets, provider clients, persistence adapters, native feature
-modules, or terminal UI. `tests/architecture_boundaries.rs` enforces these rules
-and also rejects a direct API-to-engine dependency.
+modules, or terminal UI.
+`crates/market-terminal-tui/tests/architecture_boundaries.rs` enforces these
+rules and also rejects a direct API-to-engine dependency.
 
 Authentication remains host-owned. The independent `market-terminal-auth`
 crate defines only a bounded `CredentialResolver` contract that maps presented

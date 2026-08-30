@@ -1,11 +1,3 @@
-[package]
-name = "market-terminal"
-version = "0.1.0"
-edition = "2021"
-description = "A native Rust Bloomberg-inspired terminal workstation"
-license = "MIT"
-repository = "https://github.com/thedjpetersen/market-terminal"
-
 [workspace]
 members = [
     "crates/market-terminal-admission",
@@ -15,34 +7,19 @@ members = [
     "crates/market-terminal-auth",
     "crates/market-terminal-credential-store",
     "crates/market-terminal-engine",
+    "crates/market-terminal-tui",
+]
+default-members = [
+    "crates/market-terminal-admission",
+    "crates/market-terminal-api",
+    "crates/market-terminal-application",
+    "crates/market-terminal-artifact-store",
+    "crates/market-terminal-auth",
+    "crates/market-terminal-credential-store",
+    "crates/market-terminal-engine",
+    "crates/market-terminal-tui",
 ]
 resolver = "2"
-
-[dependencies]
-market-terminal-engine = { path = "crates/market-terminal-engine" }
-crossterm = "0.29"
-csv = "1.4"
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
-dotenvy = "0.15"
-dom_smoothie = "0.18"
-feed-rs = "2.4"
-futures-util = "0.3"
-html-escape = "0.2"
-irc = { version = "1.1", default-features = false, features = ["tls-rust"] }
-quick-xml = { version = "0.42", features = ["serialize"] }
-ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-
-[dev-dependencies]
-ab_glyph = "0.2"
-image = { version = "0.25", default-features = false, features = ["png"] }
-market-terminal-api = { path = "crates/market-terminal-api" }
-market-terminal-application = { path = "crates/market-terminal-application" }
 
 [profile.release]
 opt-level = 3

@@ -6,11 +6,19 @@ coordinating changes through a central screen enum, global data service, or
 monolithic renderer. Mature deterministic analytics are extracted into the
 dependency-light `market-terminal-engine` crate so every host executes the same
 validated model instead of reproducing business logic at an API boundary.
+The repository root is a virtual Cargo workspace. The native binary, shell,
+presentation, provider adapters, and local-desktop composition live in the
+dedicated `market-terminal-tui` package; the HTTP host lives in
+`market-terminal-api`. Neither host may depend on the other in the production
+dependency graph; cross-host contract tests may compose both through explicit
+development dependencies.
 
 ## Dependency direction
 
 ```text
-native bootstrap ──▶ app kernel
+market-terminal-tui (native host)
+       │
+       ├────────────▶ app kernel
        │                 ▲
        ├────────────▶ features ──▶ foundation + shared UI primitives
        │                 ▲  │
@@ -30,7 +38,16 @@ native bootstrap ──▶ app kernel
                                       └──────┬──────┘
                                                     │
                                           market-terminal-api
+                                               (web host)
 ```
+
+The virtual root declares every package as a default member, so unqualified
+workspace verification covers the native host and every reusable crate. CI is
+explicit regardless: Clippy, tests, and release builds use `--workspace` and
+`--all-features`.
+`crates/market-terminal-tui/tests/architecture_boundaries.rs` verifies the
+virtual-root contract, the two host manifests, and both one-way dependency
+paths.
 
 - `crates/market-terminal-engine` owns host-neutral analytical contracts. Its
   first extracted modules are Backtesting, Options, and Fixed Income. It has no
@@ -91,7 +108,8 @@ native bootstrap ──▶ app kernel
   `docs/web-api.md`. See `docs/application-services.md` for the shared actor,
   capability, and budget contract.
 
-- `app` owns lifecycle, input modes, keyboard/mouse routing, and the stable
+- `crates/market-terminal-tui` owns the native composition. Within that host,
+  `app` owns lifecycle, input modes, keyboard/mouse routing, and the stable
   `Workspace` plug-in contract. It has no market or portfolio business rules.
   Visible feature-local destinations are published as bounded `WorkspaceAction`
   values with opaque stable IDs, labels, enabled state, and render-relative
@@ -422,8 +440,8 @@ on that concrete adapter.
 
 ## Adding a terminal function
 
-1. Create `src/features/<function>/` with `domain.rs`, `port.rs`, and
-   `workspace.rs`.
+1. Create `crates/market-terminal-tui/src/features/<function>/` with
+   `domain.rs`, `port.rs`, and `workspace.rs`.
 2. Implement the `Workspace` contract and publish a unique `WorkspaceId`,
    hotkey, and command aliases. Publish visible rows, tabs, and controls through
    `actions` and handle their opaque IDs through `activate_action` when the
@@ -433,7 +451,7 @@ on that concrete adapter.
    rectangles with lane-first distance and stable geometry/ID tie-breakers.
 3. Add an infrastructure adapter for the feature-owned port.
 4. Register the workspace in `bootstrap.rs`.
-5. Run `cargo test --test architecture_boundaries`; CI rejects production
+5. Run `cargo test -p market-terminal-tui --test architecture_boundaries`; CI rejects production
    feature-to-adapter imports, cross-feature imports, shell/rendering
    dependencies in domain and port layers, and dependency inversions in
    `foundation` or shared `ui`.
@@ -499,9 +517,9 @@ Marking an `OTUI-*` item `covered` creates two fail-closed obligations. First,
 catalog plus real implementation, semantic-golden, contract-test, data-source,
 and performance evidence. Second, `docs/capability-gallery.json` must provide
 exactly one loading, populated, empty, delayed, stale, denied, partial, and
-failed frame. `tests/capability_gallery.rs` renders every frame at 80 × 24,
-120 × 36, and 160 × 48 and locks the symbols, colors, and modifiers into a
-reviewed aggregate hash.
+failed frame. `crates/market-terminal-tui/tests/capability_gallery.rs` renders
+every frame at 80 × 24, 120 × 36, and 160 × 48 and locks the symbols, colors,
+and modifiers into a reviewed aggregate hash.
 
 The gallery distinguishes `rendered` from `not_applicable`. A synchronous local
 capability must not manufacture provider loading, delay, staleness, permission,
@@ -597,7 +615,7 @@ paying the operational cost of services or a large multi-crate graph before
 those costs are warranted.
 
 These boundaries are executable, not solely diagrammed.
-`tests/architecture_boundaries.rs` scans production Rust source (excluding
+`crates/market-terminal-tui/tests/architecture_boundaries.rs` scans production Rust source (excluding
 test-only modules) and fails on the dependency directions above. Unit tests may
 compose deterministic concrete adapters, but production feature code must reach
 them only through a feature-owned port wired in `bootstrap.rs`. Cross-context

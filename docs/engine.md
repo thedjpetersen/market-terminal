@@ -14,7 +14,8 @@ The first extraction contains three stable deterministic domains:
 - Fixed Income: fixed-rate bullet cash flows, price/yield, accrued interest,
   duration, convexity, DV01, and parallel shocks.
 
-The native feature paths remain source compatible. For example,
+The native feature paths remain source compatible through the
+`market-terminal-tui` package's `market_terminal` library. For example,
 `market_terminal::features::options::OptionModelInput` is the same type owned by
 `market_terminal_engine::options::OptionModelInput`; it is re-exported rather
 than copied or translated.
@@ -68,10 +69,11 @@ behind feature-owned ports. The host passes already-authorized, versioned inputs
 into the engine and persists only validated outputs. This prevents a future web
 router from becoming a business-logic or data-access bypass.
 
-`tests/architecture_boundaries.rs` enforces the dependency rules and verifies
-that native Backtesting, Options, and Fixed Income domains remain thin engine
-facades. Engine tests lock request round trips, serialized typed responses,
-schema rejection, bounded identities/provenance, and fail-closed domain errors.
+`crates/market-terminal-tui/tests/architecture_boundaries.rs` enforces the
+dependency rules and verifies that native Backtesting, Options, and Fixed
+Income domains remain thin engine facades. Engine tests lock request round
+trips, serialized typed responses, schema rejection, bounded
+identities/provenance, and fail-closed domain errors.
 
 ## Web expansion sequence
 

@@ -258,6 +258,14 @@ move to its own crate later without changing its public vocabulary.
   feature modules remain compatibility facades over the same types. Architecture
   tests reject host dependencies, I/O, or reacquired domain behavior. This is a
   reusable engine boundary, not an HTTP service or a second implementation.
+- **Complete:** physical native/web host separation. The repository root is now
+  a virtual Cargo workspace; all Ratatui/Crossterm presentation, native feature
+  workspaces, provider adapters, persistence, and desktop composition live in
+  `market-terminal-tui`, while `market-terminal-api` remains an independent HTTP
+  host. Both reuse the same engine/application contracts and cannot import one
+  another in production. Workspace-wide Clippy, tests, and release builds now
+  cover every extracted crate in CI, and architecture tests lock the host
+  dependency graph.
 - **Complete:** first authenticated web host slice. The independent
   `market-terminal-api` crate exposes public health plus authenticated
   capability and execution endpoints. It applies a
@@ -614,7 +622,8 @@ CI rejects incomplete evidence links.
 
 **Status: complete.** The checked-in source ledger now covers 40 capabilities
 and is pinned, uniquely identified, source-linked, maturity-qualified, owned,
-prioritized, and validated by `tests/parity_ledger.rs`. The bounded feature-action
+prioritized, and validated by
+`crates/market-terminal-tui/tests/parity_ledger.rs`. The bounded feature-action
 contract now filters invalid, disabled, duplicate, off-screen, and excess actions,
 assigns at most two-letter codes, renders badges at feature-owned rectangles, and
 revalidates activation.
@@ -661,7 +670,8 @@ edit state, and mutable operation prerequisites are revalidated on activation. A
 shell test selects an instrument cell through a generated label and routes it into
 Security. Every current workspace has now adopted the action contract. The
 separate `docs/capability-evidence.json` manifest now enumerates every ledger
-item marked `covered`; `tests/parity_ledger.rs` fails closed unless each item
+item marked `covered`;
+`crates/market-terminal-tui/tests/parity_ledger.rs` fails closed unless each item
 resolves through the live Help catalog and checked-in implementation, semantic
 golden, deterministic contract, data-source, and performance evidence. The
 performance gate now budgets command dispatch, visible-action routing, a full
@@ -672,7 +682,7 @@ sizes, and locks symbols, colors, and modifiers. Real states use the live app;
 inapplicable states render an explicit reason. Promoting a capability to
 `covered`, removing a frame, inventing a ninth state, or changing a frame without
 reviewing its hash now fails CI. These checks close the P0 evidence harness.
-`tests/architecture_boundaries.rs` now enforces
+`crates/market-terminal-tui/tests/architecture_boundaries.rs` now enforces
 dependency direction on every CI run. The first remediation moved Assistant's portfolio
 context behind an Assistant-owned port and composition-root translator, and
 removed Watchlist's dependency on a Market Data identity alias. This closes the

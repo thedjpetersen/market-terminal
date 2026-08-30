@@ -28,6 +28,9 @@ const FNV_PRIME: u64 = 0x100000001b3;
 
 fn document(name: &str) -> Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("TUI crate should live under <repository>/crates")
         .join("docs")
         .join(name);
     let raw = fs::read_to_string(path).unwrap_or_else(|error| panic!("read {name}: {error}"));
