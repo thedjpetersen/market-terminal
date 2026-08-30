@@ -41,13 +41,21 @@ There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
   profile statistics, half-block OHLC candlesticks, volume histograms, SMA/EMA
   overlays, and Wilder RSI
 - Screening — versioned point-in-time universes, typed multi-clause filters,
-  deterministic ranking, explicit null/coverage handling, saved definitions,
-  and explainable row evidence
+  nested boolean expressions, deterministic ranking, explicit null/coverage
+  handling, crash-safe saved definitions, immutable history, audit/repair, exact
+  replay, and explainable row evidence
 - Backtest — reproducible, next-bar moving-average research replay with explicit
-  execution costs, integer-share accounting, immutable hashes, equity/drawdown,
-  and a signal-to-fill audit; it has no live order path
+  execution costs, integer-share accounting, immutable artifacts and exports,
+  evidence-bound paired comparisons, equity/drawdown, and a signal-to-fill
+  audit; it has no live order path
+- Options — explicit-input European Black-Scholes price and Greeks, contract
+  multipliers, model conventions, reproducible digests, and a deterministic
+  spot/volatility scenario grid without fabricated provider-chain data
 - Fixed Income — transparent fixed-rate bullet cash flows, clean/dirty price,
   accrued interest, yield risk, and deterministic curve-shock reference analytics
+- Launchpad and Discovery — portable typed shortcuts, role presets, recoverable
+  workspace views, and one literal-token search across commands, instruments,
+  workspaces, saved layouts, screens, portfolios, and workbooks
 - Chat — TLS-capable IRC market rooms with bounded queues, background reconnect,
   participant presence, notices, actions, and an inline composer
 - Alerts — idempotent, debounced local rules with acknowledgement and audit state
@@ -67,6 +75,14 @@ snapshot, and Overview composes those same real snapshots without performing
 I/O while rendering. Persistent workspaces do not substitute deterministic
 gallery analytics when an external source is missing; the separate gallery
 host remains available for screenshots and tests.
+
+The analytical core is also available without Ratatui. Host-neutral engine and
+application crates expose versioned Backtest, Options, Fixed Income, comparison,
+and read-only research-artifact contracts behind tenant/principal capability
+checks and workload budgets. The optional loopback HTTP host adds private
+digest-only credentials, tenant-isolated artifact reads, aggregate admission,
+deadlines, concurrency ceilings, and executable Rust/TypeScript contract
+fixtures. See [Headless analytical API](#headless-analytical-api).
 
 From any workspace, press `Esc` to lift focus to the feature's preferred visible
 action. Bare arrows move spatially among registered rows, tabs, controls, and
@@ -990,6 +1006,30 @@ mockups.
 | ![Ranked canonical instrument search results](docs/screenshots/find.png) | ![Versioned per-currency portfolio concentration and non-cash shock analysis](docs/screenshots/risk.png) |
 | **Provenance-rich news** | **In-terminal article reader** |
 | ![Canonicalized News feed with explicit freshness and source evidence](docs/screenshots/news.png) | ![News reader with publisher and retrieval evidence](docs/screenshots/news-reader.png) |
+| **Point-in-time screening** | **Reproducible backtesting** |
+| ![Explainable point-in-time screen with ranked evidence and immutable input identity](docs/screenshots/screening.png) | ![Look-ahead-safe research replay with reconciled metrics and signal-to-fill evidence](docs/screenshots/backtesting.png) |
+| **Options reference analytics** | **Fixed-income reference analytics** |
+| ![Transparent Black-Scholes analytics with explicit inputs, Greeks, and scenario grid](docs/screenshots/options.png) | ![Fixed-rate bond cash flows, yield risk, duration, convexity, and curve shocks](docs/screenshots/fixed-income.png) |
+
+### Asciinema tours
+
+The same deterministic capture program checks in asciinema v2 recordings for
+the newest analytical workspaces. Download a recording and play it locally with
+`asciinema play <file>`; no account, network access, or provider credentials are
+required.
+
+| Workspace | Recording | Command shown |
+| --- | --- | --- |
+| Screening | [`screening.cast`](docs/asciinema/screening.cast) | `SCREEN momentum` |
+| Backtesting | [`backtesting.cast`](docs/asciinema/backtesting.cast) | `BACKTEST AAPL FAST 10 SLOW 50 COST 5 COMMISSION 1.00` |
+| Options | [`options.cast`](docs/asciinema/options.cast) | `OPTIONS AAPL CALL 190 200 30 25 5 0 100` |
+| Fixed Income | [`fixed-income.cast`](docs/asciinema/fixed-income.cast) | `BOND UST-5Y-REFERENCE USD 100 4.5 4.25 5 SEMI 0` |
+
+Regenerate every PNG and recording from the native Ratatui buffer with:
+
+```bash
+cargo run --example capture_gallery -- docs/screenshots docs/asciinema
+```
 
 ## Run locally
 

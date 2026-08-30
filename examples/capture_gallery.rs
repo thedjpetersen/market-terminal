@@ -2,6 +2,8 @@ use std::{
     error::Error,
     fs,
     path::{Path, PathBuf},
+    thread,
+    time::Duration,
 };
 
 use ab_glyph::{point, Font, FontArc, PxScale, ScaleFont};
@@ -23,60 +25,94 @@ const PADDING: u32 = 24;
 const FONT_SIZE: f32 = 15.0;
 const BASE_BACKGROUND: Rgba<u8> = Rgba([2, 3, 3, 255]);
 const BASE_FOREGROUND: Rgba<u8> = Rgba([222, 221, 215, 255]);
+const ASCIINEMA_TOURS: &[&str] = &["screening", "backtesting", "options", "fixed-income"];
 
 fn main() -> Result<(), Box<dyn Error>> {
     let output = std::env::args()
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("docs/screenshots"));
+    let cast_output = std::env::args()
+        .nth(2)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("docs/asciinema"));
     fs::create_dir_all(&output)?;
+    fs::create_dir_all(&cast_output)?;
     let font = load_font()?;
 
-    capture(&output, &font, "overview", |_| {})?;
-    capture(&output, &font, "monitor", |app| command(app, "MON MACRO"))?;
-    capture(&output, &font, "desk", |app| {
+    capture(&output, &cast_output, &font, "overview", |_| {})?;
+    capture(&output, &cast_output, &font, "monitor", |app| {
+        command(app, "MON MACRO")
+    })?;
+    capture(&output, &cast_output, &font, "desk", |app| {
         command(app, "DESK LAYOUT 60 65")
     })?;
-    capture(&output, &font, "charting", |app| {
+    capture(&output, &cast_output, &font, "charting", |app| {
         command(app, "CHART MSFT COMPARE SPY,QQQ 6M SMA20 NORMALIZE");
         app.handle_key(key(KeyCode::Char(',')));
         app.handle_key(key(KeyCode::Char(',')));
     })?;
-    capture(&output, &font, "chat", |app| command(app, "CHAT"))?;
-    capture(&output, &font, "spreadsheet", |app| {
+    capture(&output, &cast_output, &font, "chat", |app| {
+        command(app, "CHAT")
+    })?;
+    capture(&output, &cast_output, &font, "spreadsheet", |app| {
         command(app, "SHEET");
         app.handle_key(key(KeyCode::Right));
         for _ in 0..11 {
             app.handle_key(key(KeyCode::Down));
         }
     })?;
-    capture(&output, &font, "alerts", |app| {
+    capture(&output, &cast_output, &font, "alerts", |app| {
         command(app, "ALERTS");
         app.handle_key(key(KeyCode::Char('r')));
         app.handle_key(key(KeyCode::Char('r')));
     })?;
-    capture(&output, &font, "risk", |app| command(app, "RISK"))?;
-    capture(&output, &font, "assistant", |app| {
+    capture(&output, &cast_output, &font, "risk", |app| {
+        command(app, "RISK")
+    })?;
+    capture(&output, &cast_output, &font, "assistant", |app| {
         command(app, "AI");
         app.handle_key(key(KeyCode::Enter));
         type_text(app, "Bring the monitor forward and compare AAPL with SPY");
     })?;
-    capture(&output, &font, "launchpad", |app| command(app, "LAUNCH"))?;
-    capture(&output, &font, "discovery", |app| {
+    capture(&output, &cast_output, &font, "launchpad", |app| {
+        command(app, "LAUNCH")
+    })?;
+    capture(&output, &cast_output, &font, "discovery", |app| {
         command(app, "DISCOVER portfolio")
     })?;
-    capture(&output, &font, "find", |app| command(app, "FIND US"))?;
-    capture(&output, &font, "security", |app| command(app, "AAPL US"))?;
-    capture(&output, &font, "news", |app| command(app, "NEWS"))?;
-    capture(&output, &font, "news-reader", |app| {
+    capture(&output, &cast_output, &font, "find", |app| {
+        command(app, "FIND US")
+    })?;
+    capture(&output, &cast_output, &font, "security", |app| {
+        command(app, "AAPL US")
+    })?;
+    capture(&output, &cast_output, &font, "news", |app| {
+        command(app, "NEWS")
+    })?;
+    capture(&output, &cast_output, &font, "news-reader", |app| {
         command(app, "NEWS");
         app.handle_key(key(KeyCode::Enter));
+    })?;
+    capture(&output, &cast_output, &font, "screening", |app| {
+        command(app, "SCREEN momentum")
+    })?;
+    capture(&output, &cast_output, &font, "backtesting", |app| {
+        command(app, "BACKTEST AAPL FAST 10 SLOW 50 COST 5 COMMISSION 1.00");
+        settle(app, 100);
+    })?;
+    capture(&output, &cast_output, &font, "options", |app| {
+        command(app, "OPTIONS AAPL CALL 190 200 30 25 5 0 100")
+    })?;
+    capture(&output, &cast_output, &font, "fixed-income", |app| {
+        command(app, "BOND UST-5Y-REFERENCE USD 100 4.5 4.25 5 SEMI 0")
     })?;
     Ok(())
 }
 
 fn capture(
     output: &Path,
+    cast_output: &Path,
     font: &FontArc,
     name: &str,
     prepare: impl FnOnce(&mut App),
@@ -91,7 +127,70 @@ fn capture(
     let path = output.join(format!("{name}.png"));
     render_buffer(terminal.backend().buffer(), font).save(&path)?;
     println!("captured {}", path.display());
+    if ASCIINEMA_TOURS.contains(&name) {
+        let cast_path = cast_output.join(format!("{name}.cast"));
+        write_cast(&cast_path, name, terminal.backend().buffer())?;
+        println!("captured {}", cast_path.display());
+    }
     Ok(())
+}
+
+fn write_cast(path: &Path, name: &str, buffer: &Buffer) -> Result<(), Box<dyn Error>> {
+    let header = serde_json::json!({
+        "version": 2,
+        "width": COLUMNS,
+        "height": ROWS,
+        "timestamp": 0,
+        "env": {"SHELL": "/bin/sh", "TERM": "xterm-256color"},
+        "title": format!("market-terminal {name} tour")
+    });
+    let intro = format!(
+        "\u{1b}[2J\u{1b}[Hmarket-terminal :: {}\r\n",
+        name.replace('-', " ")
+    );
+    let frame = format!("\u{1b}[2J\u{1b}[H{}", buffer_to_ansi(buffer));
+    let events = [
+        serde_json::json!([0.0, "o", intro]),
+        serde_json::json!([0.7, "o", frame]),
+    ];
+    let mut cast = serde_json::to_string(&header)?;
+    for event in events {
+        cast.push('\n');
+        cast.push_str(&serde_json::to_string(&event)?);
+    }
+    cast.push('\n');
+    fs::write(path, cast)?;
+    Ok(())
+}
+
+fn buffer_to_ansi(buffer: &Buffer) -> String {
+    let mut output = String::new();
+    let mut previous = None;
+    for row in 0..buffer.area.height {
+        for column in 0..buffer.area.width {
+            let cell = &buffer[(column, row)];
+            let foreground = terminal_color(cell.fg, BASE_FOREGROUND).0;
+            let background = terminal_color(cell.bg, BASE_BACKGROUND).0;
+            let style = (
+                foreground,
+                background,
+                cell.modifier.contains(Modifier::BOLD),
+            );
+            if previous != Some(style) {
+                let bold = if style.2 { 1 } else { 22 };
+                output.push_str(&format!(
+                    "\u{1b}[{bold};38;2;{};{};{};48;2;{};{};{}m",
+                    style.0[0], style.0[1], style.0[2], style.1[0], style.1[1], style.1[2]
+                ));
+                previous = Some(style);
+            }
+            output.push_str(cell.symbol());
+        }
+        output.push_str("\u{1b}[0m\r\n");
+        previous = None;
+    }
+    output.push_str("\u{1b}[0m");
+    output
 }
 
 fn command(app: &mut App, value: &str) {
@@ -105,6 +204,13 @@ fn command(app: &mut App, value: &str) {
 fn type_text(app: &mut App, value: &str) {
     for character in value.chars() {
         app.handle_key(key(KeyCode::Char(character)));
+    }
+}
+
+fn settle(app: &mut App, attempts: usize) {
+    for _ in 0..attempts {
+        thread::sleep(Duration::from_millis(1));
+        app.advance_tick();
     }
 }
 
