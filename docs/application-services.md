@@ -8,6 +8,7 @@ frontends from each inventing their own authorization and workload policy.
 HTTP / worker / MCP host
           │ host-neutral credential resolver
           │ authenticated server-owned actor
+          │ aggregate admission + bounded host execution
           ▼
 market-terminal-application
   tenant + principal + capabilities + budgets
@@ -68,13 +69,20 @@ remote document services can implement the same ownership contract. The first
 local implementation lives in the independent `market-terminal-artifact-store`
 crate; only the API binary composition root imports it.
 
+Aggregate rate admission is likewise outside deterministic application
+services. `market-terminal-admission` consumes only validated tenant/principal
+identity and host-supplied monotonic time. The API applies it after credential
+resolution and before any route handler. Blocking-work semaphores and response
+deadlines remain HTTP-host concerns; neither the application nor engine imports
+Tokio or cancellation policy.
+
 ## Next web extraction
 
 1. Add a transactional ingestion writer or service-backed adapter outside this
    crate. The local read adapter and HTTP routes are deliberately mutation-free.
 2. Add service-backed hot credential revocation and interactive browser-session
    issuance around the existing resolver contract.
-3. Add deadline, cancellation, and aggregate rate-budget contracts at the host
-   edge while retaining deterministic per-request budgets here.
-4. Publish cross-language fixtures for actor capabilities and every v1 engine
+3. Publish cross-language fixtures for actor capabilities and every v1 engine
    request/result before a TypeScript client is allowed to ship.
+4. Add distributed admission and explicit cancellable job orchestration before
+   horizontal or long-running workloads replace this process-local host.

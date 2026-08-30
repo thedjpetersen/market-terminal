@@ -8,6 +8,7 @@ repository = "https://github.com/thedjpetersen/market-terminal"
 
 [workspace]
 members = [
+    "crates/market-terminal-admission",
     "crates/market-terminal-api",
     "crates/market-terminal-application",
     "crates/market-terminal-artifact-store",

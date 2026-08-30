@@ -469,6 +469,90 @@ fn credential_resolution_is_host_neutral_and_the_store_stays_at_the_host_edge() 
 }
 
 #[test]
+fn aggregate_admission_is_host_neutral_and_precedes_application_dispatch() {
+    let root = manifest_root();
+    let admission = root.join("crates/market-terminal-admission");
+    let application = root.join("crates/market-terminal-application");
+    let api = root.join("crates/market-terminal-api");
+    let manifest = fs::read_to_string(admission.join("Cargo.toml")).expect("admission manifest");
+    assert!(
+        manifest.contains("market-terminal-application"),
+        "aggregate admission must key validated application-owned actor identities"
+    );
+    for dependency in [
+        "market-terminal =",
+        "market-terminal-engine",
+        "market-terminal-api",
+        "market-terminal-auth",
+        "axum",
+        "tokio",
+        "serde",
+        "reqwest",
+        "ratatui",
+        "crossterm",
+    ] {
+        assert_absent(
+            &admission.join("Cargo.toml"),
+            &manifest,
+            dependency,
+            "admission policy must remain reusable and host-neutral",
+        );
+    }
+
+    let admission_source = production_source(&admission.join("src/lib.rs"));
+    for required in [
+        "pub trait AdmissionController",
+        "pub struct AdmissionPolicy",
+        "pub struct ActorAdmissionKey",
+        "pub struct InMemoryAdmissionController",
+        "MAX_TRACKED_ACTORS",
+        "AdmissionDecision::Limited",
+    ] {
+        assert!(
+            admission_source.contains(required),
+            "aggregate admission must retain its bounded contract `{required}`"
+        );
+    }
+    for needle in [
+        "std::fs",
+        "std::net",
+        "std::env",
+        "SystemTime",
+        "Instant",
+        "tokio::",
+    ] {
+        assert_absent(
+            &admission.join("src/lib.rs"),
+            &admission_source,
+            needle,
+            "admission receives time from its host and cannot own I/O or runtime policy",
+        );
+    }
+
+    let application_source = production_source(&application.join("src/lib.rs"));
+    assert_absent(
+        &application.join("src/lib.rs"),
+        &application_source,
+        "market_terminal_admission",
+        "deterministic application services cannot depend on host admission",
+    );
+    let api_source = production_source(&api.join("src/lib.rs"));
+    for required in [
+        "router_with_admission_services",
+        "admission_controller.admit",
+        "execute_bounded",
+        "tokio::time::timeout",
+        "try_acquire_owned",
+        "spawn_blocking",
+    ] {
+        assert!(
+            api_source.contains(required),
+            "the HTTP host must retain its admission/deadline boundary `{required}`"
+        );
+    }
+}
+
+#[test]
 fn bounded_contexts_do_not_import_adapters_or_each_other() {
     let features = manifest_root().join("src/features");
     let mut contexts = fs::read_dir(&features)

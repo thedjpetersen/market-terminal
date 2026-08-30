@@ -315,6 +315,20 @@ move to its own crate later without changing its public vocabulary.
   capability, budget, and tenant isolation. Service-backed hot revocation,
   interactive browser sessions, and encrypted refresh credentials remain future
   outer adapters.
+- **Complete:** first aggregate admission and bounded execution host seam. The
+  independent `market-terminal-admission` crate owns a runtime-free, clock-free
+  controller contract and bounded in-memory token bucket keyed by validated
+  tenant/principal identity, so credential rotation cannot reset actor budgets.
+  Exact request-rate, burst, and tracked-actor bounds fail configuration;
+  saturated actor storage fails closed until a full-window idle record can be
+  evicted. The API applies admission after authentication and before routing,
+  emits rate headers and typed `429`/`503` failures, moves synchronous engine and
+  artifact work off the async reactor, and enforces independent non-queuing
+  concurrency ceilings plus typed `504` response deadlines. A timed-out blocking
+  task retains its permit through completion, bounding orphaned work without
+  claiming unsafe CPU cancellation. API schema v3 exposes all limits. Shared
+  distributed admission and cancellable long-running job orchestration remain
+  future outer services.
 - **Complete:** P1 saved workspace experience. Five versioned Trader, Quant,
   PM, Risk, and Ops seeds now project through the live registry, disclose
   missing destinations, and require an explicit modal confirmation. The first
@@ -506,7 +520,7 @@ continues.
 | Cross-asset and macro workspaces | Partial | Dedicated Fixed Income context now owns explicit fixed-rate bullet schedules, price/yield analytics, accrued interest, duration/convexity/DV01, deterministic parallel shocks, typed recovery, and fail-closed provider separation | Add dated bond conventions, licensed curves/spreads/history, plus FX, commodities, crypto, ETF, mutual-fund, economics, and sector-rotation contexts through asset-specific adapters. |
 | Compound alerts and delivery | Partial | Restart-safe price/move rules, debounce, acknowledgement, audit, local simulation | Add compound technical/news/portfolio/calendar/sheet rules, cooldown/expiry/limits, breakout scans, and opt-in external channels with delivery audit. |
 | Operations, data quality, and governance | Partial | Structured tracing, lag/drop metrics, provider quality in feature views | Add consolidated health, cache/feed status, data-quality incidents, kill switches, restricted-list policy, model registry/approval, and operator audit views. |
-| Plug-ins, scripting, and external tool API | Partial | Versioned authenticated HTTP execution through tenant/principal-aware application services, injected multi-actor credential resolution, a private digest-only credential adapter, tenant-owned local read-only artifact queries, exact capability policy, per-principal workload budgets, bounded input, and no native/provider bypass | Add service-backed sessions/repositories, aggregate rate/deadline policy, read-only research/MCP tools, capability-scoped plug-in manifests, sandboxed calculations, signing, and versioned scripting. |
+| Plug-ins, scripting, and external tool API | Partial | Versioned authenticated HTTP execution through tenant/principal-aware application services, injected multi-actor credential and admission contracts, aggregate actor token buckets, response deadlines, non-queuing concurrency ceilings, a private digest-only credential adapter, tenant-owned local read-only artifact queries, exact capability policy, per-principal workload budgets, bounded input, and no native/provider bypass | Add service-backed sessions/repositories and distributed admission, read-only research/MCP tools, capability-scoped plug-in manifests, sandboxed calculations, signing, and versioned scripting. |
 | Spreadsheet composition | Covered beyond reference | Native durable workbook, 27 pure functions and four financial functions | Preserve as a differentiator and make every new parity result promotable to a typed sheet range. |
 | Terminal chat | Covered beyond reference | TLS IRC rooms, presence, reconnect, bounded queues | Preserve independently; it is not a prerequisite for OpenTerminalUI parity. |
 

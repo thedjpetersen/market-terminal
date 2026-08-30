@@ -1132,6 +1132,7 @@ crates/
 │                           and a versioned request/response API
 ├── market-terminal-application/ tenant identity, capabilities, budgets, analytical
 │                               use cases, and read-only research-artifact ports
+├── market-terminal-admission/ bounded host-neutral aggregate actor admission
 ├── market-terminal-auth/ mechanism-free credential resolution contract
 ├── market-terminal-credential-store/ private digest-only credential adapter
 ├── market-terminal-artifact-store/ tenant-isolated local read-only adapter
@@ -1180,7 +1181,8 @@ MARKET_TERMINAL_API_CREDENTIALS_FILE=/etc/market-terminal/credentials.json \
 
 `GET /healthz` is public and contains only version/health state. Authenticated
 `GET /v1/capabilities` discloses the server-owned tenant/principal identity,
-capability allowlist, body limit, and analytical workload ceilings;
+capability allowlist, body limit, workload ceilings, aggregate rate policy,
+response deadlines, and blocking-work concurrency ceilings;
 `POST /v1/engine` accepts the versioned engine envelope. There is no CORS,
 provider, arbitrary-command, or mutation surface in the production binary. A
 private local artifact root composes the application-owned query port and mounts
@@ -1189,7 +1191,9 @@ tenant identity always comes from the authenticated actor, never a request
 parameter. The routes remain absent with default configuration.
 See [`docs/web-api.md`](docs/web-api.md) for request examples, status contracts,
 configuration, and deployment constraints;
-[`docs/credentials.md`](docs/credentials.md) for catalog and rotation rules; and
+[`docs/credentials.md`](docs/credentials.md) for catalog and rotation rules;
+[`docs/admission-control.md`](docs/admission-control.md) for rate, deadline, and
+bounded-execution semantics; and
 [`docs/artifact-store.md`](docs/artifact-store.md) for the repository layout and
 fail-closed rules.
 

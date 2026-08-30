@@ -84,8 +84,10 @@ schema rejection, bounded identities/provenance, and fail-closed domain errors.
    pre-deserialization body limits, typed status mapping, structured
    actor/request logging, safe response headers, loopback defaults, and graceful
    shutdown. A private digest-only catalog is the first resolver adapter. Add
-   interactive sessions and hot revocation, deadlines, aggregate rate limits,
-   metrics, and distributed traces before browser deployment.
+   interactive sessions and hot revocation, shared admission, metrics, and
+   distributed traces before horizontally scaled browser deployment. The first
+   process-local aggregate admission, response deadlines, and bounded blocking
+   execution now live in the HTTP host rather than this engine.
 3. Expose provider and persistence capabilities through application services,
    never by teaching the engine to perform I/O.
 4. Generate or hand-maintain TypeScript request/response types from the versioned

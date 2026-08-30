@@ -1,8 +1,10 @@
 use std::{env, net::SocketAddr, sync::Arc};
 
 use market_terminal_api::{
-    router, router_with_artifact_query, router_with_services, ApiConfig, ApiHostConfig,
-    ArtifactReadPolicy, ExecutionBudget, OperationPolicy, DEFAULT_MAX_BODY_BYTES,
+    router_with_host_config, router_with_services, ApiConfig, ApiHostConfig, ArtifactReadPolicy,
+    ExecutionBudget, OperationPolicy, DEFAULT_ARTIFACT_DEADLINE_MILLIS, DEFAULT_BURST_REQUESTS,
+    DEFAULT_ENGINE_DEADLINE_MILLIS, DEFAULT_MAX_ARTIFACT_IN_FLIGHT, DEFAULT_MAX_BODY_BYTES,
+    DEFAULT_MAX_ENGINE_IN_FLIGHT, DEFAULT_MAX_TRACKED_ACTORS, DEFAULT_REQUESTS_PER_MINUTE,
 };
 use market_terminal_application::ResearchArtifactQuery;
 use market_terminal_artifact_store::LocalArtifactQuery;
@@ -34,6 +36,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(env::VarError::NotPresent) => DEFAULT_MAX_BODY_BYTES,
         Err(error) => return Err(error.into()),
     };
+    let host_config = ApiHostConfig::new()
+        .with_max_body_bytes(max_body_bytes)?
+        .with_admission_policy(
+            parse_optional_u32(
+                "MARKET_TERMINAL_API_REQUESTS_PER_MINUTE",
+                DEFAULT_REQUESTS_PER_MINUTE,
+            )?,
+            parse_optional_u32("MARKET_TERMINAL_API_BURST_REQUESTS", DEFAULT_BURST_REQUESTS)?,
+            parse_optional_usize(
+                "MARKET_TERMINAL_API_MAX_TRACKED_ACTORS",
+                DEFAULT_MAX_TRACKED_ACTORS,
+            )?,
+        )?
+        .with_deadlines(
+            parse_optional_u64(
+                "MARKET_TERMINAL_API_ENGINE_DEADLINE_MS",
+                DEFAULT_ENGINE_DEADLINE_MILLIS,
+            )?,
+            parse_optional_u64(
+                "MARKET_TERMINAL_API_ARTIFACT_DEADLINE_MS",
+                DEFAULT_ARTIFACT_DEADLINE_MILLIS,
+            )?,
+        )?
+        .with_concurrency_limits(
+            parse_optional_usize(
+                "MARKET_TERMINAL_API_MAX_ENGINE_IN_FLIGHT",
+                DEFAULT_MAX_ENGINE_IN_FLIGHT,
+            )?,
+            parse_optional_usize(
+                "MARKET_TERMINAL_API_MAX_ARTIFACT_IN_FLIGHT",
+                DEFAULT_MAX_ARTIFACT_IN_FLIGHT,
+            )?,
+        )?;
     let credentials_file = optional_env("MARKET_TERMINAL_API_CREDENTIALS_FILE")?;
     let catalog_mode = credentials_file.is_some();
     let artifact_root = configured_artifact_root(catalog_mode)?;
@@ -48,13 +83,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             reject_legacy_credential_configuration()?;
             let resolver = LocalCredentialResolver::open(path)?;
             let credential_count = resolver.credential_count();
-            let host_config = ApiHostConfig::new().with_max_body_bytes(max_body_bytes)?;
             info!(
                 bind = %bind,
                 max_body_bytes,
                 credential_mode = "hashed_catalog",
                 credential_count,
                 artifact_routes = artifact_root.is_some(),
+                requests_per_minute = host_config.admission_policy().requests_per_minute(),
+                burst_requests = host_config.admission_policy().burst_requests(),
+                engine_deadline_millis = host_config.engine_deadline_millis(),
+                artifact_deadline_millis = host_config.artifact_deadline_millis(),
+                max_engine_in_flight = host_config.max_engine_in_flight(),
+                max_artifact_in_flight = host_config.max_artifact_in_flight(),
                 "market terminal API listening"
             );
             router_with_services(host_config, Arc::new(resolver), artifact_query)
@@ -96,12 +136,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 max_backtest_bars = config.execution_context().budget().max_backtest_bars(),
                 max_comparison_points = config.execution_context().budget().max_comparison_points(),
                 artifact_routes = artifact_root.is_some(),
+                requests_per_minute = host_config.admission_policy().requests_per_minute(),
+                burst_requests = host_config.admission_policy().burst_requests(),
+                engine_deadline_millis = host_config.engine_deadline_millis(),
+                artifact_deadline_millis = host_config.artifact_deadline_millis(),
+                max_engine_in_flight = host_config.max_engine_in_flight(),
+                max_artifact_in_flight = host_config.max_artifact_in_flight(),
                 "market terminal API listening"
             );
-            match artifact_query {
-                Some(query) => router_with_artifact_query(config, query),
-                None => router(config),
-            }
+            router_with_host_config(config, host_config, artifact_query)
         }
     };
     axum::serve(listener, app)
@@ -189,6 +232,28 @@ fn parse_optional_usize(
 ) -> Result<usize, Box<dyn std::error::Error>> {
     match env::var(variable) {
         Ok(value) => Ok(value.parse::<usize>()?),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn parse_optional_u32(
+    variable: &'static str,
+    default: u32,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    match env::var(variable) {
+        Ok(value) => Ok(value.parse::<u32>()?),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn parse_optional_u64(
+    variable: &'static str,
+    default: u64,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    match env::var(variable) {
+        Ok(value) => Ok(value.parse::<u64>()?),
         Err(env::VarError::NotPresent) => Ok(default),
         Err(error) => Err(error.into()),
     }

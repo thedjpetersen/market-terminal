@@ -34,6 +34,13 @@ Optional configuration:
 | `MARKET_TERMINAL_API_MAX_BODY_BYTES` | `4194304` | Inclusive range 1024-8388608; enforced before JSON deserialization. |
 | `MARKET_TERMINAL_API_CREDENTIALS_FILE` | unset | Private, regular, symlink-free digest-only credential catalog. When set, legacy actor variables are rejected. |
 | `MARKET_TERMINAL_API_ARTIFACT_ROOT` | unset | Private local research-artifact directory. Routes are absent when unset; catalog records independently grant access. |
+| `MARKET_TERMINAL_API_REQUESTS_PER_MINUTE` | `600` | Aggregate token refill rate per validated tenant/principal; range 1-60000. |
+| `MARKET_TERMINAL_API_BURST_REQUESTS` | `100` | Immediate actor burst capacity; range 1-10000 and no greater than the refill rate. |
+| `MARKET_TERMINAL_API_MAX_TRACKED_ACTORS` | `4096` | Bounded process-local actor buckets; range 1-16384. Full active tables fail closed. |
+| `MARKET_TERMINAL_API_ENGINE_DEADLINE_MS` | `5000` | Engine response deadline; range 1-60000 ms. |
+| `MARKET_TERMINAL_API_ARTIFACT_DEADLINE_MS` | `2000` | Artifact response deadline; range 1-60000 ms. |
+| `MARKET_TERMINAL_API_MAX_ENGINE_IN_FLIGHT` | `4` | Independent non-queuing engine-work ceiling; range 1-64. |
+| `MARKET_TERMINAL_API_MAX_ARTIFACT_IN_FLIGHT` | `8` | Independent non-queuing artifact-work ceiling; range 1-64. |
 | `RUST_LOG` | subscriber default | Standard tracing filter; request bodies and bearer tokens are never logged. |
 
 Single-credential development mode instead requires
@@ -53,7 +60,7 @@ The process handles Ctrl-C and SIGTERM with graceful Axum shutdown.
 Public and intentionally minimal:
 
 ```json
-{"status":"ok","api_schema_version":2,"application_schema_version":2,"engine_schema_version":1}
+{"status":"ok","api_schema_version":3,"application_schema_version":2,"engine_schema_version":1}
 ```
 
 ### `GET /v1/capabilities`
@@ -62,7 +69,9 @@ Requires `Authorization: Bearer <token>`. The injected resolver selects one
 credential record and returns the API, application, and engine schemas; its
 server-owned tenant/principal identity; exact enabled
 operation names; request-body limit; and per-principal analytical workload
-ceilings. `artifact_operations` is empty unless a host explicitly grants
+ceilings. API schema v3 also declares aggregate request rate/burst, engine and
+artifact response deadlines, and both concurrency ceilings.
+`artifact_operations` is empty unless a host explicitly grants
 `read_research_artifacts`. It discloses no secret, provider, account, or
 persistence state.
 
@@ -132,16 +141,21 @@ bounded documents as specified in [`artifact-store.md`](artifact-store.md).
 | 401 | Missing or incorrect bearer token. |
 | 403 | Operation is valid but the authenticated principal lacks its capability. |
 | 404 | Unknown route or unavailable artifact; cross-tenant ownership is never disclosed. |
+| 429 | The authenticated actor exhausted its aggregate rate or the requested work class is at its concurrency ceiling. |
 | 413 | Body exceeded the configured limit before deserialization. |
 | 415 | Content type is not JSON. |
 | 422 | A syntactically valid operation failed its principal workload budget or domain validation. |
 | 502 | An artifact adapter violated the application contract; its conflicting data is not returned. |
-| 503 | The configured credential resolver or artifact adapter is unavailable. |
+| 503 | Credential, admission, blocking execution, or artifact service is unavailable. |
+| 504 | Synchronous engine or artifact work exceeded its configured response deadline. |
 
 Responses set `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and
 `Referrer-Policy: no-referrer`. Unauthorized responses additionally advertise a
 Bearer challenge. CORS is absent by design; a browser deployment must add an
 explicit origin allowlist at a reviewed gateway or future host middleware.
+Allowed authenticated responses expose `RateLimit-Limit` and
+`RateLimit-Remaining`. Rate exhaustion also supplies `Retry-After` and a
+whole-second `RateLimit-Reset`; concurrency saturation supplies `Retry-After: 1`.
 
 ## Boundary and remaining work
 
@@ -158,7 +172,7 @@ can only list and retrieve the authenticated tenant's documents. The reusable
 API library remains adapter-injected and cannot save or delete. The binary's
 concrete store is selected only at the composition root and refuses insecure
 Unix roots or symlinked catalog entries. `tests/architecture_boundaries.rs`
-enforces `API library -> auth/application ports <- adapters` and rejects native
+enforces `API library -> auth/admission/application ports <- adapters` and rejects native
 package, feature, provider-client, terminal, runtime, and network boundary
 violations in reusable layers.
 
@@ -166,7 +180,14 @@ Before a browser launch, add interactive password/OIDC and cookie-session
 issuance, CSRF/origin policy, and a service-backed resolver with hot revocation;
 the catalog is deliberately a restart-applied machine-credential snapshot. Also
 add transactional ingestion and service-backed tenant storage for horizontal
-deployment, aggregate rate accounting, deadlines, metrics/distributed tracing,
+deployment, shared admission, metrics/distributed tracing,
 audited read-only provider/persistence services, TLS termination, and
 cross-language contract fixtures. Those belong around the engine, never inside
 its deterministic domains.
+
+The current aggregate controller is process-local. Blocking work is moved off
+the async reactor and bounded by semaphores. Deadline expiry cancels the response
+wait, but Rust cannot safely preempt an active blocking calculation: it continues
+to completion while retaining its permit. See
+[`admission-control.md`](admission-control.md) for exact semantics and the
+distributed replacement seam.

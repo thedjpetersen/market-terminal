@@ -8,7 +8,7 @@
 use std::{
     fmt,
     sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
@@ -22,6 +22,10 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use market_terminal_admission::{
+    ActorAdmissionKey, AdmissionConfigError, AdmissionController, AdmissionDecision,
+    AdmissionFailure, AdmissionPolicy, InMemoryAdmissionController,
+};
 use market_terminal_application::{
     AnalyticalApplicationService, ApplicationConfigError, ApplicationError, ApplicationErrorCode,
     ArtifactListRequest, CapabilitySet, EngineErrorCode, EngineOutcome, EngineRequest,
@@ -34,15 +38,27 @@ use market_terminal_auth::{
     ResolvedCredential,
 };
 use serde::{Deserialize, Serialize};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::info;
 
 pub use market_terminal_application::ArtifactCapabilitySet as ArtifactReadPolicy;
 pub use market_terminal_application::{CapabilitySet as OperationPolicy, ExecutionBudget};
 
-pub const API_SCHEMA_VERSION: u16 = 2;
+pub const API_SCHEMA_VERSION: u16 = 3;
 pub const DEFAULT_MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 pub const MIN_MAX_BODY_BYTES: usize = 1_024;
 pub const MAX_MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+pub const DEFAULT_REQUESTS_PER_MINUTE: u32 = 600;
+pub const DEFAULT_BURST_REQUESTS: u32 = 100;
+pub const DEFAULT_MAX_TRACKED_ACTORS: usize = 4_096;
+pub const DEFAULT_ENGINE_DEADLINE_MILLIS: u64 = 5_000;
+pub const DEFAULT_ARTIFACT_DEADLINE_MILLIS: u64 = 2_000;
+pub const MIN_DEADLINE_MILLIS: u64 = 1;
+pub const MAX_DEADLINE_MILLIS: u64 = 60_000;
+pub const DEFAULT_MAX_ENGINE_IN_FLIGHT: usize = 4;
+pub const DEFAULT_MAX_ARTIFACT_IN_FLIGHT: usize = 8;
+pub const MIN_MAX_IN_FLIGHT: usize = 1;
+pub const MAX_MAX_IN_FLIGHT: usize = 64;
 
 #[derive(Clone)]
 pub struct ApiConfig {
@@ -126,6 +142,9 @@ impl fmt::Debug for ApiConfig {
 pub enum ApiConfigError {
     InvalidToken,
     InvalidBodyLimit(usize),
+    InvalidDeadline { kind: &'static str, millis: u64 },
+    InvalidConcurrency { kind: &'static str, value: usize },
+    Admission(AdmissionConfigError),
     Application(ApplicationConfigError),
 }
 
@@ -140,6 +159,15 @@ impl fmt::Display for ApiConfigError {
                 formatter,
                 "API body limit {value} must be between {MIN_MAX_BODY_BYTES} and {MAX_MAX_BODY_BYTES} bytes"
             ),
+            Self::InvalidDeadline { kind, millis } => write!(
+                formatter,
+                "{kind} deadline {millis}ms must be between {MIN_DEADLINE_MILLIS}ms and {MAX_DEADLINE_MILLIS}ms"
+            ),
+            Self::InvalidConcurrency { kind, value } => write!(
+                formatter,
+                "{kind} in-flight limit {value} must be between {MIN_MAX_IN_FLIGHT} and {MAX_MAX_IN_FLIGHT}"
+            ),
+            Self::Admission(error) => error.fmt(formatter),
             Self::Application(error) => error.fmt(formatter),
         }
     }
@@ -153,15 +181,36 @@ impl From<ApplicationConfigError> for ApiConfigError {
     }
 }
 
+impl From<AdmissionConfigError> for ApiConfigError {
+    fn from(error: AdmissionConfigError) -> Self {
+        Self::Admission(error)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ApiHostConfig {
     max_body_bytes: usize,
+    admission_policy: AdmissionPolicy,
+    engine_deadline_millis: u64,
+    artifact_deadline_millis: u64,
+    max_engine_in_flight: usize,
+    max_artifact_in_flight: usize,
 }
 
 impl ApiHostConfig {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
+            admission_policy: AdmissionPolicy::new(
+                DEFAULT_REQUESTS_PER_MINUTE,
+                DEFAULT_BURST_REQUESTS,
+                DEFAULT_MAX_TRACKED_ACTORS,
+            )
+            .expect("default admission policy"),
+            engine_deadline_millis: DEFAULT_ENGINE_DEADLINE_MILLIS,
+            artifact_deadline_millis: DEFAULT_ARTIFACT_DEADLINE_MILLIS,
+            max_engine_in_flight: DEFAULT_MAX_ENGINE_IN_FLIGHT,
+            max_artifact_in_flight: DEFAULT_MAX_ARTIFACT_IN_FLIGHT,
         }
     }
 
@@ -173,6 +222,61 @@ impl ApiHostConfig {
 
     pub const fn max_body_bytes(self) -> usize {
         self.max_body_bytes
+    }
+
+    pub fn with_admission_policy(
+        mut self,
+        requests_per_minute: u32,
+        burst_requests: u32,
+        max_tracked_actors: usize,
+    ) -> Result<Self, ApiConfigError> {
+        self.admission_policy =
+            AdmissionPolicy::new(requests_per_minute, burst_requests, max_tracked_actors)?;
+        Ok(self)
+    }
+
+    pub fn with_deadlines(
+        mut self,
+        engine_deadline_millis: u64,
+        artifact_deadline_millis: u64,
+    ) -> Result<Self, ApiConfigError> {
+        validate_deadline("engine", engine_deadline_millis)?;
+        validate_deadline("artifact", artifact_deadline_millis)?;
+        self.engine_deadline_millis = engine_deadline_millis;
+        self.artifact_deadline_millis = artifact_deadline_millis;
+        Ok(self)
+    }
+
+    pub fn with_concurrency_limits(
+        mut self,
+        max_engine_in_flight: usize,
+        max_artifact_in_flight: usize,
+    ) -> Result<Self, ApiConfigError> {
+        validate_concurrency("engine", max_engine_in_flight)?;
+        validate_concurrency("artifact", max_artifact_in_flight)?;
+        self.max_engine_in_flight = max_engine_in_flight;
+        self.max_artifact_in_flight = max_artifact_in_flight;
+        Ok(self)
+    }
+
+    pub const fn admission_policy(self) -> AdmissionPolicy {
+        self.admission_policy
+    }
+
+    pub const fn engine_deadline_millis(self) -> u64 {
+        self.engine_deadline_millis
+    }
+
+    pub const fn artifact_deadline_millis(self) -> u64 {
+        self.artifact_deadline_millis
+    }
+
+    pub const fn max_engine_in_flight(self) -> usize {
+        self.max_engine_in_flight
+    }
+
+    pub const fn max_artifact_in_flight(self) -> usize {
+        self.max_artifact_in_flight
     }
 }
 
@@ -202,15 +306,38 @@ impl CredentialResolver for StaticCredentialResolver {
 struct ApiState {
     max_body_bytes: usize,
     credential_resolver: Arc<dyn CredentialResolver>,
+    admission_controller: Arc<dyn AdmissionController>,
+    admission_policy: AdmissionPolicy,
+    admission_started_at: Instant,
+    engine_deadline: Duration,
+    artifact_deadline: Duration,
+    engine_semaphore: Arc<Semaphore>,
+    artifact_semaphore: Arc<Semaphore>,
+    max_engine_in_flight: usize,
+    max_artifact_in_flight: usize,
     service: AnalyticalApplicationService,
     artifact_service: Option<ResearchArtifactApplicationService>,
 }
 
 pub fn router(config: ApiConfig) -> Router {
-    build_router(
-        config.max_body_bytes,
+    router_with_host_config(config, ApiHostConfig::new(), None)
+}
+
+/// Builds the legacy single-credential transport with explicit host controls.
+/// This preserves local-development compatibility while applying the same
+/// admission, deadline, and concurrency policy as multi-actor composition.
+pub fn router_with_host_config(
+    config: ApiConfig,
+    host_config: ApiHostConfig,
+    artifact_query: Option<Arc<dyn ResearchArtifactQuery>>,
+) -> Router {
+    let host_config = host_config
+        .with_max_body_bytes(config.max_body_bytes)
+        .expect("legacy API body limit was already validated");
+    router_with_services(
+        host_config,
         static_credential_resolver(&config),
-        None,
+        artifact_query,
     )
 }
 
@@ -220,11 +347,7 @@ pub fn router_with_artifact_query(
     config: ApiConfig,
     query: Arc<dyn ResearchArtifactQuery>,
 ) -> Router {
-    build_router(
-        config.max_body_bytes,
-        static_credential_resolver(&config),
-        Some(ResearchArtifactApplicationService::new(query)),
-    )
+    router_with_host_config(config, ApiHostConfig::new(), Some(query))
 }
 
 /// Builds the reusable transport with a host-owned credential resolver and an
@@ -235,21 +358,51 @@ pub fn router_with_services(
     credential_resolver: Arc<dyn CredentialResolver>,
     artifact_query: Option<Arc<dyn ResearchArtifactQuery>>,
 ) -> Router {
+    let admission_controller = Arc::new(InMemoryAdmissionController::new(config.admission_policy));
+    router_with_admission_services(
+        config,
+        credential_resolver,
+        artifact_query,
+        admission_controller,
+    )
+}
+
+/// Builds the transport with fully injected authentication, aggregate
+/// admission, and optional artifact services. Distributed gateways can replace
+/// the bounded in-memory admission controller without changing routes or the
+/// application/engine layers.
+pub fn router_with_admission_services(
+    config: ApiHostConfig,
+    credential_resolver: Arc<dyn CredentialResolver>,
+    artifact_query: Option<Arc<dyn ResearchArtifactQuery>>,
+    admission_controller: Arc<dyn AdmissionController>,
+) -> Router {
     build_router(
-        config.max_body_bytes,
+        config,
         credential_resolver,
         artifact_query.map(ResearchArtifactApplicationService::new),
+        admission_controller,
     )
 }
 
 fn build_router(
-    max_body_bytes: usize,
+    config: ApiHostConfig,
     credential_resolver: Arc<dyn CredentialResolver>,
     artifact_service: Option<ResearchArtifactApplicationService>,
+    admission_controller: Arc<dyn AdmissionController>,
 ) -> Router {
     let state = ApiState {
-        max_body_bytes,
+        max_body_bytes: config.max_body_bytes,
         credential_resolver,
+        admission_controller,
+        admission_policy: config.admission_policy,
+        admission_started_at: Instant::now(),
+        engine_deadline: Duration::from_millis(config.engine_deadline_millis),
+        artifact_deadline: Duration::from_millis(config.artifact_deadline_millis),
+        engine_semaphore: Arc::new(Semaphore::new(config.max_engine_in_flight)),
+        artifact_semaphore: Arc::new(Semaphore::new(config.max_artifact_in_flight)),
+        max_engine_in_flight: config.max_engine_in_flight,
+        max_artifact_in_flight: config.max_artifact_in_flight,
         service: AnalyticalApplicationService,
         artifact_service,
     };
@@ -303,6 +456,12 @@ async fn capabilities(
             max_body_bytes: state.max_body_bytes,
             max_backtest_bars: budget.max_backtest_bars(),
             max_comparison_points: budget.max_comparison_points(),
+            requests_per_minute: state.admission_policy.requests_per_minute(),
+            burst_requests: state.admission_policy.burst_requests(),
+            engine_deadline_millis: state.engine_deadline.as_millis() as u64,
+            artifact_deadline_millis: state.artifact_deadline.as_millis() as u64,
+            max_engine_in_flight: state.max_engine_in_flight,
+            max_artifact_in_flight: state.max_artifact_in_flight,
         }),
     ))
 }
@@ -332,16 +491,26 @@ async fn list_artifacts(
             )
         }
     };
-    match service.list(
-        &context,
-        ArtifactListRequest {
-            kind: params.kind,
-            cursor: params.cursor,
-            limit: params.limit,
+    let service = service.clone();
+    let execution = execute_bounded(
+        state.artifact_semaphore.clone(),
+        state.artifact_deadline,
+        move || {
+            service.list(
+                &context,
+                ArtifactListRequest {
+                    kind: params.kind,
+                    cursor: params.cursor,
+                    limit: params.limit,
+                },
+            )
         },
-    ) {
-        Ok(page) => secure_response((StatusCode::OK, Json(page))),
-        Err(error) => application_rejection(error),
+    )
+    .await;
+    match execution {
+        Ok(Ok(page)) => secure_response((StatusCode::OK, Json(page))),
+        Ok(Err(error)) => application_rejection(error),
+        Err(error) => bounded_execution_rejection(error),
     }
 }
 
@@ -353,14 +522,22 @@ async fn get_artifact(
     let Some(service) = &state.artifact_service else {
         return not_found().await;
     };
-    match service.get(&context, artifact_id) {
-        Ok(Some(document)) => secure_response((StatusCode::OK, Json(document))),
-        Ok(None) => problem(
+    let service = service.clone();
+    let execution = execute_bounded(
+        state.artifact_semaphore.clone(),
+        state.artifact_deadline,
+        move || service.get(&context, artifact_id),
+    )
+    .await;
+    match execution {
+        Ok(Ok(Some(document))) => secure_response((StatusCode::OK, Json(document))),
+        Ok(Ok(None)) => problem(
             StatusCode::NOT_FOUND,
             "artifact_not_found",
             "artifact was not found",
         ),
-        Err(error) => application_rejection(error),
+        Ok(Err(error)) => application_rejection(error),
+        Err(error) => bounded_execution_rejection(error),
     }
 }
 
@@ -373,9 +550,24 @@ async fn run_engine(
         Ok(Json(request)) => request,
         Err(rejection) => return json_rejection(rejection),
     };
-    let response = match state.service.execute(&context, request) {
-        Ok(response) => response,
-        Err(error) => return application_rejection(error),
+    let request_id = request.request_id.clone();
+    let service = state.service;
+    let execution = execute_bounded(
+        state.engine_semaphore.clone(),
+        state.engine_deadline,
+        move || service.execute(&context, request),
+    )
+    .await;
+    let response = match execution {
+        Ok(Ok(response)) => response,
+        Ok(Err(error)) => return application_rejection(error),
+        Err(error) => {
+            let mut response = bounded_execution_rejection(error);
+            if let Ok(request_id) = HeaderValue::from_str(&request_id) {
+                response.headers_mut().insert("x-request-id", request_id);
+            }
+            return response;
+        }
     };
     let status = engine_status(&response);
     let request_id = HeaderValue::from_str(&response.request_id).ok();
@@ -385,6 +577,70 @@ async fn run_engine(
     }
     response
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BoundedExecutionFailure {
+    ConcurrencyLimit,
+    DeadlineExceeded,
+    Unavailable,
+}
+
+async fn execute_bounded<T, F>(
+    semaphore: Arc<Semaphore>,
+    deadline: Duration,
+    operation: F,
+) -> Result<T, BoundedExecutionFailure>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let permit: OwnedSemaphorePermit = semaphore
+        .try_acquire_owned()
+        .map_err(|_| BoundedExecutionFailure::ConcurrencyLimit)?;
+    let task = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        operation()
+    });
+    match tokio::time::timeout(deadline, task).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(_)) => Err(BoundedExecutionFailure::Unavailable),
+        Err(_) => Err(BoundedExecutionFailure::DeadlineExceeded),
+    }
+}
+
+fn bounded_execution_rejection(error: BoundedExecutionFailure) -> Response {
+    match error {
+        BoundedExecutionFailure::ConcurrencyLimit => {
+            let mut response = problem(
+                StatusCode::TOO_MANY_REQUESTS,
+                "concurrency_limit_exceeded",
+                "authenticated work concurrency limit exceeded",
+            );
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+            response
+        }
+        BoundedExecutionFailure::DeadlineExceeded => problem(
+            StatusCode::GATEWAY_TIMEOUT,
+            "request_deadline_exceeded",
+            "request work exceeded its configured response deadline",
+        ),
+        BoundedExecutionFailure::Unavailable => problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "execution_unavailable",
+            "request execution service is unavailable",
+        ),
+    }
+}
+
+/*
+    The application service remains synchronous and host-neutral. Blocking work
+    runs outside the async reactor. If the response deadline elapses, the client
+    wait is cancelled while the bounded blocking task retains its semaphore
+    permit through completion; this prevents timed-out work from bypassing the
+    in-flight ceiling without claiming cooperative CPU cancellation.
+*/
 
 async fn authorize(State(state): State<ApiState>, mut request: Request, next: Next) -> Response {
     let candidate = request
@@ -419,10 +675,68 @@ async fn authorize(State(state): State<ApiState>, mut request: Request, next: Ne
         return response;
     };
     let context = resolved.execution_context().clone();
+    let actor = ActorAdmissionKey::new(context.tenant_id().clone(), context.principal_id().clone());
+    let observed_at_millis = state
+        .admission_started_at
+        .elapsed()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64;
+    let admission = match state.admission_controller.admit(&actor, observed_at_millis) {
+        Ok(decision) => decision,
+        Err(AdmissionFailure::Unavailable) => {
+            let mut response = problem(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "admission_unavailable",
+                "request admission service is unavailable",
+            );
+            response.extensions_mut().insert(resolved);
+            return response;
+        }
+    };
+    if let AdmissionDecision::Limited {
+        limit,
+        retry_after_millis,
+    } = admission
+    {
+        let mut response = problem(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limit_exceeded",
+            "authenticated actor request rate exceeded",
+        );
+        apply_rate_headers(&mut response, limit, 0, Some(retry_after_millis));
+        response.extensions_mut().insert(resolved);
+        return response;
+    }
     request.extensions_mut().insert(context.clone());
     let mut response = secure_response(next.run(request).await);
+    if let AdmissionDecision::Allowed { limit, remaining } = admission {
+        apply_rate_headers(&mut response, limit, remaining, None);
+    }
     response.extensions_mut().insert(resolved);
     response
+}
+
+fn apply_rate_headers(
+    response: &mut Response,
+    limit: u32,
+    remaining: u32,
+    retry_after_millis: Option<u64>,
+) {
+    if let Ok(value) = HeaderValue::from_str(&limit.to_string()) {
+        response.headers_mut().insert("ratelimit-limit", value);
+    }
+    if let Ok(value) = HeaderValue::from_str(&remaining.to_string()) {
+        response.headers_mut().insert("ratelimit-remaining", value);
+    }
+    if let Some(retry_after_millis) = retry_after_millis {
+        let retry_after_seconds = retry_after_millis.div_ceil(1_000).max(1);
+        if let Ok(value) = HeaderValue::from_str(&retry_after_seconds.to_string()) {
+            response.headers_mut().insert(header::RETRY_AFTER, value);
+        }
+        if let Ok(value) = HeaderValue::from_str(&retry_after_seconds.to_string()) {
+            response.headers_mut().insert("ratelimit-reset", value);
+        }
+    }
 }
 
 fn authentication_unavailable() -> Response {
@@ -578,6 +892,22 @@ fn validate_body_limit(max_body_bytes: usize) -> Result<(), ApiConfigError> {
     }
 }
 
+fn validate_deadline(kind: &'static str, millis: u64) -> Result<(), ApiConfigError> {
+    if !(MIN_DEADLINE_MILLIS..=MAX_DEADLINE_MILLIS).contains(&millis) {
+        Err(ApiConfigError::InvalidDeadline { kind, millis })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_concurrency(kind: &'static str, value: usize) -> Result<(), ApiConfigError> {
+    if !(MIN_MAX_IN_FLIGHT..=MAX_MAX_IN_FLIGHT).contains(&value) {
+        Err(ApiConfigError::InvalidConcurrency { kind, value })
+    } else {
+        Ok(())
+    }
+}
+
 fn static_credential_resolver(config: &ApiConfig) -> Arc<dyn CredentialResolver> {
     Arc::new(StaticCredentialResolver {
         bearer_token: config.bearer_token.clone(),
@@ -621,6 +951,12 @@ struct CapabilityResponse {
     max_body_bytes: usize,
     max_backtest_bars: usize,
     max_comparison_points: usize,
+    requests_per_minute: u32,
+    burst_requests: u32,
+    engine_deadline_millis: u64,
+    artifact_deadline_millis: u64,
+    max_engine_in_flight: usize,
+    max_artifact_in_flight: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -631,6 +967,8 @@ struct ProblemResponse {
 
 #[cfg(test)]
 mod tests {
+    use std::{thread, time::Duration};
+
     use axum::{
         body::{to_bytes, Body},
         http::{header, Request, StatusCode},
@@ -701,6 +1039,18 @@ mod tests {
         }
     }
 
+    struct UnavailableAdmissionController;
+
+    impl AdmissionController for UnavailableAdmissionController {
+        fn admit(
+            &self,
+            _: &ActorAdmissionKey,
+            _: u64,
+        ) -> Result<AdmissionDecision, AdmissionFailure> {
+            Err(AdmissionFailure::Unavailable)
+        }
+    }
+
     fn resolved_credential(
         credential_id: &str,
         tenant: &str,
@@ -760,6 +1110,33 @@ mod tests {
                         && document.summary.artifact_id == key.artifact_id()
                 })
                 .cloned())
+        }
+    }
+
+    #[derive(Clone)]
+    struct SlowArtifactQuery {
+        delay: Duration,
+    }
+
+    impl ResearchArtifactQuery for SlowArtifactQuery {
+        fn list(
+            &self,
+            key: &TenantArtifactListKey,
+        ) -> Result<ResearchArtifactPage, ArtifactQueryFailure> {
+            thread::sleep(self.delay);
+            Ok(ResearchArtifactPage {
+                schema_version: ARTIFACT_QUERY_SCHEMA_VERSION,
+                items: Vec::new(),
+                next_cursor: key.cursor().map(str::to_owned),
+            })
+        }
+
+        fn get(
+            &self,
+            _: &TenantArtifactKey,
+        ) -> Result<Option<ResearchArtifactDocument>, ArtifactQueryFailure> {
+            thread::sleep(self.delay);
+            Ok(None)
         }
     }
 
@@ -1154,6 +1531,9 @@ mod tests {
         assert!(ApiConfig::for_principal(TOKEN, "tenant", "bad/principal").is_err());
         let config = ApiConfig::new(TOKEN).unwrap();
         assert!(!format!("{config:?}").contains(TOKEN));
+        assert!(ApiHostConfig::new().with_admission_policy(0, 1, 1).is_err());
+        assert!(ApiHostConfig::new().with_deadlines(0, 1).is_err());
+        assert!(ApiHostConfig::new().with_concurrency_limits(0, 1).is_err());
     }
 
     #[tokio::test]
@@ -1240,6 +1620,142 @@ mod tests {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body = json_body(response).await;
         assert_eq!(body["code"], "authentication_unavailable");
+        assert!(!body.to_string().contains(TOKEN));
+    }
+
+    #[tokio::test]
+    async fn aggregate_rate_policy_is_actor_scoped_across_credentials() {
+        let token_a = "aggregate-a-router-token-0123456789-ABCDE";
+        let token_b = "aggregate-b-router-token-0123456789-ABCDE";
+        let token_c = "aggregate-c-router-token-0123456789-ABCDE";
+        let shared_a = resolved_credential(
+            "credential-a",
+            "tenant-a",
+            "principal-a",
+            CapabilitySet::all(),
+            false,
+            ExecutionBudget::default(),
+        );
+        let shared_b = resolved_credential(
+            "credential-b",
+            "tenant-a",
+            "principal-a",
+            CapabilitySet::all(),
+            false,
+            ExecutionBudget::default(),
+        );
+        let independent = resolved_credential(
+            "credential-c",
+            "tenant-b",
+            "principal-a",
+            CapabilitySet::all(),
+            false,
+            ExecutionBudget::default(),
+        );
+        let resolver = FixtureCredentialResolver {
+            entries: vec![
+                (token_a.to_owned(), shared_a),
+                (token_b.to_owned(), shared_b),
+                (token_c.to_owned(), independent),
+            ],
+        };
+        let host = ApiHostConfig::new().with_admission_policy(1, 1, 8).unwrap();
+        let app = router_with_services(host, Arc::new(resolver), None);
+
+        let response = app
+            .clone()
+            .oneshot(bearer_get("/v1/capabilities", token_a))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["ratelimit-limit"], "1");
+        assert_eq!(response.headers()["ratelimit-remaining"], "0");
+        let body = json_body(response).await;
+        assert_eq!(body["requests_per_minute"], 1);
+        assert_eq!(body["burst_requests"], 1);
+
+        let response = app
+            .clone()
+            .oneshot(bearer_get("/v1/capabilities", token_b))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()[header::RETRY_AFTER], "60");
+        assert_eq!(json_body(response).await["code"], "rate_limit_exceeded");
+
+        let response = app
+            .oneshot(bearer_get("/v1/capabilities", token_c))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn artifact_deadline_retains_concurrency_permit_until_work_finishes() {
+        let config = ApiConfig::for_principal(TOKEN, "tenant-a", "researcher-7")
+            .unwrap()
+            .with_artifact_policy(ArtifactReadPolicy::read_only());
+        let host = ApiHostConfig::new()
+            .with_deadlines(DEFAULT_ENGINE_DEADLINE_MILLIS, 1)
+            .unwrap()
+            .with_concurrency_limits(DEFAULT_MAX_ENGINE_IN_FLIGHT, 1)
+            .unwrap();
+        let app = router_with_host_config(
+            config,
+            host,
+            Some(Arc::new(SlowArtifactQuery {
+                delay: Duration::from_millis(40),
+            })),
+        );
+
+        let response = app
+            .clone()
+            .oneshot(authenticated_get("/v1/artifacts"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(
+            json_body(response).await["code"],
+            "request_deadline_exceeded"
+        );
+
+        let response = app
+            .oneshot(authenticated_get("/v1/artifacts"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            json_body(response).await["code"],
+            "concurrency_limit_exceeded"
+        );
+    }
+
+    #[tokio::test]
+    async fn admission_backend_failure_is_actor_aware_and_secret_free() {
+        let resolved = resolved_credential(
+            "credential-a",
+            "tenant-a",
+            "principal-a",
+            CapabilitySet::all(),
+            false,
+            ExecutionBudget::default(),
+        );
+        let resolver = FixtureCredentialResolver {
+            entries: vec![(TOKEN.to_owned(), resolved)],
+        };
+        let app = router_with_admission_services(
+            ApiHostConfig::new(),
+            Arc::new(resolver),
+            None,
+            Arc::new(UnavailableAdmissionController),
+        );
+        let response = app
+            .oneshot(authenticated_get("/v1/capabilities"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = json_body(response).await;
+        assert_eq!(body["code"], "admission_unavailable");
         assert!(!body.to_string().contains(TOKEN));
     }
 }

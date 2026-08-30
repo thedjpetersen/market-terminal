@@ -1356,10 +1356,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "market-terminal-admission"
+version = "0.1.0"
+dependencies = [
+ "market-terminal-application",
+]
+
+[[package]]
 name = "market-terminal-api"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "market-terminal-admission",
  "market-terminal-application",
  "market-terminal-artifact-store",
  "market-terminal-auth",

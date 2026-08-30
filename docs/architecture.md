@@ -18,14 +18,16 @@ native bootstrap ──▶ app kernel
                              ▼
                     market-terminal-engine ◀── market-terminal-application
                                                     ▲
-                                      ┌─────────────┴──────────────┐
-                                      │                            │
-                           market-terminal-auth          artifact query port
-                                      ▲                            ▲
-                                      │                            │
-                         credential-store adapter        artifact-store adapter
-                                      ▲                            ▲
-                                      └─────────────┬──────────────┘
+                           market-terminal-admission       │
+                                      ▲                    │
+                                      ├─────────────┬──────┘
+                                      │             │
+                           market-terminal-auth   artifact query port
+                                      ▲             ▲
+                                      │             │
+                         credential-store adapter artifact-store adapter
+                                      ▲             ▲
+                                      └──────┬──────┘
                                                     │
                                           market-terminal-api
 ```
@@ -62,15 +64,25 @@ native bootstrap ──▶ app kernel
   only SHA-256 token digests, stable actor identities, exact capabilities,
   validity windows, and workload budgets. Only a host composition root selects
   this adapter.
+- `crates/market-terminal-admission` owns host-neutral aggregate actor admission.
+  Its bounded token bucket keys the application-owned tenant/principal pair and
+  consumes host-supplied monotonic time; it has no transport, async runtime,
+  clock, environment, filesystem, network, authentication, or engine dependency.
+  The API injects this contract after authentication and before dispatch. A
+  process-local controller is the default; distributed deployments can replace
+  it without moving rate policy into deterministic layers.
 - `crates/market-terminal-api` is an HTTP host adapter over the application
   service crate. It
   does not depend on the native product, feature modules, infrastructure, or
   terminal libraries and cannot bypass application authorization to call the
   engine. Its reusable router accepts a host-owned credential resolver and maps
   each bearer credential to a server-owned actor,
-  applies body limits before JSON deserialization, and owns transport-safe error
-  mapping, request correlation, security headers, loopback-safe binding, and
-  graceful shutdown. Its library can mount authenticated read-only artifact
+  applies body limits before JSON deserialization, aggregate actor admission,
+  independent non-queuing work semaphores, and response deadlines. Synchronous
+  work runs outside the async reactor; timed-out work retains its permit through
+  completion rather than escaping the concurrency ceiling. The API also owns
+  transport-safe error mapping, request correlation, security headers,
+  loopback-safe binding, and graceful shutdown. Its library can mount authenticated read-only artifact
   list/get routes when a host supplies the application port. Its binary selects
   the local read-only adapter only when an artifact root is configured, while
   resolved actors independently own the exact read capability. The legacy

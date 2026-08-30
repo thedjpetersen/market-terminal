@@ -8,12 +8,13 @@ repository = "https://github.com/thedjpetersen/market-terminal"
 
 [dependencies]
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio"] }
+market-terminal-admission = { path = "../market-terminal-admission" }
 market-terminal-application = { path = "../market-terminal-application" }
 market-terminal-artifact-store = { path = "../market-terminal-artifact-store" }
 market-terminal-auth = { path = "../market-terminal-auth" }
 market-terminal-credential-store = { path = "../market-terminal-credential-store" }
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
