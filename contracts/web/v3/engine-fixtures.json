@@ -1,0 +1,844 @@
+{
+  "contract_schema_version": 1,
+  "api_schema_version": 3,
+  "application_schema_version": 2,
+  "engine_schema_version": 1,
+  "cases": [
+    {
+      "operation": "run_backtest",
+      "result_type": "backtest",
+      "request": {
+        "schema_version": 1,
+        "request_id": "contract:run-backtest",
+        "operation": "run_backtest",
+        "input": {
+          "config": {
+            "instrument_id": "security:contract",
+            "symbol": "FIXTURE",
+            "fast_window": 2,
+            "slow_window": 4,
+            "execution_cost_bps": 3,
+            "commission_micros": 250000,
+            "initial_cash_micros": 100000000000
+          },
+          "bars": [
+            {
+              "timestamp": 1800000000,
+              "open_micros": 99000000,
+              "high_micros": 102000000,
+              "low_micros": 98000000,
+              "close_micros": 100000000,
+              "volume": 1000000
+            },
+            {
+              "timestamp": 1800086400,
+              "open_micros": 100000000,
+              "high_micros": 103000000,
+              "low_micros": 99000000,
+              "close_micros": 101000000,
+              "volume": 1010000
+            },
+            {
+              "timestamp": 1800172800,
+              "open_micros": 101000000,
+              "high_micros": 104000000,
+              "low_micros": 100000000,
+              "close_micros": 102000000,
+              "volume": 1020000
+            },
+            {
+              "timestamp": 1800259200,
+              "open_micros": 98000000,
+              "high_micros": 101000000,
+              "low_micros": 97000000,
+              "close_micros": 99000000,
+              "volume": 1030000
+            },
+            {
+              "timestamp": 1800345600,
+              "open_micros": 97000000,
+              "high_micros": 100000000,
+              "low_micros": 96000000,
+              "close_micros": 98000000,
+              "volume": 1040000
+            },
+            {
+              "timestamp": 1800432000,
+              "open_micros": 102000000,
+              "high_micros": 105000000,
+              "low_micros": 101000000,
+              "close_micros": 103000000,
+              "volume": 1050000
+            },
+            {
+              "timestamp": 1800518400,
+              "open_micros": 104000000,
+              "high_micros": 107000000,
+              "low_micros": 103000000,
+              "close_micros": 105000000,
+              "volume": 1060000
+            },
+            {
+              "timestamp": 1800604800,
+              "open_micros": 103000000,
+              "high_micros": 106000000,
+              "low_micros": 102000000,
+              "close_micros": 104000000,
+              "volume": 1070000
+            }
+          ],
+          "source": "contract-fixture",
+          "quality": "deterministic",
+          "input_version": "fixture-v1"
+        }
+      },
+      "response": {
+        "schema_version": 1,
+        "request_id": "contract:run-backtest",
+        "status": "ok",
+        "result_type": "backtest",
+        "data": {
+          "schema_version": 1,
+          "config": {
+            "instrument_id": "security:contract",
+            "symbol": "FIXTURE",
+            "fast_window": 2,
+            "slow_window": 4,
+            "execution_cost_bps": 3,
+            "commission_micros": 250000,
+            "initial_cash_micros": 100000000000
+          },
+          "strategy": "SMA 2/4 NEXT-OPEN LONG-ONLY",
+          "instrument_id": "security:contract",
+          "symbol": "FIXTURE",
+          "source": "contract-fixture",
+          "quality": "deterministic",
+          "input_version": "fixture-v1",
+          "config_digest": "CFG-FNV1A64-E49A973C7034DF43",
+          "data_digest": "DATA-FNV1A64-7E3EE3CB113ACF01",
+          "run_digest": "RUN-FNV1A64-DB0985A38685B15D",
+          "artifact_digest": "ART-FNV1A64-EEBE91502E2B611E",
+          "bars": 8,
+          "first_timestamp": 1800000000,
+          "last_timestamp": 1800604800,
+          "initial_cash_micros": 100000000000,
+          "final_equity_micros": 100939777000,
+          "total_return_bps": 93,
+          "max_drawdown_bps": 0,
+          "turnover_bps": 9993,
+          "decisions": [
+            {
+              "observed_at": 1800518400,
+              "executes_at": 1800604800,
+              "target_long": true
+            }
+          ],
+          "trades": [
+            {
+              "side": "Buy",
+              "signal_timestamp": 1800518400,
+              "execution_timestamp": 1800604800,
+              "quantity": 970,
+              "reference_price_micros": 103000000,
+              "execution_price_micros": 103030900,
+              "commission_micros": 250000
+            }
+          ],
+          "equity": [
+            {
+              "timestamp": 1800000000,
+              "equity_micros": 100000000000
+            },
+            {
+              "timestamp": 1800086400,
+              "equity_micros": 100000000000
+            },
+            {
+              "timestamp": 1800172800,
+              "equity_micros": 100000000000
+            },
+            {
+              "timestamp": 1800259200,
+              "equity_micros": 100000000000
+            },
+            {
+              "timestamp": 1800345600,
+              "equity_micros": 100000000000
+            },
+            {
+              "timestamp": 1800432000,
+              "equity_micros": 100000000000
+            },
+            {
+              "timestamp": 1800518400,
+              "equity_micros": 100000000000
+            },
+            {
+              "timestamp": 1800604800,
+              "equity_micros": 100939777000
+            }
+          ],
+          "open_quantity": 970,
+          "methodology": "SIGNAL AT BAR CLOSE · EXECUTION AT NEXT BAR OPEN · INTEGER SHARES · LONG ONLY · MARK TO MARKET AT CLOSE",
+          "disclosures": [
+            "ALL-IN EXECUTION PENALTY 3 BPS EACH SIDE",
+            "FIXED COMMISSION 0.25 EACH FILL",
+            "NO BORROW · LEVERAGE · PARTIAL FILLS · IMPACT · DIVIDENDS · TAXES",
+            "RESEARCH REPLAY ONLY · NOT A PERFORMANCE PROMISE OR LIVE ORDER PATH"
+          ]
+        }
+      }
+    },
+    {
+      "operation": "compare_backtests",
+      "result_type": "backtest_comparison",
+      "request": {
+        "schema_version": 1,
+        "request_id": "contract:compare-backtests",
+        "operation": "compare_backtests",
+        "input": {
+          "baseline": {
+            "schema_version": 1,
+            "config": {
+              "instrument_id": "security:contract",
+              "symbol": "FIXTURE",
+              "fast_window": 2,
+              "slow_window": 4,
+              "execution_cost_bps": 3,
+              "commission_micros": 250000,
+              "initial_cash_micros": 100000000000
+            },
+            "strategy": "SMA 2/4 NEXT-OPEN LONG-ONLY",
+            "instrument_id": "security:contract",
+            "symbol": "FIXTURE",
+            "source": "contract-fixture",
+            "quality": "deterministic",
+            "input_version": "fixture-v1",
+            "config_digest": "CFG-FNV1A64-E49A973C7034DF43",
+            "data_digest": "DATA-FNV1A64-7E3EE3CB113ACF01",
+            "run_digest": "RUN-FNV1A64-DB0985A38685B15D",
+            "artifact_digest": "ART-FNV1A64-EEBE91502E2B611E",
+            "bars": 8,
+            "first_timestamp": 1800000000,
+            "last_timestamp": 1800604800,
+            "initial_cash_micros": 100000000000,
+            "final_equity_micros": 100939777000,
+            "total_return_bps": 93,
+            "max_drawdown_bps": 0,
+            "turnover_bps": 9993,
+            "decisions": [
+              {
+                "observed_at": 1800518400,
+                "executes_at": 1800604800,
+                "target_long": true
+              }
+            ],
+            "trades": [
+              {
+                "side": "Buy",
+                "signal_timestamp": 1800518400,
+                "execution_timestamp": 1800604800,
+                "quantity": 970,
+                "reference_price_micros": 103000000,
+                "execution_price_micros": 103030900,
+                "commission_micros": 250000
+              }
+            ],
+            "equity": [
+              {
+                "timestamp": 1800000000,
+                "equity_micros": 100000000000
+              },
+              {
+                "timestamp": 1800086400,
+                "equity_micros": 100000000000
+              },
+              {
+                "timestamp": 1800172800,
+                "equity_micros": 100000000000
+              },
+              {
+                "timestamp": 1800259200,
+                "equity_micros": 100000000000
+              },
+              {
+                "timestamp": 1800345600,
+                "equity_micros": 100000000000
+              },
+              {
+                "timestamp": 1800432000,
+                "equity_micros": 100000000000
+              },
+              {
+                "timestamp": 1800518400,
+                "equity_micros": 100000000000
+              },
+              {
+                "timestamp": 1800604800,
+                "equity_micros": 100939777000
+              }
+            ],
+            "open_quantity": 970,
+            "methodology": "SIGNAL AT BAR CLOSE · EXECUTION AT NEXT BAR OPEN · INTEGER SHARES · LONG ONLY · MARK TO MARKET AT CLOSE",
+            "disclosures": [
+              "ALL-IN EXECUTION PENALTY 3 BPS EACH SIDE",
+              "FIXED COMMISSION 0.25 EACH FILL",
+              "NO BORROW · LEVERAGE · PARTIAL FILLS · IMPACT · DIVIDENDS · TAXES",
+              "RESEARCH REPLAY ONLY · NOT A PERFORMANCE PROMISE OR LIVE ORDER PATH"
+            ]
+          },
+          "candidate": {
+            "schema_version": 1,
+            "config": {
+              "instrument_id": "security:contract",
+              "symbol": "FIXTURE",
+              "fast_window": 3,
+              "slow_window": 4,
+              "execution_cost_bps": 3,
+              "commission_micros": 250000,
+              "initial_cash_micros": 100000000000
+            },
+            "strategy": "SMA 3/4 NEXT-OPEN LONG-ONLY",
+            "instrument_id": "security:contract",
+            "symbol": "FIXTURE",
+            "source": "contract-fixture",
+            "quality": "deterministic",
+            "input_version": "fixture-v1",
+            "config_digest": "CFG-FNV1A64-2757D881267D8692",
+            "data_digest": "DATA-FNV1A64-7E3EE3CB113ACF01",
+            "run_digest": "RUN-FNV1A64-5C09A47EA3B82737",
+            "artifact_digest": "ART-FNV1A64-DE380929C0E3A020",
+            "bars": 8,
+            "first_timestamp": 1800000000,
+            "last_timestamp": 1800604800,
+            "initial_cash_micros": 100000000000,
+            "final_equity_micros": 106075271900,
+            "total_return_bps": 607,
+            "max_drawdown_bps": 0,
+            "turnover_bps": 30995,
+            "decisions": [
+              {
+                "observed_at": 1800259200,
+                "executes_at": 1800345600,
+                "target_long": true
+              },
+              {
+                "observed_at": 1800345600,
+                "executes_at": 1800432000,
+                "target_long": false
+              },
+              {
+                "observed_at": 1800518400,
+                "executes_at": 1800604800,
+                "target_long": true
+              }
+            ],
+            "trades": [
+              {
+                "side": "Buy",
+                "signal_timestamp": 1800259200,
+                "execution_timestamp": 1800345600,
+                "quantity": 1030,
+                "reference_price_micros": 97000000,
+                "execution_price_micros": 97029100,
+                "commission_micros": 250000
+              },
+              {
+                "side": "Sell",
+                "signal_timestamp": 1800345600,
+                "execution_timestamp": 1800432000,
+                "quantity": 1030,
+                "reference_price_micros": 102000000,
+                "execution_price_micros": 101969400,
+                "commission_micros": 250000
+              },
+              {
+                "side": "Buy",
+                "signal_timestamp": 1800518400,
+                "execution_timestamp": 1800604800,
+                "quantity": 1019,
+                "reference_price_micros": 103000000,
+                "execution_price_micros": 103030900,
+                "commission_micros": 250000
+              }
+            ],
+            "equity": [
+              {
+                "timestamp": 1800000000,
+                "equity_micros": 100000000000
+              },
+              {
+                "timestamp": 1800086400,
+                "equity_micros": 100000000000
+              },
+              {
+                "timestamp": 1800172800,
+                "equity_micros": 100000000000
+              },
+              {
+                "timestamp": 1800259200,
+                "equity_micros": 100000000000
+              },
+              {
+                "timestamp": 1800345600,
+                "equity_micros": 100999777000
+              },
+              {
+                "timestamp": 1800432000,
+                "equity_micros": 105088009000
+              },
+              {
+                "timestamp": 1800518400,
+                "equity_micros": 105088009000
+              },
+              {
+                "timestamp": 1800604800,
+                "equity_micros": 106075271900
+              }
+            ],
+            "open_quantity": 1019,
+            "methodology": "SIGNAL AT BAR CLOSE · EXECUTION AT NEXT BAR OPEN · INTEGER SHARES · LONG ONLY · MARK TO MARKET AT CLOSE",
+            "disclosures": [
+              "ALL-IN EXECUTION PENALTY 3 BPS EACH SIDE",
+              "FIXED COMMISSION 0.25 EACH FILL",
+              "NO BORROW · LEVERAGE · PARTIAL FILLS · IMPACT · DIVIDENDS · TAXES",
+              "RESEARCH REPLAY ONLY · NOT A PERFORMANCE PROMISE OR LIVE ORDER PATH"
+            ]
+          }
+        }
+      },
+      "response": {
+        "schema_version": 1,
+        "request_id": "contract:compare-backtests",
+        "status": "ok",
+        "result_type": "backtest_comparison",
+        "data": {
+          "schema_version": 1,
+          "instrument_id": "security:contract",
+          "symbol": "FIXTURE",
+          "source": "contract-fixture",
+          "quality": "deterministic",
+          "input_version": "fixture-v1",
+          "data_digest": "DATA-FNV1A64-7E3EE3CB113ACF01",
+          "bars": 8,
+          "first_timestamp": 1800000000,
+          "last_timestamp": 1800604800,
+          "initial_cash_micros": 100000000000,
+          "baseline": {
+            "run_digest": "RUN-FNV1A64-DB0985A38685B15D",
+            "artifact_digest": "ART-FNV1A64-EEBE91502E2B611E",
+            "config_digest": "CFG-FNV1A64-E49A973C7034DF43",
+            "fast_window": 2,
+            "slow_window": 4,
+            "execution_cost_bps": 3,
+            "commission_micros": 250000,
+            "final_equity_micros": 100939777000,
+            "total_return_bps": 93,
+            "max_drawdown_bps": 0,
+            "turnover_bps": 9993,
+            "trades": 1
+          },
+          "candidate": {
+            "run_digest": "RUN-FNV1A64-5C09A47EA3B82737",
+            "artifact_digest": "ART-FNV1A64-DE380929C0E3A020",
+            "config_digest": "CFG-FNV1A64-2757D881267D8692",
+            "fast_window": 3,
+            "slow_window": 4,
+            "execution_cost_bps": 3,
+            "commission_micros": 250000,
+            "final_equity_micros": 106075271900,
+            "total_return_bps": 607,
+            "max_drawdown_bps": 0,
+            "turnover_bps": 30995,
+            "trades": 3
+          },
+          "changed_parameters": [
+            "FAST"
+          ],
+          "final_equity_delta_micros": 5135494900,
+          "total_return_delta_bps": 514,
+          "max_drawdown_delta_bps": 0,
+          "turnover_delta_bps": 21002,
+          "trade_count_delta": 2,
+          "comparison_digest": "CMP-FNV1A64-B18ABD4FF2D94E53",
+          "methodology": "PAIRED DESCRIPTIVE DELTAS OVER IDENTICAL VERSIONED INPUT DATA",
+          "disclosure": "IN-SAMPLE COMPARISON ONLY · NO SIGNIFICANCE, ROBUSTNESS, OR PERFORMANCE CLAIM"
+        }
+      }
+    },
+    {
+      "operation": "price_option",
+      "result_type": "option_analytics",
+      "request": {
+        "schema_version": 1,
+        "request_id": "contract:price-option",
+        "operation": "price_option",
+        "input": {
+          "symbol": "AAPL",
+          "right": "call",
+          "spot_micros": 190000000,
+          "strike_micros": 200000000,
+          "days_to_expiry": 30,
+          "volatility_bps": 2500,
+          "risk_free_rate_bps": 500,
+          "dividend_yield_bps": 0,
+          "contract_multiplier": 100
+        }
+      },
+      "response": {
+        "schema_version": 1,
+        "request_id": "contract:price-option",
+        "status": "ok",
+        "result_type": "option_analytics",
+        "data": {
+          "input": {
+            "symbol": "AAPL",
+            "right": "call",
+            "spot_micros": 190000000,
+            "strike_micros": 200000000,
+            "days_to_expiry": 30,
+            "volatility_bps": 2500,
+            "risk_free_rate_bps": 500,
+            "dividend_yield_bps": 0,
+            "contract_multiplier": 100
+          },
+          "price_micros": 2135827,
+          "intrinsic_micros": 0,
+          "time_value_micros": 2135827,
+          "delta_millionths": 266812,
+          "gamma_billionths": 24135731,
+          "vega_micros_per_point": 179034,
+          "theta_micros_per_day": -81249,
+          "rho_micros_per_point": 39911,
+          "scenarios": [
+            {
+              "spot_shock_bps": -2000,
+              "volatility_shift_bps": -500,
+              "spot_micros": 152000000,
+              "volatility_bps": 2000,
+              "price_micros": 2,
+              "contract_value_micros": 200
+            },
+            {
+              "spot_shock_bps": -2000,
+              "volatility_shift_bps": 0,
+              "spot_micros": 152000000,
+              "volatility_bps": 2500,
+              "price_micros": 239,
+              "contract_value_micros": 23900
+            },
+            {
+              "spot_shock_bps": -2000,
+              "volatility_shift_bps": 500,
+              "spot_micros": 152000000,
+              "volatility_bps": 3000,
+              "price_micros": 3414,
+              "contract_value_micros": 341400
+            },
+            {
+              "spot_shock_bps": -1000,
+              "volatility_shift_bps": -500,
+              "spot_micros": 171000000,
+              "volatility_bps": 2000,
+              "price_micros": 12752,
+              "contract_value_micros": 1275200
+            },
+            {
+              "spot_shock_bps": -1000,
+              "volatility_shift_bps": 0,
+              "spot_micros": 171000000,
+              "volatility_bps": 2500,
+              "price_micros": 79050,
+              "contract_value_micros": 7905000
+            },
+            {
+              "spot_shock_bps": -1000,
+              "volatility_shift_bps": 500,
+              "spot_micros": 171000000,
+              "volatility_bps": 3000,
+              "price_micros": 241918,
+              "contract_value_micros": 24191800
+            },
+            {
+              "spot_shock_bps": 0,
+              "volatility_shift_bps": -500,
+              "spot_micros": 190000000,
+              "volatility_bps": 2000,
+              "price_micros": 1287238,
+              "contract_value_micros": 128723800
+            },
+            {
+              "spot_shock_bps": 0,
+              "volatility_shift_bps": 0,
+              "spot_micros": 190000000,
+              "volatility_bps": 2500,
+              "price_micros": 2135827,
+              "contract_value_micros": 213582700
+            },
+            {
+              "spot_shock_bps": 0,
+              "volatility_shift_bps": 500,
+              "spot_micros": 190000000,
+              "volatility_bps": 3000,
+              "price_micros": 3063963,
+              "contract_value_micros": 306396300
+            },
+            {
+              "spot_shock_bps": 1000,
+              "volatility_shift_bps": -500,
+              "spot_micros": 209000000,
+              "volatility_bps": 2000,
+              "price_micros": 11131265,
+              "contract_value_micros": 1113126500
+            },
+            {
+              "spot_shock_bps": 1000,
+              "volatility_shift_bps": 0,
+              "spot_micros": 209000000,
+              "volatility_bps": 2500,
+              "price_micros": 12011640,
+              "contract_value_micros": 1201164000
+            },
+            {
+              "spot_shock_bps": 1000,
+              "volatility_shift_bps": 500,
+              "spot_micros": 209000000,
+              "volatility_bps": 3000,
+              "price_micros": 12978023,
+              "contract_value_micros": 1297802300
+            },
+            {
+              "spot_shock_bps": 2000,
+              "volatility_shift_bps": -500,
+              "spot_micros": 228000000,
+              "volatility_bps": 2000,
+              "price_micros": 28858043,
+              "contract_value_micros": 2885804300
+            },
+            {
+              "spot_shock_bps": 2000,
+              "volatility_shift_bps": 0,
+              "spot_micros": 228000000,
+              "volatility_bps": 2500,
+              "price_micros": 28995462,
+              "contract_value_micros": 2899546200
+            },
+            {
+              "spot_shock_bps": 2000,
+              "volatility_shift_bps": 500,
+              "spot_micros": 228000000,
+              "volatility_bps": 3000,
+              "price_micros": 29275660,
+              "contract_value_micros": 2927566000
+            }
+          ],
+          "model_version": "BLACK-SCHOLES-EUROPEAN-V1",
+          "input_digest": "OPT-B0A4F6C3885EBE9C",
+          "methodology": "EUROPEAN BLACK-SCHOLES · CONTINUOUS RATES/DIVIDENDS · ACT/365",
+          "disclosures": [
+            "MODEL OUTPUT ONLY · NOT A LIVE QUOTE OR INVESTMENT RECOMMENDATION",
+            "MODEL GREEKS ARE SEPARATE FROM PROVIDER GREEKS; NONE ARE LOADED",
+            "EUROPEAN EXERCISE · NO EARLY-EXERCISE OR DISCRETE-DIVIDEND MODEL",
+            "SCENARIOS HOLD TIME, RATES, AND DIVIDENDS CONSTANT"
+          ]
+        }
+      }
+    },
+    {
+      "operation": "analyze_bond",
+      "result_type": "bond_analytics",
+      "request": {
+        "schema_version": 1,
+        "request_id": "contract:analyze-bond",
+        "operation": "analyze_bond",
+        "input": {
+          "instrument_id": "UST-5Y-REFERENCE",
+          "currency": "USD",
+          "face_micros": 100000000,
+          "coupon_bps": 450,
+          "yield_bps": 425,
+          "years_to_maturity": 5,
+          "frequency": "semi_annual",
+          "accrued_period_bps": 0
+        }
+      },
+      "response": {
+        "schema_version": 1,
+        "request_id": "contract:analyze-bond",
+        "status": "ok",
+        "result_type": "bond_analytics",
+        "data": {
+          "input": {
+            "instrument_id": "UST-5Y-REFERENCE",
+            "currency": "USD",
+            "face_micros": 100000000,
+            "coupon_bps": 450,
+            "yield_bps": 425,
+            "years_to_maturity": 5,
+            "frequency": "semi_annual",
+            "accrued_period_bps": 0
+          },
+          "clean_price_micros": 101115515,
+          "dirty_price_micros": 101115515,
+          "accrued_interest_micros": 0,
+          "coupon_payment_micros": 2250000,
+          "current_yield_bps": 445,
+          "macaulay_duration_years_millionths": 4535989,
+          "modified_duration_years_millionths": 4441605,
+          "convexity_years2_millionths": 23127422,
+          "dv01_micros": 44912,
+          "cash_flows": [
+            {
+              "ordinal": 1,
+              "time_years_millionths": 500000,
+              "coupon_micros": 2250000,
+              "principal_micros": 0,
+              "total_micros": 2250000,
+              "present_value_micros": 2203182
+            },
+            {
+              "ordinal": 2,
+              "time_years_millionths": 1000000,
+              "coupon_micros": 2250000,
+              "principal_micros": 0,
+              "total_micros": 2250000,
+              "present_value_micros": 2157339
+            },
+            {
+              "ordinal": 3,
+              "time_years_millionths": 1500000,
+              "coupon_micros": 2250000,
+              "principal_micros": 0,
+              "total_micros": 2250000,
+              "present_value_micros": 2112449
+            },
+            {
+              "ordinal": 4,
+              "time_years_millionths": 2000000,
+              "coupon_micros": 2250000,
+              "principal_micros": 0,
+              "total_micros": 2250000,
+              "present_value_micros": 2068494
+            },
+            {
+              "ordinal": 5,
+              "time_years_millionths": 2500000,
+              "coupon_micros": 2250000,
+              "principal_micros": 0,
+              "total_micros": 2250000,
+              "present_value_micros": 2025453
+            },
+            {
+              "ordinal": 6,
+              "time_years_millionths": 3000000,
+              "coupon_micros": 2250000,
+              "principal_micros": 0,
+              "total_micros": 2250000,
+              "present_value_micros": 1983308
+            },
+            {
+              "ordinal": 7,
+              "time_years_millionths": 3500000,
+              "coupon_micros": 2250000,
+              "principal_micros": 0,
+              "total_micros": 2250000,
+              "present_value_micros": 1942039
+            },
+            {
+              "ordinal": 8,
+              "time_years_millionths": 4000000,
+              "coupon_micros": 2250000,
+              "principal_micros": 0,
+              "total_micros": 2250000,
+              "present_value_micros": 1901630
+            },
+            {
+              "ordinal": 9,
+              "time_years_millionths": 4500000,
+              "coupon_micros": 2250000,
+              "principal_micros": 0,
+              "total_micros": 2250000,
+              "present_value_micros": 1862061
+            },
+            {
+              "ordinal": 10,
+              "time_years_millionths": 5000000,
+              "coupon_micros": 2250000,
+              "principal_micros": 100000000,
+              "total_micros": 102250000,
+              "present_value_micros": 82859560
+            }
+          ],
+          "scenarios": [
+            {
+              "shock_bps": -200,
+              "yield_bps": 225,
+              "clean_price_micros": 110584120,
+              "dirty_price_micros": 110584120,
+              "clean_change_micros": 9468605,
+              "clean_change_bps": 936
+            },
+            {
+              "shock_bps": -100,
+              "yield_bps": 325,
+              "clean_price_micros": 105725881,
+              "dirty_price_micros": 105725881,
+              "clean_change_micros": 4610366,
+              "clean_change_bps": 456
+            },
+            {
+              "shock_bps": -50,
+              "yield_bps": 375,
+              "clean_price_micros": 103390606,
+              "dirty_price_micros": 103390606,
+              "clean_change_micros": 2275091,
+              "clean_change_bps": 225
+            },
+            {
+              "shock_bps": 0,
+              "yield_bps": 425,
+              "clean_price_micros": 101115515,
+              "dirty_price_micros": 101115515,
+              "clean_change_micros": 0,
+              "clean_change_bps": 0
+            },
+            {
+              "shock_bps": 50,
+              "yield_bps": 475,
+              "clean_price_micros": 98898892,
+              "dirty_price_micros": 98898892,
+              "clean_change_micros": -2216623,
+              "clean_change_bps": -219
+            },
+            {
+              "shock_bps": 100,
+              "yield_bps": 525,
+              "clean_price_micros": 96739074,
+              "dirty_price_micros": 96739074,
+              "clean_change_micros": -4376441,
+              "clean_change_bps": -433
+            },
+            {
+              "shock_bps": 200,
+              "yield_bps": 625,
+              "clean_price_micros": 92583462,
+              "dirty_price_micros": 92583462,
+              "clean_change_micros": -8532053,
+              "clean_change_bps": -844
+            }
+          ],
+          "model_version": "FIXED-RATE-BULLET-PERIODIC-V1",
+          "input_digest": "BOND-D2FF4EB9F50A4014",
+          "methodology": "FIXED-RATE BULLET · NOMINAL PERIODIC YIELD · EXPLICIT ACCRUAL FRACTION",
+          "disclosures": [
+            "REFERENCE MODEL ONLY · NOT A LIVE PRICE, CURVE, OR RECOMMENDATION",
+            "CASH FLOWS USE WHOLE-YEAR MATURITY AND A USER-SUPPLIED ACCRUAL FRACTION",
+            "NO HOLIDAY CALENDAR, BUSINESS-DAY ROLL, EX-DATE, TAX, CALL, OR DEFAULT MODEL",
+            "DURATION, CONVEXITY, AND DV01 ARE MODEL SENSITIVITIES, NOT PROVIDER FIELDS",
+            "PARALLEL YIELD SHOCKS HOLD CASH FLOWS AND CREDIT ASSUMPTIONS CONSTANT"
+          ]
+        }
+      }
+    }
+  ]
+}

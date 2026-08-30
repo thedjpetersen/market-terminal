@@ -41,6 +41,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 [dev-dependencies]
 ab_glyph = "0.2"
 image = { version = "0.25", default-features = false, features = ["png"] }
+market-terminal-api = { path = "crates/market-terminal-api" }
+market-terminal-application = { path = "crates/market-terminal-application" }
 
 [profile.release]
 opt-level = 3

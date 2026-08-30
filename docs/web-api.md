@@ -182,8 +182,14 @@ the catalog is deliberately a restart-applied machine-credential snapshot. Also
 add transactional ingestion and service-backed tenant storage for horizontal
 deployment, shared admission, metrics/distributed tracing,
 audited read-only provider/persistence services, TLS termination, and
-cross-language contract fixtures. Those belong around the engine, never inside
-its deterministic domains.
+runtime validation around the checked-in cross-language contract package. Those
+belong around the engine, never inside its deterministic domains.
+
+API v3 and engine v1 now have dependency-free TypeScript declarations and exact
+Rust-generated request/response fixtures in `contracts/web/v3`. CI replays every
+compiler-visible engine operation and result and checks all HTTP problem
+discriminators. See [`web-contracts.md`](web-contracts.md). Runtime browser
+validation and an ergonomic SDK remain future host-edge work.
 
 The current aggregate controller is process-local. Blocking work is moved off
 the async reactor and bounded by semaphores. Deadline expiry cancels the response

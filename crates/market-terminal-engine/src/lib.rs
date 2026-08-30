@@ -13,5 +13,5 @@ pub mod options;
 pub use api::{
     execute, BacktestComparisonRequest, BacktestRunRequest, EngineError, EngineErrorCode,
     EngineOperation, EngineOutcome, EngineRequest, EngineResponse, EngineResult,
-    ENGINE_API_SCHEMA_VERSION,
+    ENGINE_API_SCHEMA_VERSION, ENGINE_OPERATION_NAMES, ENGINE_RESULT_NAMES,
 };

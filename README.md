@@ -1191,6 +1191,8 @@ tenant identity always comes from the authenticated actor, never a request
 parameter. The routes remain absent with default configuration.
 See [`docs/web-api.md`](docs/web-api.md) for request examples, status contracts,
 configuration, and deployment constraints;
+[`docs/web-contracts.md`](docs/web-contracts.md) for the checked-in TypeScript
+types and replayable cross-language fixture workflow;
 [`docs/credentials.md`](docs/credentials.md) for catalog and rotation rules;
 [`docs/admission-control.md`](docs/admission-control.md) for rate, deadline, and
 bounded-execution semantics; and

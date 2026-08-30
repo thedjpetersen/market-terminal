@@ -82,7 +82,7 @@ Tokio or cancellation policy.
    crate. The local read adapter and HTTP routes are deliberately mutation-free.
 2. Add service-backed hot credential revocation and interactive browser-session
    issuance around the existing resolver contract.
-3. Publish cross-language fixtures for actor capabilities and every v1 engine
-   request/result before a TypeScript client is allowed to ship.
+3. Build runtime validators and an SDK around the checked-in TypeScript contract
+   and exact replay corpus before a TypeScript client is allowed to ship.
 4. Add distributed admission and explicit cancellable job orchestration before
    horizontal or long-running workloads replace this process-local host.

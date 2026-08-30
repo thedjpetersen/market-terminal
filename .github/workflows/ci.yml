@@ -8,8 +8,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - run: cargo run --example export_web_contracts -- --check
+      - run: node --experimental-strip-types --check contracts/web/v3/market-terminal-api.ts
       - run: cargo build --release
       - run: cargo run --release --example performance_gate -- 50

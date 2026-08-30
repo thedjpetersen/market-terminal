@@ -329,6 +329,15 @@ move to its own crate later without changing its public vocabulary.
   claiming unsafe CPU cancellation. API schema v3 exposes all limits. Shared
   distributed admission and cancellable long-running job orchestration remain
   future outer services.
+- **Complete:** first cross-language web contract package. API v3, application
+  v2, and engine v1 now publish dependency-free TypeScript types for health,
+  capabilities, typed problems, all analytical request/result variants, and
+  tenant-owned research artifacts. A Rust-generated fixture corpus executes and
+  locks every compiler-visible engine operation and result field. CI rejects
+  fixture drift, missing TypeScript discriminators, unregistered HTTP problem
+  codes, and non-replayable responses. Exact integer safety and the breaking
+  schema path are documented; runtime browser validation and SDK ergonomics
+  remain future client work.
 - **Complete:** P1 saved workspace experience. Five versioned Trader, Quant,
   PM, Risk, and Ops seeds now project through the live registry, disclose
   missing destinations, and require an explicit modal confirmation. The first

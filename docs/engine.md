@@ -90,8 +90,10 @@ schema rejection, bounded identities/provenance, and fail-closed domain errors.
    execution now live in the HTTP host rather than this engine.
 3. Expose provider and persistence capabilities through application services,
    never by teaching the engine to perform I/O.
-4. Generate or hand-maintain TypeScript request/response types from the versioned
-   serde schema and add cross-language golden fixtures.
+4. Keep the checked-in TypeScript request/response package and exact
+   cross-language golden fixtures synchronized with the compiler-visible engine
+   registry. A future SDK adds runtime decoding without moving transport policy
+   into this crate.
 5. Extract another domain only after its vocabulary and invariants are stable;
    keep presentation state, local adapters, and shell navigation in their hosts.
 

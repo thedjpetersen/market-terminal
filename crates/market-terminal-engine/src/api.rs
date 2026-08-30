@@ -10,6 +10,18 @@ use crate::{
 };
 
 pub const ENGINE_API_SCHEMA_VERSION: u16 = 1;
+pub const ENGINE_OPERATION_NAMES: [&str; 4] = [
+    "run_backtest",
+    "compare_backtests",
+    "price_option",
+    "analyze_bond",
+];
+pub const ENGINE_RESULT_NAMES: [&str; 4] = [
+    "backtest",
+    "backtest_comparison",
+    "option_analytics",
+    "bond_analytics",
+];
 const MAX_REQUEST_ID_BYTES: usize = 128;
 const MAX_PROVENANCE_BYTES: usize = 1_024;
 
@@ -30,6 +42,17 @@ pub enum EngineOperation {
     CompareBacktests(BacktestComparisonRequest),
     PriceOption(OptionModelInput),
     AnalyzeBond(BondModelInput),
+}
+
+impl EngineOperation {
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::RunBacktest(_) => ENGINE_OPERATION_NAMES[0],
+            Self::CompareBacktests(_) => ENGINE_OPERATION_NAMES[1],
+            Self::PriceOption(_) => ENGINE_OPERATION_NAMES[2],
+            Self::AnalyzeBond(_) => ENGINE_OPERATION_NAMES[3],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,6 +97,17 @@ pub enum EngineResult {
     BacktestComparison(BacktestComparison),
     OptionAnalytics(OptionAnalytics),
     BondAnalytics(BondAnalytics),
+}
+
+impl EngineResult {
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Backtest(_) => ENGINE_RESULT_NAMES[0],
+            Self::BacktestComparison(_) => ENGINE_RESULT_NAMES[1],
+            Self::OptionAnalytics(_) => ENGINE_RESULT_NAMES[2],
+            Self::BondAnalytics(_) => ENGINE_RESULT_NAMES[3],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

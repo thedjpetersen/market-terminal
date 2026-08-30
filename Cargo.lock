@@ -1344,6 +1344,8 @@ dependencies = [
  "html-escape",
  "image",
  "irc",
+ "market-terminal-api",
+ "market-terminal-application",
  "market-terminal-engine",
  "quick-xml 0.42.0",
  "ratatui",

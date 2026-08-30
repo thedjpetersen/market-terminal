@@ -59,6 +59,91 @@ pub const DEFAULT_MAX_ENGINE_IN_FLIGHT: usize = 4;
 pub const DEFAULT_MAX_ARTIFACT_IN_FLIGHT: usize = 8;
 pub const MIN_MAX_IN_FLIGHT: usize = 1;
 pub const MAX_MAX_IN_FLIGHT: usize = 64;
+pub const API_PROBLEM_CODES: [&str; 17] = [
+    "unauthorized",
+    "authentication_unavailable",
+    "admission_unavailable",
+    "rate_limit_exceeded",
+    "concurrency_limit_exceeded",
+    "request_deadline_exceeded",
+    "execution_unavailable",
+    "invalid_json",
+    "unsupported_media_type",
+    "payload_too_large",
+    "capability_denied",
+    "workload_budget_exceeded",
+    "invalid_artifact_request",
+    "artifact_not_found",
+    "artifact_contract_violation",
+    "artifact_service_unavailable",
+    "not_found",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiProblemCode {
+    Unauthorized,
+    AuthenticationUnavailable,
+    AdmissionUnavailable,
+    RateLimitExceeded,
+    ConcurrencyLimitExceeded,
+    RequestDeadlineExceeded,
+    ExecutionUnavailable,
+    InvalidJson,
+    UnsupportedMediaType,
+    PayloadTooLarge,
+    CapabilityDenied,
+    WorkloadBudgetExceeded,
+    InvalidArtifactRequest,
+    ArtifactNotFound,
+    ArtifactContractViolation,
+    ArtifactServiceUnavailable,
+    NotFound,
+}
+
+pub const API_PROBLEM_VARIANTS: [ApiProblemCode; 17] = [
+    ApiProblemCode::Unauthorized,
+    ApiProblemCode::AuthenticationUnavailable,
+    ApiProblemCode::AdmissionUnavailable,
+    ApiProblemCode::RateLimitExceeded,
+    ApiProblemCode::ConcurrencyLimitExceeded,
+    ApiProblemCode::RequestDeadlineExceeded,
+    ApiProblemCode::ExecutionUnavailable,
+    ApiProblemCode::InvalidJson,
+    ApiProblemCode::UnsupportedMediaType,
+    ApiProblemCode::PayloadTooLarge,
+    ApiProblemCode::CapabilityDenied,
+    ApiProblemCode::WorkloadBudgetExceeded,
+    ApiProblemCode::InvalidArtifactRequest,
+    ApiProblemCode::ArtifactNotFound,
+    ApiProblemCode::ArtifactContractViolation,
+    ApiProblemCode::ArtifactServiceUnavailable,
+    ApiProblemCode::NotFound,
+];
+
+impl ApiProblemCode {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Unauthorized => API_PROBLEM_CODES[0],
+            Self::AuthenticationUnavailable => API_PROBLEM_CODES[1],
+            Self::AdmissionUnavailable => API_PROBLEM_CODES[2],
+            Self::RateLimitExceeded => API_PROBLEM_CODES[3],
+            Self::ConcurrencyLimitExceeded => API_PROBLEM_CODES[4],
+            Self::RequestDeadlineExceeded => API_PROBLEM_CODES[5],
+            Self::ExecutionUnavailable => API_PROBLEM_CODES[6],
+            Self::InvalidJson => API_PROBLEM_CODES[7],
+            Self::UnsupportedMediaType => API_PROBLEM_CODES[8],
+            Self::PayloadTooLarge => API_PROBLEM_CODES[9],
+            Self::CapabilityDenied => API_PROBLEM_CODES[10],
+            Self::WorkloadBudgetExceeded => API_PROBLEM_CODES[11],
+            Self::InvalidArtifactRequest => API_PROBLEM_CODES[12],
+            Self::ArtifactNotFound => API_PROBLEM_CODES[13],
+            Self::ArtifactContractViolation => API_PROBLEM_CODES[14],
+            Self::ArtifactServiceUnavailable => API_PROBLEM_CODES[15],
+            Self::NotFound => API_PROBLEM_CODES[16],
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct ApiConfig {
@@ -486,7 +571,7 @@ async fn list_artifacts(
         Err(_) => {
             return problem(
                 StatusCode::BAD_REQUEST,
-                "invalid_artifact_request",
+                ApiProblemCode::InvalidArtifactRequest,
                 "artifact query parameters are invalid",
             )
         }
@@ -533,7 +618,7 @@ async fn get_artifact(
         Ok(Ok(Some(document))) => secure_response((StatusCode::OK, Json(document))),
         Ok(Ok(None)) => problem(
             StatusCode::NOT_FOUND,
-            "artifact_not_found",
+            ApiProblemCode::ArtifactNotFound,
             "artifact was not found",
         ),
         Ok(Err(error)) => application_rejection(error),
@@ -613,7 +698,7 @@ fn bounded_execution_rejection(error: BoundedExecutionFailure) -> Response {
         BoundedExecutionFailure::ConcurrencyLimit => {
             let mut response = problem(
                 StatusCode::TOO_MANY_REQUESTS,
-                "concurrency_limit_exceeded",
+                ApiProblemCode::ConcurrencyLimitExceeded,
                 "authenticated work concurrency limit exceeded",
             );
             response
@@ -623,12 +708,12 @@ fn bounded_execution_rejection(error: BoundedExecutionFailure) -> Response {
         }
         BoundedExecutionFailure::DeadlineExceeded => problem(
             StatusCode::GATEWAY_TIMEOUT,
-            "request_deadline_exceeded",
+            ApiProblemCode::RequestDeadlineExceeded,
             "request work exceeded its configured response deadline",
         ),
         BoundedExecutionFailure::Unavailable => problem(
             StatusCode::SERVICE_UNAVAILABLE,
-            "execution_unavailable",
+            ApiProblemCode::ExecutionUnavailable,
             "request execution service is unavailable",
         ),
     }
@@ -665,7 +750,7 @@ async fn authorize(State(state): State<ApiState>, mut request: Request, next: Ne
     let Some(resolved) = resolved else {
         let mut response = problem(
             StatusCode::UNAUTHORIZED,
-            "unauthorized",
+            ApiProblemCode::Unauthorized,
             "a valid bearer token is required",
         );
         response.headers_mut().insert(
@@ -686,7 +771,7 @@ async fn authorize(State(state): State<ApiState>, mut request: Request, next: Ne
         Err(AdmissionFailure::Unavailable) => {
             let mut response = problem(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "admission_unavailable",
+                ApiProblemCode::AdmissionUnavailable,
                 "request admission service is unavailable",
             );
             response.extensions_mut().insert(resolved);
@@ -700,7 +785,7 @@ async fn authorize(State(state): State<ApiState>, mut request: Request, next: Ne
     {
         let mut response = problem(
             StatusCode::TOO_MANY_REQUESTS,
-            "rate_limit_exceeded",
+            ApiProblemCode::RateLimitExceeded,
             "authenticated actor request rate exceeded",
         );
         apply_rate_headers(&mut response, limit, 0, Some(retry_after_millis));
@@ -742,7 +827,7 @@ fn apply_rate_headers(
 fn authentication_unavailable() -> Response {
     problem(
         StatusCode::SERVICE_UNAVAILABLE,
-        "authentication_unavailable",
+        ApiProblemCode::AuthenticationUnavailable,
         "authentication service is unavailable",
     )
 }
@@ -784,7 +869,7 @@ async fn trace_request(request: Request, next: Next) -> Response {
 async fn not_found() -> Response {
     problem(
         StatusCode::NOT_FOUND,
-        "not_found",
+        ApiProblemCode::NotFound,
         "the requested API route does not exist",
     )
 }
@@ -806,27 +891,29 @@ fn engine_status(response: &EngineResponse) -> StatusCode {
 
 fn application_rejection(error: ApplicationError) -> Response {
     match error.code {
-        ApplicationErrorCode::CapabilityDenied => {
-            problem(StatusCode::FORBIDDEN, "capability_denied", error.message)
-        }
+        ApplicationErrorCode::CapabilityDenied => problem(
+            StatusCode::FORBIDDEN,
+            ApiProblemCode::CapabilityDenied,
+            error.message,
+        ),
         ApplicationErrorCode::WorkloadBudgetExceeded => problem(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "workload_budget_exceeded",
+            ApiProblemCode::WorkloadBudgetExceeded,
             error.message,
         ),
         ApplicationErrorCode::InvalidArtifactRequest => problem(
             StatusCode::BAD_REQUEST,
-            "invalid_artifact_request",
+            ApiProblemCode::InvalidArtifactRequest,
             error.message,
         ),
         ApplicationErrorCode::ArtifactServiceUnavailable => problem(
             StatusCode::SERVICE_UNAVAILABLE,
-            "artifact_service_unavailable",
+            ApiProblemCode::ArtifactServiceUnavailable,
             error.message,
         ),
         ApplicationErrorCode::ArtifactContractViolation => problem(
             StatusCode::BAD_GATEWAY,
-            "artifact_contract_violation",
+            ApiProblemCode::ArtifactContractViolation,
             error.message,
         ),
     }
@@ -840,19 +927,22 @@ fn json_rejection(rejection: JsonRejection) -> Response {
     };
     let (code, message) = match status {
         StatusCode::PAYLOAD_TOO_LARGE => (
-            "payload_too_large",
+            ApiProblemCode::PayloadTooLarge,
             "request body exceeds the configured limit",
         ),
         StatusCode::UNSUPPORTED_MEDIA_TYPE => (
-            "unsupported_media_type",
+            ApiProblemCode::UnsupportedMediaType,
             "content-type must be application/json",
         ),
-        _ => ("invalid_json", "request body is not a valid engine request"),
+        _ => (
+            ApiProblemCode::InvalidJson,
+            "request body is not a valid engine request",
+        ),
     };
     problem(status, code, message)
 }
 
-fn problem(status: StatusCode, code: &'static str, message: impl Into<String>) -> Response {
+fn problem(status: StatusCode, code: ApiProblemCode, message: impl Into<String>) -> Response {
     secure_response((
         status,
         Json(ProblemResponse {
@@ -961,7 +1051,7 @@ struct CapabilityResponse {
 
 #[derive(Debug, Serialize)]
 struct ProblemResponse {
-    code: &'static str,
+    code: ApiProblemCode,
     message: String,
 }
 
