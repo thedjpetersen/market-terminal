@@ -43,20 +43,23 @@ code.
 
 ## Production composition
 
-Artifact routes remain absent by default. To mount them in the API binary,
-configure both the private root and the exact read-only capability:
+Artifact routes remain absent by default. In production catalog mode, configure
+the private root and grant `artifact_read` only to the intended credential
+records:
 
 ```bash
 install -d -m 0700 /var/lib/market-terminal/artifacts
 export MARKET_TERMINAL_API_ARTIFACT_ROOT=/var/lib/market-terminal/artifacts
-export MARKET_TERMINAL_API_ARTIFACT_READ=1
+export MARKET_TERMINAL_API_CREDENTIALS_FILE=/etc/market-terminal/credentials.json
 cargo run -p market-terminal-api
 ```
 
-Supplying only one variable, using a read flag other than `1`, pointing at a
-symlink or non-directory, or exposing the Unix root to group/other users aborts
-startup. The API logs only whether artifact reads are enabled, never the root or
-document contents.
+The legacy single-token development mode instead requires the exact global
+`MARKET_TERMINAL_API_ARTIFACT_READ=1` flag. Catalog mode rejects that flag
+because read authorization belongs to each actor record. Pointing at a symlink
+or non-directory, or exposing the Unix root to group/other users, aborts startup.
+The API logs only whether artifact routes are mounted, never the root or document
+contents.
 
 Document creation is deliberately outside the web process. A future ingestion
 worker must validate and atomically promote complete artifacts into the same

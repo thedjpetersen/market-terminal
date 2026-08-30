@@ -79,12 +79,13 @@ schema rejection, bounded identities/provenance, and fail-closed domain errors.
    boundary. It maps validated tenant/principal identity and exact capabilities
    to the closed operation enum, applies per-principal backtest/comparison
    budgets, and then dispatches the engine without owning I/O.
-2. **Partially delivered:** `market-terminal-api` authenticates one configured
-   credential into that actor context and owns pre-deserialization body limits,
-   typed status mapping, structured actor/request logging, safe response headers,
-   loopback defaults, and graceful shutdown. Add a real credential/session store,
-   deadlines, aggregate rate limits, metrics, and distributed traces before
-   multi-user deployment.
+2. **Partially delivered:** `market-terminal-api` authenticates independently
+   scoped actors through an injected host-neutral resolver and owns
+   pre-deserialization body limits, typed status mapping, structured
+   actor/request logging, safe response headers, loopback defaults, and graceful
+   shutdown. A private digest-only catalog is the first resolver adapter. Add
+   interactive sessions and hot revocation, deadlines, aggregate rate limits,
+   metrics, and distributed traces before browser deployment.
 3. Expose provider and persistence capabilities through application services,
    never by teaching the engine to perform I/O.
 4. Generate or hand-maintain TypeScript request/response types from the versioned

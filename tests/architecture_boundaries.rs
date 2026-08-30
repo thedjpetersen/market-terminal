@@ -347,6 +347,128 @@ fn local_artifact_store_implements_the_application_port_at_the_host_edge() {
 }
 
 #[test]
+fn credential_resolution_is_host_neutral_and_the_store_stays_at_the_host_edge() {
+    let root = manifest_root();
+    let application = root.join("crates/market-terminal-application");
+    let auth = root.join("crates/market-terminal-auth");
+    let store = root.join("crates/market-terminal-credential-store");
+    let api = root.join("crates/market-terminal-api");
+
+    let auth_manifest = fs::read_to_string(auth.join("Cargo.toml")).expect("auth manifest");
+    assert!(
+        auth_manifest.contains("market-terminal-application"),
+        "credential resolution must produce the application-owned actor context"
+    );
+    for dependency in [
+        "market-terminal =",
+        "market-terminal-engine",
+        "market-terminal-api",
+        "axum",
+        "tokio",
+        "serde",
+        "sha2",
+        "reqwest",
+    ] {
+        assert_absent(
+            &auth.join("Cargo.toml"),
+            &auth_manifest,
+            dependency,
+            "the authentication contract must remain host-neutral and mechanism-free",
+        );
+    }
+    let auth_source = production_source(&auth.join("src/lib.rs"));
+    for required in [
+        "pub trait CredentialResolver",
+        "pub struct ResolvedCredential",
+        "pub struct CredentialId",
+        "observed_at_epoch_seconds",
+    ] {
+        assert!(
+            auth_source.contains(required),
+            "the host-neutral authentication contract must retain `{required}`"
+        );
+    }
+    for needle in [
+        "std::fs",
+        "std::net",
+        "std::env",
+        "SystemTime",
+        "Instant",
+        "Sha256",
+    ] {
+        assert_absent(
+            &auth.join("src/lib.rs"),
+            &auth_source,
+            needle,
+            "the authentication contract cannot own host I/O, clocks, or hashing",
+        );
+    }
+
+    let store_manifest =
+        fs::read_to_string(store.join("Cargo.toml")).expect("credential store manifest");
+    for required in [
+        "market-terminal-application",
+        "market-terminal-auth",
+        "sha2",
+    ] {
+        assert!(
+            store_manifest.contains(required),
+            "the concrete credential adapter must retain `{required}`"
+        );
+    }
+    for dependency in [
+        "market-terminal =",
+        "market-terminal-engine",
+        "market-terminal-api",
+        "axum",
+        "tokio",
+        "reqwest",
+        "ratatui",
+        "crossterm",
+    ] {
+        assert_absent(
+            &store.join("Cargo.toml"),
+            &store_manifest,
+            dependency,
+            "the credential adapter may depend only on host-neutral contracts and local decoding",
+        );
+    }
+    let store_source = production_source(&store.join("src/lib.rs"));
+    for required in [
+        "impl CredentialResolver for LocalCredentialResolver",
+        "Sha256::digest",
+        "constant_time_digest_eq",
+        "symlink_metadata",
+        "MAX_CREDENTIALS",
+    ] {
+        assert!(
+            store_source.contains(required),
+            "the local credential adapter must retain its fail-closed boundary `{required}`"
+        );
+    }
+
+    let application_source = production_source(&application.join("src/lib.rs"));
+    assert_absent(
+        &application.join("src/lib.rs"),
+        &application_source,
+        "market_terminal_auth",
+        "the application contract cannot depend on host authentication",
+    );
+    let api_library = production_source(&api.join("src/lib.rs"));
+    assert_absent(
+        &api.join("src/lib.rs"),
+        &api_library,
+        "market_terminal_credential_store",
+        "the reusable API router must receive credential resolution by injection",
+    );
+    let api_binary = production_source(&api.join("src/main.rs"));
+    assert!(
+        api_binary.contains("market_terminal_credential_store::LocalCredentialResolver"),
+        "only the API composition root should select the concrete credential adapter"
+    );
+}
+
+#[test]
 fn bounded_contexts_do_not_import_adapters_or_each_other() {
     let features = manifest_root().join("src/features");
     let mut contexts = fs::read_dir(&features)

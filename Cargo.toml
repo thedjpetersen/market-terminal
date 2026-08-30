@@ -11,6 +11,8 @@ members = [
     "crates/market-terminal-api",
     "crates/market-terminal-application",
     "crates/market-terminal-artifact-store",
+    "crates/market-terminal-auth",
+    "crates/market-terminal-credential-store",
     "crates/market-terminal-engine",
 ]
 resolver = "2"

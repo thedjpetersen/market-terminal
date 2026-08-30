@@ -1,0 +1,10 @@
+[package]
+name = "market-terminal-auth"
+version = "0.1.0"
+edition = "2021"
+description = "Host-neutral credential resolution contract for Market Terminal hosts"
+license = "MIT"
+repository = "https://github.com/thedjpetersen/market-terminal"
+
+[dependencies]
+market-terminal-application = { path = "../market-terminal-application" }

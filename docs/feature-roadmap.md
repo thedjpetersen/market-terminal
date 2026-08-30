@@ -277,8 +277,8 @@ move to its own crate later without changing its public vocabulary.
   actor-scoped capabilities/budgets, and emits actor/request correlation without
   exposing the token. CI enforces `API -> application -> engine` and rejects I/O,
   runtime, clock, provider, persistence, native-product, and UI dependencies in
-  the application layer. This is not yet a multi-user credential/session store or
-  tenant document repository.
+  the application layer. Credential resolution and the tenant repository are
+  supplied by independent outer adapters rather than this layer.
 - **Complete:** tenant-owned read-only research-artifact application boundary.
   The application crate now owns bounded list/get contracts for Backtest,
   comparison, Screening, News, and Security artifacts with tenant identity in
@@ -288,19 +288,33 @@ move to its own crate later without changing its public vocabulary.
   input, unavailable storage, and corrupt adapter output separately. Adversarial
   tests prove that client paths and query strings cannot choose a tenant and that
   a malicious adapter cannot leak another tenant's metadata. The production API
-  binary still mounts no artifact route until a concrete repository is supplied;
-  multi-user credentials and durable tenant repositories remain future work.
+  binary still mounts no artifact route until a concrete repository is supplied.
 - **Complete:** first concrete tenant-owned repository adapter. The independent
   `market-terminal-artifact-store` crate implements the application port with a
   private canonical root, hex-encoded tenant/artifact paths, symlink rejection,
   4,096-document tenant and 1 MiB document ceilings, deterministic cursor
   pagination, and fail-closed corruption handling. The production API composes
-  it only when an operator supplies both a root and the exact read-only flag;
-  default routes remain absent. Architecture and adversarial tests preserve
+  it only when an operator supplies a root; the resolved actor independently
+  owns the exact read-only permission. Default routes remain absent.
+  Architecture and adversarial tests preserve
   `API library -> application port <- adapter`, prove tenant isolation, and
   reject malformed, oversized, misnamed, shared-permission, and symlinked data.
-  Transactional ingestion, service storage, and multi-user sessions remain
-  future work.
+  Transactional ingestion and service storage remain future work.
+- **Complete:** first multi-actor credential-resolution seam and concrete local
+  adapter. The mechanism-free `market-terminal-auth` contract accepts a bearer
+  candidate plus host-observed time and returns the existing validated actor
+  context without importing HTTP, hashing, clocks, storage, or the engine. The
+  independent `market-terminal-credential-store` adapter loads at most 256
+  records from a private, symlink-free, 1 MiB startup catalog containing only
+  lowercase SHA-256 token digests. It enforces unique credential and digest
+  identities, status and validity windows, tenant/principal ownership, exact
+  capabilities, artifact permission, and per-actor budgets. The API reusable
+  router receives this contract by injection; only its binary selects the local
+  adapter. Unknown, revoked, future, and expired credentials are indistinguishable,
+  backend failure is a secret-free `503`, and adversarial tests prove actor,
+  capability, budget, and tenant isolation. Service-backed hot revocation,
+  interactive browser sessions, and encrypted refresh credentials remain future
+  outer adapters.
 - **Complete:** P1 saved workspace experience. Five versioned Trader, Quant,
   PM, Risk, and Ops seeds now project through the live registry, disclose
   missing destinations, and require an explicit modal confirmation. The first
@@ -475,7 +489,7 @@ continues.
 | Keyboard navigation and icon rail | Covered | `Esc` feature focus, deterministic spatial arrows, Enter activation, workspace fallback, tmux prefix, remappable keys, shell-level `F` hints, Portfolio tabs/rows/reload, composed Desk panes, Monitor rows/controls, Security tabs/chart/Form 4/filing/peer/retry actions, Chart periods/studies/comparisons/inspection/modes/promotion/refresh, modal-safe News filters/headlines/story/calendar/reader actions, Overview periods/cards/live holdings/headlines/context controls, Alerts rows/mutations/Security/refresh controls, and Spreadsheet cells/rows/formula/tabs/workflow controls | Preserve the action and modal-trapping contracts as new controls and overlays are added. |
 | Saved views and workspace presets | Partial | Workspace order, active workspace, role presets, schema-v2 nested Desk/Chart state with bounded split geometry, Security instrument/tab/Form 4 selection, News filters/subview/story selection, Monitor watchlist/sort/columns/identity/viewport, Portfolio subview/row/viewport, Alerts rule/viewport, and workbook/sheet/cell/viewport Spreadsheet state persist with migration and degraded recovery; unified discovery restores and revision-safely deletes saved views | Add portable per-view import/export and a denser sortable management table. |
 | Themes and responsive shell | Covered | Nine themes and semantic goldens at three terminal sizes | Add contrast assertions and parity-feature narrow-layout goldens; browser/mobile rendering is out of scope. |
-| Accounts, authentication, and roles | Missing | Local single-user configuration and secret-presence display only | Add optional local profiles, encrypted credentials, session locking, role/capability policy, and audit actor identity before any shared or consequential workflow. |
+| Accounts, authentication, and roles | Partial | Bounded multi-actor API resolution through a host-neutral contract and private digest-only catalog; stable tenant/principal identity, exact analytical/artifact capabilities, per-actor budgets, validity windows, revocation, and actor-aware audit correlation | Add interactive profiles, password/OIDC and browser-session issuance, service-backed hot revocation, encrypted provider/refresh credentials, recovery, session locking, and administrative role workflows. |
 | Snapshot/streaming data and provider fallback | Partial | Yahoo, Alpha Vantage, Alpaca, Finnhub, bounded workers, coalescing, LKG cache, replay | Add capability-aware provider waterfall, durable bar cache, session calendars, health routing, and cross-provider provenance. |
 | DOM, time and sales, hotlists, heatmaps | Missing | Listed-instrument monitor, quote stream, and audited versioned Screening universe history only | Add entitlement-aware depth/tape models, movers, breadth, sector/market heatmaps, and replay fixtures without synthesizing unavailable order-book data. |
 | Multi-panel technical chart workstation | Partial | OHLC/line charts, comparisons, volume, SMA/EMA, RSI, periods, cursor | Add up to nine linked panes, multi-timeframe layouts, indicator registry, annotations, volume profile, historical replay, alternate chart types, and image/data export. |
@@ -492,7 +506,7 @@ continues.
 | Cross-asset and macro workspaces | Partial | Dedicated Fixed Income context now owns explicit fixed-rate bullet schedules, price/yield analytics, accrued interest, duration/convexity/DV01, deterministic parallel shocks, typed recovery, and fail-closed provider separation | Add dated bond conventions, licensed curves/spreads/history, plus FX, commodities, crypto, ETF, mutual-fund, economics, and sector-rotation contexts through asset-specific adapters. |
 | Compound alerts and delivery | Partial | Restart-safe price/move rules, debounce, acknowledgement, audit, local simulation | Add compound technical/news/portfolio/calendar/sheet rules, cooldown/expiry/limits, breakout scans, and opt-in external channels with delivery audit. |
 | Operations, data quality, and governance | Partial | Structured tracing, lag/drop metrics, provider quality in feature views | Add consolidated health, cache/feed status, data-quality incidents, kill switches, restricted-list policy, model registry/approval, and operator audit views. |
-| Plug-ins, scripting, and external tool API | Partial | Versioned authenticated HTTP execution through tenant/principal-aware application services, exact capability policy, per-principal workload budgets, bounded input, and no native/provider bypass | Add credential/session and tenant repository adapters, aggregate rate/deadline policy, read-only research/MCP tools, capability-scoped plug-in manifests, sandboxed calculations, signing, and versioned scripting. |
+| Plug-ins, scripting, and external tool API | Partial | Versioned authenticated HTTP execution through tenant/principal-aware application services, injected multi-actor credential resolution, a private digest-only credential adapter, tenant-owned local read-only artifact queries, exact capability policy, per-principal workload budgets, bounded input, and no native/provider bypass | Add service-backed sessions/repositories, aggregate rate/deadline policy, read-only research/MCP tools, capability-scoped plug-in manifests, sandboxed calculations, signing, and versioned scripting. |
 | Spreadsheet composition | Covered beyond reference | Native durable workbook, 27 pure functions and four financial functions | Preserve as a differentiator and make every new parity result promotable to a typed sheet range. |
 | Terminal chat | Covered beyond reference | TLS IRC rooms, presence, reconnect, bounded queues | Preserve independently; it is not a prerequisite for OpenTerminalUI parity. |
 

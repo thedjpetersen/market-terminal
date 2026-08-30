@@ -18,6 +18,14 @@ native bootstrap ──▶ app kernel
                              ▼
                     market-terminal-engine ◀── market-terminal-application
                                                     ▲
+                                      ┌─────────────┴──────────────┐
+                                      │                            │
+                           market-terminal-auth          artifact query port
+                                      ▲                            ▲
+                                      │                            │
+                         credential-store adapter        artifact-store adapter
+                                      ▲                            ▲
+                                      └─────────────┬──────────────┘
                                                     │
                                           market-terminal-api
 ```
@@ -46,18 +54,28 @@ native bootstrap ──▶ app kernel
   engine, API, native product, runtime, providers, or UI. Architecture checks
   ensure neither the application nor reusable API library imports it; only a
   host composition root may select it.
+- `crates/market-terminal-auth` owns the mechanism-free credential-resolution
+  contract. It turns a presented secret plus host-observed time into a validated
+  application actor and has no HTTP, clock, hashing, filesystem, serialization,
+  engine, or native dependency. `crates/market-terminal-credential-store` is
+  the first outer implementation: a bounded private startup snapshot containing
+  only SHA-256 token digests, stable actor identities, exact capabilities,
+  validity windows, and workload budgets. Only a host composition root selects
+  this adapter.
 - `crates/market-terminal-api` is an HTTP host adapter over the application
   service crate. It
   does not depend on the native product, feature modules, infrastructure, or
   terminal libraries and cannot bypass application authorization to call the
-  engine. It maps the configured bearer credential to a server-owned actor,
+  engine. Its reusable router accepts a host-owned credential resolver and maps
+  each bearer credential to a server-owned actor,
   applies body limits before JSON deserialization, and owns transport-safe error
   mapping, request correlation, security headers, loopback-safe binding, and
   graceful shutdown. Its library can mount authenticated read-only artifact
   list/get routes when a host supplies the application port. Its binary selects
-  the local read-only adapter only when both an artifact root and exact read
-  capability are configured; the default exposes no provider or persistence
-  path. See
+  the local read-only adapter only when an artifact root is configured, while
+  resolved actors independently own the exact read capability. The legacy
+  single-token mode remains a development fallback; the production catalog
+  rejects ambiguous legacy actor configuration. See
   `docs/web-api.md`. See `docs/application-services.md` for the shared actor,
   capability, and budget contract.
 

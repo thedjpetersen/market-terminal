@@ -6,6 +6,7 @@ frontends from each inventing their own authorization and workload policy.
 
 ```text
 HTTP / worker / MCP host
+          │ host-neutral credential resolver
           │ authenticated server-owned actor
           ▼
 market-terminal-application
@@ -53,9 +54,13 @@ filesystems, sockets, provider clients, persistence adapters, native feature
 modules, or terminal UI. `tests/architecture_boundaries.rs` enforces these rules
 and also rejects a direct API-to-engine dependency.
 
-Authentication remains host-owned. The current HTTP host maps one configured
-bearer credential to one actor context. A future credential/session adapter may
-resolve many actors, but it must produce the same validated `ExecutionContext`.
+Authentication remains host-owned. The independent `market-terminal-auth`
+crate defines only a bounded `CredentialResolver` contract that maps presented
+credentials to validated actor contexts at a host-supplied observation time. It
+has no HTTP, hashing, clock, filesystem, or serialization dependency. The local
+`market-terminal-credential-store` adapter implements that contract with a
+private, digest-only, immutable startup catalog; a future browser-session or
+service adapter can replace it without changing application or engine code.
 Tenant-owned artifact and future provider services expose narrow application
 ports; they are not added to the deterministic engine. The artifact port has no
 concrete storage implementation in this crate, so local files, PostgreSQL, and
@@ -67,8 +72,8 @@ crate; only the API binary composition root imports it.
 
 1. Add a transactional ingestion writer or service-backed adapter outside this
    crate. The local read adapter and HTTP routes are deliberately mutation-free.
-2. Add credential/session resolution with adversarial cross-tenant integration
-   tests against each concrete repository.
+2. Add service-backed hot credential revocation and interactive browser-session
+   issuance around the existing resolver contract.
 3. Add deadline, cancellation, and aggregate rate-budget contracts at the host
    edge while retaining deterministic per-request budgets here.
 4. Publish cross-language fixtures for actor capabilities and every v1 engine

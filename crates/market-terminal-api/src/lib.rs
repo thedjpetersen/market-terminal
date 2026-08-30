@@ -5,7 +5,11 @@
 //! mapping, and response headers; every successful operation is delegated to
 //! the deterministic engine crate.
 
-use std::{fmt, sync::Arc, time::Instant};
+use std::{
+    fmt,
+    sync::Arc,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use axum::{
     extract::{
@@ -25,6 +29,10 @@ use market_terminal_application::{
     ResearchArtifactKind, ResearchArtifactQuery, TenantId, APPLICATION_SCHEMA_VERSION,
     ENGINE_API_SCHEMA_VERSION,
 };
+use market_terminal_auth::{
+    valid_bearer_token, CredentialId, CredentialResolveFailure, CredentialResolver,
+    ResolvedCredential,
+};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -35,8 +43,6 @@ pub const API_SCHEMA_VERSION: u16 = 2;
 pub const DEFAULT_MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 pub const MIN_MAX_BODY_BYTES: usize = 1_024;
 pub const MAX_MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
-const MIN_TOKEN_BYTES: usize = 32;
-const MAX_TOKEN_BYTES: usize = 1_024;
 
 #[derive(Clone)]
 pub struct ApiConfig {
@@ -147,15 +153,65 @@ impl From<ApplicationConfigError> for ApiConfigError {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApiHostConfig {
+    max_body_bytes: usize,
+}
+
+impl ApiHostConfig {
+    pub const fn new() -> Self {
+        Self {
+            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
+        }
+    }
+
+    pub fn with_max_body_bytes(mut self, max_body_bytes: usize) -> Result<Self, ApiConfigError> {
+        validate_body_limit(max_body_bytes)?;
+        self.max_body_bytes = max_body_bytes;
+        Ok(self)
+    }
+
+    pub const fn max_body_bytes(self) -> usize {
+        self.max_body_bytes
+    }
+}
+
+impl Default for ApiHostConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone)]
+struct StaticCredentialResolver {
+    bearer_token: Arc<str>,
+    resolved: ResolvedCredential,
+}
+
+impl CredentialResolver for StaticCredentialResolver {
+    fn resolve(
+        &self,
+        bearer_token: &str,
+        _: u64,
+    ) -> Result<Option<ResolvedCredential>, CredentialResolveFailure> {
+        Ok(constant_time_eq(bearer_token, &self.bearer_token).then(|| self.resolved.clone()))
+    }
+}
+
 #[derive(Clone)]
 struct ApiState {
-    config: ApiConfig,
+    max_body_bytes: usize,
+    credential_resolver: Arc<dyn CredentialResolver>,
     service: AnalyticalApplicationService,
     artifact_service: Option<ResearchArtifactApplicationService>,
 }
 
 pub fn router(config: ApiConfig) -> Router {
-    build_router(config, None)
+    build_router(
+        config.max_body_bytes,
+        static_credential_resolver(&config),
+        None,
+    )
 }
 
 /// Builds the authenticated transport with read-only artifact routes backed by
@@ -164,15 +220,36 @@ pub fn router_with_artifact_query(
     config: ApiConfig,
     query: Arc<dyn ResearchArtifactQuery>,
 ) -> Router {
-    build_router(config, Some(ResearchArtifactApplicationService::new(query)))
+    build_router(
+        config.max_body_bytes,
+        static_credential_resolver(&config),
+        Some(ResearchArtifactApplicationService::new(query)),
+    )
+}
+
+/// Builds the reusable transport with a host-owned credential resolver and an
+/// optional read-only artifact adapter. Neither dependency can mutate product
+/// state, and all resolved contexts remain subject to application policy.
+pub fn router_with_services(
+    config: ApiHostConfig,
+    credential_resolver: Arc<dyn CredentialResolver>,
+    artifact_query: Option<Arc<dyn ResearchArtifactQuery>>,
+) -> Router {
+    build_router(
+        config.max_body_bytes,
+        credential_resolver,
+        artifact_query.map(ResearchArtifactApplicationService::new),
+    )
 }
 
 fn build_router(
-    config: ApiConfig,
+    max_body_bytes: usize,
+    credential_resolver: Arc<dyn CredentialResolver>,
     artifact_service: Option<ResearchArtifactApplicationService>,
 ) -> Router {
     let state = ApiState {
-        config,
+        max_body_bytes,
+        credential_resolver,
         service: AnalyticalApplicationService,
         artifact_service,
     };
@@ -186,7 +263,7 @@ fn build_router(
     }
     let protected = protected
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize))
-        .layer(DefaultBodyLimit::max(state.config.max_body_bytes));
+        .layer(DefaultBodyLimit::max(state.max_body_bytes));
 
     Router::new()
         .route("/healthz", get(health))
@@ -223,7 +300,7 @@ async fn capabilities(
             principal_id: context.principal_id().as_str().to_owned(),
             operations: context.capabilities().allowed_names(),
             artifact_operations: context.artifact_capabilities().allowed_names(),
-            max_body_bytes: state.config.max_body_bytes,
+            max_body_bytes: state.max_body_bytes,
             max_backtest_bars: budget.max_backtest_bars(),
             max_comparison_points: budget.max_comparison_points(),
         }),
@@ -310,13 +387,26 @@ async fn run_engine(
 }
 
 async fn authorize(State(state): State<ApiState>, mut request: Request, next: Next) -> Response {
-    let authorized = request
+    let candidate = request
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|candidate| constant_time_eq(candidate, &state.config.bearer_token));
-    if !authorized {
+        .and_then(|value| value.strip_prefix("Bearer "));
+    let observed_at_epoch_seconds = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs(),
+        Err(_) => return authentication_unavailable(),
+    };
+    let resolved = match candidate.filter(|candidate| valid_bearer_token(candidate)) {
+        Some(candidate) => match state
+            .credential_resolver
+            .resolve(candidate, observed_at_epoch_seconds)
+        {
+            Ok(resolved) => resolved,
+            Err(CredentialResolveFailure::Unavailable) => return authentication_unavailable(),
+        },
+        None => None,
+    };
+    let Some(resolved) = resolved else {
         let mut response = problem(
             StatusCode::UNAUTHORIZED,
             "unauthorized",
@@ -327,12 +417,20 @@ async fn authorize(State(state): State<ApiState>, mut request: Request, next: Ne
             HeaderValue::from_static("Bearer realm=\"market-terminal\""),
         );
         return response;
-    }
-    let context = state.config.execution_context.clone();
+    };
+    let context = resolved.execution_context().clone();
     request.extensions_mut().insert(context.clone());
     let mut response = secure_response(next.run(request).await);
-    response.extensions_mut().insert(context);
+    response.extensions_mut().insert(resolved);
     response
+}
+
+fn authentication_unavailable() -> Response {
+    problem(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "authentication_unavailable",
+        "authentication service is unavailable",
+    )
 }
 
 async fn trace_request(request: Request, next: Next) -> Response {
@@ -345,12 +443,15 @@ async fn trace_request(request: Request, next: Next) -> Response {
         .get("x-request-id")
         .and_then(|value| value.to_str().ok())
         .unwrap_or("unavailable");
-    let context = response.extensions().get::<ExecutionContext>();
-    let tenant_id = context
-        .map(|context| context.tenant_id().as_str())
+    let resolved = response.extensions().get::<ResolvedCredential>();
+    let tenant_id = resolved
+        .map(|resolved| resolved.execution_context().tenant_id().as_str())
         .unwrap_or("unauthenticated");
-    let principal_id = context
-        .map(|context| context.principal_id().as_str())
+    let principal_id = resolved
+        .map(|resolved| resolved.execution_context().principal_id().as_str())
+        .unwrap_or("unauthenticated");
+    let credential_id = resolved
+        .map(|resolved| resolved.credential_id().as_str())
         .unwrap_or("unauthenticated");
     info!(
         method = %method,
@@ -360,6 +461,7 @@ async fn trace_request(request: Request, next: Next) -> Response {
         request_id,
         tenant_id,
         principal_id,
+        credential_id,
         "market terminal API request"
     );
     response
@@ -462,12 +564,28 @@ fn secure_response(response: impl IntoResponse) -> Response {
 }
 
 fn validate_token(token: &str) -> Result<(), ApiConfigError> {
-    if !(MIN_TOKEN_BYTES..=MAX_TOKEN_BYTES).contains(&token.len())
-        || !token.bytes().all(|value| (0x21..=0x7e).contains(&value))
-    {
+    if !valid_bearer_token(token) {
         return Err(ApiConfigError::InvalidToken);
     }
     Ok(())
+}
+
+fn validate_body_limit(max_body_bytes: usize) -> Result<(), ApiConfigError> {
+    if !(MIN_MAX_BODY_BYTES..=MAX_MAX_BODY_BYTES).contains(&max_body_bytes) {
+        Err(ApiConfigError::InvalidBodyLimit(max_body_bytes))
+    } else {
+        Ok(())
+    }
+}
+
+fn static_credential_resolver(config: &ApiConfig) -> Arc<dyn CredentialResolver> {
+    Arc::new(StaticCredentialResolver {
+        bearer_token: config.bearer_token.clone(),
+        resolved: ResolvedCredential::new(
+            CredentialId::new("configured").expect("static credential identity"),
+            config.execution_context.clone(),
+        ),
+    })
 }
 
 fn constant_time_eq(candidate: &str, expected: &str) -> bool {
@@ -541,11 +659,66 @@ mod tests {
     }
 
     fn authenticated_get(uri: &str) -> Request<Body> {
+        bearer_get(uri, TOKEN)
+    }
+
+    fn bearer_get(uri: &str, token: &str) -> Request<Body> {
         Request::builder()
             .uri(uri)
-            .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .body(Body::empty())
             .expect("request")
+    }
+
+    #[derive(Clone)]
+    struct FixtureCredentialResolver {
+        entries: Vec<(String, ResolvedCredential)>,
+    }
+
+    impl CredentialResolver for FixtureCredentialResolver {
+        fn resolve(
+            &self,
+            bearer_token: &str,
+            _: u64,
+        ) -> Result<Option<ResolvedCredential>, CredentialResolveFailure> {
+            Ok(self
+                .entries
+                .iter()
+                .find(|(token, _)| constant_time_eq(token, bearer_token))
+                .map(|(_, resolved)| resolved.clone()))
+        }
+    }
+
+    struct UnavailableCredentialResolver;
+
+    impl CredentialResolver for UnavailableCredentialResolver {
+        fn resolve(
+            &self,
+            _: &str,
+            _: u64,
+        ) -> Result<Option<ResolvedCredential>, CredentialResolveFailure> {
+            Err(CredentialResolveFailure::Unavailable)
+        }
+    }
+
+    fn resolved_credential(
+        credential_id: &str,
+        tenant: &str,
+        principal: &str,
+        capabilities: CapabilitySet,
+        artifact_read: bool,
+        budget: ExecutionBudget,
+    ) -> ResolvedCredential {
+        let mut context = ExecutionContext::new(
+            TenantId::new(tenant).unwrap(),
+            PrincipalId::new(principal).unwrap(),
+            capabilities,
+            budget,
+        );
+        if artifact_read {
+            context = context.with_artifact_capabilities(ArtifactReadPolicy::read_only());
+        }
+        ResolvedCredential::new(CredentialId::new(credential_id).unwrap(), context)
     }
 
     #[derive(Clone)]
@@ -981,5 +1154,92 @@ mod tests {
         assert!(ApiConfig::for_principal(TOKEN, "tenant", "bad/principal").is_err());
         let config = ApiConfig::new(TOKEN).unwrap();
         assert!(!format!("{config:?}").contains(TOKEN));
+    }
+
+    #[tokio::test]
+    async fn injected_credentials_resolve_independent_actor_policies() {
+        let token_a = "tenant-a-router-token-0123456789-ABCDE";
+        let token_b = "tenant-b-router-token-0123456789-ABCDE";
+        let resolver = FixtureCredentialResolver {
+            entries: vec![
+                (
+                    token_a.to_owned(),
+                    resolved_credential(
+                        "browser-a",
+                        "tenant-a",
+                        "principal-a",
+                        CapabilitySet::all(),
+                        true,
+                        ExecutionBudget::new(100, 500).unwrap(),
+                    ),
+                ),
+                (
+                    token_b.to_owned(),
+                    resolved_credential(
+                        "browser-b",
+                        "tenant-b",
+                        "principal-b",
+                        CapabilitySet::from_names(["price_option"]).unwrap(),
+                        false,
+                        ExecutionBudget::new(50, 200).unwrap(),
+                    ),
+                ),
+            ],
+        };
+        let app = router_with_services(ApiHostConfig::new(), Arc::new(resolver), None);
+
+        let response = app
+            .clone()
+            .oneshot(bearer_get("/v1/capabilities", token_a))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["tenant_id"], "tenant-a");
+        assert_eq!(body["principal_id"], "principal-a");
+        assert_eq!(
+            body["artifact_operations"],
+            json!(["read_research_artifacts"])
+        );
+        assert_eq!(body["max_backtest_bars"], 100);
+
+        let response = app
+            .clone()
+            .oneshot(bearer_get("/v1/capabilities", token_b))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["tenant_id"], "tenant-b");
+        assert_eq!(body["operations"], json!(["price_option"]));
+        assert_eq!(body["artifact_operations"], json!([]));
+        assert_eq!(body["max_backtest_bars"], 50);
+
+        let response = app
+            .oneshot(bearer_get(
+                "/v1/capabilities",
+                "unknown-router-token-0123456789-ABCDE",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(json_body(response).await["code"], "unauthorized");
+    }
+
+    #[tokio::test]
+    async fn credential_backend_failure_is_distinct_and_secret_free() {
+        let app = router_with_services(
+            ApiHostConfig::new(),
+            Arc::new(UnavailableCredentialResolver),
+            None,
+        );
+        let response = app
+            .oneshot(bearer_get("/v1/capabilities", TOKEN))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = json_body(response).await;
+        assert_eq!(body["code"], "authentication_unavailable");
+        assert!(!body.to_string().contains(TOKEN));
     }
 }
