@@ -2425,10 +2425,24 @@ fn apply_chart_command(
         .position(|token| is_option_token(token))
         .unwrap_or(args.len());
     if primary_end > 0 {
-        specification.set_primary(ChartInstrument::from_terminal_subject(
-            &args[..primary_end].join(" "),
-        ));
+        specification.set_primary(ChartInstrument::from_terminal_subject(&args[0]));
         specification.comparisons.clear();
+        for symbol in args[1..primary_end]
+            .iter()
+            .flat_map(|argument| argument.split(','))
+            .filter(|symbol| !symbol.trim().is_empty())
+        {
+            if let Err(error) =
+                specification.add_comparison(ChartInstrument::from_terminal_subject(symbol))
+            {
+                *status = format!("CHART ERROR · {error}");
+            }
+        }
+        if !specification.comparisons.is_empty()
+            && specification.normalization == Normalization::Price
+        {
+            specification.normalization = Normalization::PercentChange;
+        }
     }
 
     let mut index = primary_end;
@@ -2712,6 +2726,30 @@ mod tests {
             .specification
             .has_study(Study::RelativeStrengthIndex { period: 7 }));
         assert_eq!(workspace.display_mode, ChartDisplayMode::Line);
+    }
+
+    #[test]
+    fn bare_chart_symbols_open_a_normalized_comparison() {
+        let mut workspace = ChartingWorkspace::new(Arc::new(StubHistory));
+        let invocation = CommandInvocation::parse("CHART AMZN META").unwrap();
+
+        workspace.handle_command(&invocation);
+
+        assert_eq!(workspace.specification.primary.symbol, "AMZN");
+        assert_eq!(workspace.specification.comparisons.len(), 1);
+        assert_eq!(workspace.specification.comparisons[0].symbol, "META");
+        assert_eq!(
+            workspace.specification.normalization,
+            Normalization::PercentChange
+        );
+        assert_eq!(
+            workspace
+                .history_requests()
+                .into_iter()
+                .map(|request| request.instrument.symbol)
+                .collect::<Vec<_>>(),
+            ["AMZN", "META"]
+        );
     }
 
     #[test]

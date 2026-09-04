@@ -426,6 +426,12 @@ successful sources continue updating. A total failure is shown as unavailable;
 the interactive app does not replace missing data with fabricated headlines or
 calendar events.
 
+`NEWS <symbol>` starts a separate bounded Yahoo Finance RSS request for that
+symbol and merges those current stories into the live snapshot before applying
+the symbol filter. For example, `NEWS AMZN` retrieves Amazon-linked stories
+rather than relying on AMZN to appear in the newest general-feed rows. The
+request runs on the same background worker and never blocks terminal input.
+
 Feed links are normalized to validated `http(s)` URLs with tracking parameters
 and fragments removed. Syndicated copies are merged by canonical URL and a
 bounded title/date identity, preserving every source and category instead of
@@ -468,6 +474,7 @@ Override the defaults with comma-separated feeds:
 
 ```dotenv
 MARKET_TERMINAL_NEWS_FEEDS="https://example.com/markets.xml,https://example.com/company-news.xml"
+MARKET_TERMINAL_NEWS_SYMBOL_FEED_URL="https://feeds.finance.yahoo.com/rss/2.0/headline"
 MARKET_TERMINAL_NEWS_REFRESH_SECS=300
 MARKET_TERMINAL_NEWS_TIMEOUT_SECS=12
 ```
@@ -538,7 +545,9 @@ history. `,`/`.` moves the inspection cursor one observation at a time; the
 selected timestamp and numerical close/plotted value remain in the chart title.
 Candle mode also shows OHLC there, while the wide-layout inspection panel adds
 full OHLC and volume. The same options can be requested from the command bar,
-for example `CHART AAPL 1Y STYLE CANDLES EMA20 RSI14`.
+for example `CHART AAPL 1Y STYLE CANDLES EMA20 RSI14`. Additional bare symbols
+become normalized comparisons, so `CHART AMZN META` fetches and charts both;
+`CHART AMZN VS META` remains the explicit equivalent.
 
 To use Alpaca's official Market Data API instead, create Alpaca data keys and
 select the provider explicitly:

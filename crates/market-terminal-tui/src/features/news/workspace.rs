@@ -508,6 +508,9 @@ impl Workspace for NewsWorkspace {
                 subject_seen = true;
             }
         }
+        if let Some(symbol) = self.filter.symbol.as_deref() {
+            self.query.request_symbol(symbol);
+        }
         self.selected = 0;
         self.clamp_selection();
         true
@@ -1714,6 +1717,21 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct SymbolRequestQuery {
+        symbols: Mutex<Vec<String>>,
+    }
+
+    impl NewsFeed for SymbolRequestQuery {
+        fn load_news(&self) -> NewsSnapshot {
+            NewsSnapshot::default()
+        }
+
+        fn request_symbol(&self, symbol: &str) {
+            self.symbols.lock().unwrap().push(symbol.to_owned());
+        }
+    }
+
     struct LinkedQuery;
     impl NewsFeed for LinkedQuery {
         fn load_news(&self) -> NewsSnapshot {
@@ -1830,6 +1848,17 @@ mod tests {
             workspace.visible_indices(&workspace.query.load_workbench()),
             vec![1]
         );
+    }
+
+    #[test]
+    fn symbol_command_requests_current_company_news() {
+        let query = Arc::new(SymbolRequestQuery::default());
+        let mut workspace = NewsWorkspace::new(query.clone());
+        let invocation = CommandInvocation::parse("NEWS AMZN").unwrap();
+
+        workspace.handle_command(&invocation);
+
+        assert_eq!(*query.symbols.lock().unwrap(), ["AMZN"]);
     }
 
     #[test]

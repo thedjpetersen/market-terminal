@@ -1306,7 +1306,7 @@ Recommended public vocabulary (subject to collision checks in the registry):
 | `SHEET [workbook]` | Open or create a workbook |
 | `MON <watchlist>` | Open a live market monitor |
 | `SEC <instrument>` | Open security research |
-| `CHART <instrument> [COMPARE <instrument>...]` | Open charting |
+| `CHART <instrument> [<comparison>...] [COMPARE <instrument>...]` | Open charting |
 | `NEWS [instrument|topic]` | Open filtered news |
 | `PORT <portfolio>` | Open positions and performance |
 | `RISK <portfolio>` | Open exposure and scenario analysis |

@@ -22,6 +22,7 @@ use crate::{
 
 const DEFAULT_REFRESH_SECONDS: u64 = 300;
 const DEFAULT_TIMEOUT_SECONDS: u64 = 12;
+const DEFAULT_SYMBOL_FEED_URL: &str = "https://feeds.finance.yahoo.com/rss/2.0/headline";
 const MAX_FEED_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_ARTICLE_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_ARTICLE_CHARS: usize = 120_000;
@@ -44,6 +45,7 @@ const DEFAULT_FEEDS: [&str; 7] = [
 #[derive(Debug, Clone)]
 pub struct LiveNewsConfig {
     feeds: Vec<String>,
+    symbol_feed_url: String,
     refresh_interval: Duration,
     timeout: Duration,
 }
@@ -82,6 +84,10 @@ impl LiveNewsConfig {
             .clamp(3, 30);
         Self {
             feeds,
+            symbol_feed_url: env::var("MARKET_TERMINAL_NEWS_SYMBOL_FEED_URL")
+                .ok()
+                .and_then(|value| canonical_http_url(&value, None))
+                .unwrap_or_else(|| DEFAULT_SYMBOL_FEED_URL.to_owned()),
             refresh_interval: Duration::from_secs(refresh_seconds),
             timeout: Duration::from_secs(timeout_seconds),
         }
@@ -96,6 +102,7 @@ struct FeedState {
 
 enum WorkerCommand {
     Refresh,
+    FetchSymbol { symbol: String },
     FetchArticle { story_id: String, url: String },
     Stop,
 }
@@ -177,6 +184,24 @@ impl NewsFeed for LiveNewsFeed {
         let _ = self.commands.try_send(WorkerCommand::Refresh);
     }
 
+    fn request_symbol(&self, symbol: &str) {
+        let Some(symbol) = normalize_requested_symbol(symbol) else {
+            self.state.write().expect("news state lock").status =
+                "LIVE FEED ERROR · INVALID SYMBOL".to_owned();
+            return;
+        };
+        self.state.write().expect("news state lock").status =
+            format!("LIVE FEED · LOADING {symbol} NEWS");
+        if self
+            .commands
+            .try_send(WorkerCommand::FetchSymbol { symbol })
+            .is_err()
+        {
+            self.state.write().expect("news state lock").status =
+                "LIVE FEED ERROR · NEWS WORKER IS BUSY".to_owned();
+        }
+    }
+
     fn request_article(&self, story_id: &str, url: &str) -> bool {
         let requested_url = canonical_http_url(url, None);
         let accepted_url = {
@@ -255,6 +280,9 @@ fn run_worker(
             Ok(WorkerCommand::Refresh) | Err(mpsc::RecvTimeoutError::Timeout) => {
                 refresh_feeds(&client, &config.feeds, &state);
             }
+            Ok(WorkerCommand::FetchSymbol { symbol }) => {
+                refresh_symbol_feed(&client, &config.symbol_feed_url, &state, &symbol);
+            }
             Ok(WorkerCommand::FetchArticle { story_id, url }) => {
                 fetch_and_store_article(&client, &state, &story_id, &url);
             }
@@ -269,6 +297,84 @@ fn refresh_feeds(client: &Client, feeds: &[String], state: &RwLock<FeedState>) {
     let previous = state.read().expect("news state lock").clone();
     *state.write().expect("news state lock") =
         assemble_refresh(&previous, feeds, outcomes, retrieved_at);
+}
+
+fn refresh_symbol_feed(client: &Client, base_url: &str, state: &RwLock<FeedState>, symbol: &str) {
+    let retrieved_at = Utc::now();
+    let result = symbol_feed_url(base_url, symbol)
+        .ok_or_else(|| "symbol news feed URL is invalid".to_owned())
+        .and_then(|url| fetch_feed_at(client, &url, retrieved_at));
+    match result {
+        Ok(mut symbol_stories) => {
+            for (_, story) in &mut symbol_stories {
+                if !story
+                    .related_symbols
+                    .iter()
+                    .any(|candidate| candidate.eq_ignore_ascii_case(symbol))
+                {
+                    story.related_symbols.insert(0, symbol.to_owned());
+                    story.related_symbols.truncate(MAX_RELATED_SYMBOLS);
+                }
+                let instrument =
+                    InstrumentId::new(format!("us:listed:{}", symbol.to_ascii_lowercase()));
+                if !story.instruments.contains(&instrument) {
+                    story.instruments.insert(0, instrument);
+                    story.instruments.truncate(MAX_RELATED_SYMBOLS);
+                }
+            }
+            let mut current = state.write().expect("news state lock");
+            let mut combined = current
+                .workbench
+                .stories
+                .iter()
+                .cloned()
+                .map(|story| (story_published_at(&story), story))
+                .collect::<Vec<_>>();
+            combined.append(&mut symbol_stories);
+            current.workbench.stories = merge_and_limit_stories(combined);
+            current.status = format!(
+                "LIVE · {} STORIES · {symbol} NEWS AS OF {}Z · F9 REFRESH",
+                current.workbench.stories.len(),
+                retrieved_at.format("%H:%M")
+            );
+        }
+        Err(error) => {
+            state.write().expect("news state lock").status =
+                format!("LIVE FEED DEGRADED · {symbol} NEWS · {error}");
+        }
+    }
+}
+
+fn symbol_feed_url(base_url: &str, symbol: &str) -> Option<String> {
+    let mut url = Url::parse(base_url).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    url.query_pairs_mut()
+        .clear()
+        .append_pair("s", symbol)
+        .append_pair("region", "US")
+        .append_pair("lang", "en-US");
+    Some(url.to_string())
+}
+
+fn normalize_requested_symbol(symbol: &str) -> Option<String> {
+    let symbol = symbol.trim().to_ascii_uppercase();
+    (!symbol.is_empty()
+        && symbol.len() <= 32
+        && symbol
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '-')))
+    .then_some(symbol)
+}
+
+fn story_published_at(story: &NewsStory) -> Option<DateTime<Utc>> {
+    story
+        .provenance
+        .published_at
+        .as_deref()
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.with_timezone(&Utc))
 }
 
 fn fetch_feeds_concurrently(
@@ -1267,6 +1373,93 @@ mod tests {
     use super::*;
 
     #[test]
+    fn symbol_request_publishes_current_company_news() {
+        use std::{
+            io::{ErrorKind, Read, Write},
+            net::TcpListener,
+            time::Instant,
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let observed_requests = requests.clone();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let mut served = 0;
+            while Instant::now() < deadline {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(error) => panic!("local news server failed: {error}"),
+                };
+                let mut buffer = [0_u8; 4096];
+                let count = stream.read(&mut buffer).unwrap();
+                let request = String::from_utf8_lossy(&buffer[..count]).to_string();
+                observed_requests.lock().unwrap().push(request.clone());
+                let (title, description) = if request.contains("s=AMZN") {
+                    ("Company announces new service", "A current company report.")
+                } else {
+                    ("Broad markets close higher", "A general market report.")
+                };
+                let body = format!(
+                    "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title>Test Wire</title><item><guid>{title}</guid><title>{title}</title><link>https://example.com/story</link><pubDate>Thu, 03 Sep 2026 20:00:00 GMT</pubDate><description>{description}</description></item></channel></rss>"
+                );
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/rss+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+                served += 1;
+                if served == 2 {
+                    break;
+                }
+            }
+        });
+        let feed = LiveNewsFeed::new(LiveNewsConfig {
+            feeds: vec![format!("http://{address}/general")],
+            symbol_feed_url: format!("http://{address}/symbol"),
+            refresh_interval: Duration::from_secs(3_600),
+            timeout: Duration::from_secs(1),
+        });
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while feed.load_workbench().stories.is_empty() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        feed.request_symbol("AMZN");
+        server.join().unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let workbench = loop {
+            let workbench = feed.load_workbench();
+            if workbench
+                .stories
+                .iter()
+                .any(|story| story.related_symbols.iter().any(|symbol| symbol == "AMZN"))
+                || Instant::now() >= deadline
+            {
+                break workbench;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert!(workbench
+            .stories
+            .iter()
+            .any(|story| { story.related_symbols.iter().any(|symbol| symbol == "AMZN") }));
+        assert!(requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request.contains("s=AMZN")));
+    }
+
+    #[test]
     fn parses_real_rss_shape_into_owned_provider_story() {
         let rss = br#"<?xml version="1.0"?>
 <rss version="2.0"><channel><title>Market Wire</title>
@@ -1521,6 +1714,33 @@ mod tests {
             "Seeking Alpha All News did not return stories: {:?}",
             results[0].1
         );
+    }
+
+    #[test]
+    #[ignore = "requires live network access"]
+    fn live_symbol_feed_returns_current_amzn_stories() {
+        let client = Client::builder()
+            .user_agent("market-terminal/0.1 (live integration test)")
+            .timeout(Duration::from_secs(15))
+            .build()
+            .unwrap();
+        let state = RwLock::new(FeedState {
+            workbench: NewsWorkbench {
+                stories: Vec::new(),
+                events: Vec::new(),
+            },
+            status: "TEST".to_owned(),
+        });
+
+        refresh_symbol_feed(&client, DEFAULT_SYMBOL_FEED_URL, &state, "AMZN");
+
+        let state = state.read().unwrap();
+        assert!(state
+            .workbench
+            .stories
+            .iter()
+            .any(|story| story.related_symbols.iter().any(|symbol| symbol == "AMZN")));
+        assert!(state.status.contains("AMZN NEWS AS OF"));
     }
 
     #[test]

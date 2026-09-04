@@ -316,6 +316,9 @@ The interactive composition root uses `LiveNewsFeed`, which owns a bounded
 background RSS/Atom command queue, fetches source feeds concurrently under
 independent timeouts, canonicalizes and merges syndicated identities, and retains
 failed-source rows with explicit stale provenance while healthy sources advance.
+Symbol-filtered commands cross a News-owned request seam and queue a bounded
+Yahoo Finance RSS fetch; the adapter attaches the validated requested identity
+to the returned provider rows before merging them into the workbench snapshot.
 It performs explicit on-demand readability and metadata extraction and exposes
 cloned provider-neutral workbench snapshots. Article requests are revalidated
 against the story's current canonical URL before leaving the process.

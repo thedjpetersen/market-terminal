@@ -301,7 +301,9 @@ endorsed by, or sponsored by Yahoo.
 - **Default sources:** Seeking Alpha news and investment ideas, Bloomberg
   Markets, MarketWatch Top Stories, Financial Times Markets, U.S. SEC press
   releases, and Federal Reserve press releases; configurable through
-  `MARKET_TERMINAL_NEWS_FEEDS`.
+  `MARKET_TERMINAL_NEWS_FEEDS`. Explicit `NEWS <symbol>` requests use Yahoo
+  Finance's per-symbol RSS feed, configurable through
+  `MARKET_TERMINAL_NEWS_SYMBOL_FEED_URL`.
 - **Content boundary:** the feed-provided headline, summary/byline metadata,
   timestamp, attribution, publisher URL, and any feed-provided body are
   displayed. Canonicalized URLs, all contributing source/feed identities, full
@@ -326,6 +328,8 @@ endorsed by, or sponsored by Yahoo.
   identities merge syndicated copies and preserve source evidence. A failed
   source retains its last successful bounded rows as `STALE SOURCE`; successful
   sources continue advancing, and a complete absence remains visibly unavailable.
+  Symbol requests are validated, queued on the existing bounded background worker,
+  and attach the requested identity to every row returned by the symbol-scoped feed.
 
 ## User portfolio CSV
 
