@@ -20,6 +20,17 @@ jobs:
       - run: npm run typecheck --prefix contracts/web/client
       - run: npm test --prefix contracts/web/client
       - run: cargo build --workspace --all-features --release
+      - name: Native news journeys through PTY, HTTP and persistence
+        run: |
+          python3 -m venv .venv-native-e2e
+          .venv-native-e2e/bin/pip install pyte==0.8.2
+          .venv-native-e2e/bin/python scripts/news_e2e.py --binary target/release/market-terminal --evidence native-e2e-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-news-e2e
+          path: native-e2e-evidence/
+          if-no-files-found: ignore
       - run: npm run test:http --prefix contracts/web/client
         env:
           MARKET_TERMINAL_API_BINARY: ${{ github.workspace }}/target/release/market-terminal-api

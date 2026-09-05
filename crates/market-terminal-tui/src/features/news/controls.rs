@@ -63,6 +63,7 @@ pub(super) enum NewsControl {
     RegionAsia,
     Unread,
     Saved,
+    Source,
     Calendar,
     ReadState,
     Bookmark,
@@ -72,13 +73,14 @@ pub(super) enum NewsControl {
 }
 
 impl NewsControl {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Reset,
         Self::RegionUs,
         Self::RegionEu,
         Self::RegionAsia,
         Self::Unread,
         Self::Saved,
+        Self::Source,
         Self::Calendar,
         Self::ReadState,
         Self::Bookmark,
@@ -95,6 +97,7 @@ impl NewsControl {
             Self::RegionAsia => "region-asia",
             Self::Unread => "unread",
             Self::Saved => "saved",
+            Self::Source => "source",
             Self::Calendar => "calendar",
             Self::ReadState => "read-state",
             Self::Bookmark => "bookmark",
@@ -111,7 +114,7 @@ impl NewsControl {
     pub(super) const fn is_story_specific(self) -> bool {
         matches!(
             self,
-            Self::ReadState | Self::Bookmark | Self::Security | Self::InsertSheet
+            Self::Source | Self::ReadState | Self::Bookmark | Self::Security | Self::InsertSheet
         )
     }
 }

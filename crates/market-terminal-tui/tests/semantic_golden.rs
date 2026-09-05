@@ -76,7 +76,7 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "desk-layout",
         prepare: prepare_desk_layout,
-        hashes: [0xbcac2bcd52343537, 0xd5f4496a79a6de96, 0x7861cc979c624014],
+        hashes: [0xbcac2bcd52343537, 0x8dab6d2b562368a5, 0x96ade8e320caabd9],
     },
     Golden {
         name: "security-filings",
@@ -111,7 +111,7 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "news",
         prepare: prepare_news,
-        hashes: [0xaaf54e7509f037ca, 0x540542c85a6ad144, 0x155ecf03164656ca],
+        hashes: [0x5b8b2d28b2a0c8bd, 0xeb0fb58056646569, 0x7f8c40201b8b2781],
     },
     Golden {
         name: "news-reader",
@@ -176,7 +176,7 @@ fn offline_mission_control_matches_semantic_goldens_at_standard_sizes() {
 
 #[test]
 fn filtered_news_events_match_semantic_goldens_at_standard_sizes() {
-    let expected = [0x366d6cb47e5addfe, 0x66205393d2a971e3, 0x9e1a8d8bb1e245e3];
+    let expected = [0x338e92004edf12fe, 0xbae89072106a79e6, 0xe04cce14111181a6];
     let actual = SIZES.map(|(width, height)| {
         let workspace = filtered_news_workspace();
         render_news_hash(&workspace, width, height)

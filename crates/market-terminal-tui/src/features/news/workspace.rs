@@ -169,6 +169,13 @@ impl NewsWorkspace {
             NewsControl::RegionAsia => " 3 AS ".to_owned(),
             NewsControl::Unread => " U UNREAD ".to_owned(),
             NewsControl::Saved => " M SAVED ".to_owned(),
+            NewsControl::Source => {
+                if self.filter.source.is_some() {
+                    " P ALL SRC ".to_owned()
+                } else {
+                    " P SOURCE ".to_owned()
+                }
+            }
             NewsControl::Calendar => {
                 if self.show_calendar {
                     " E STORIES ".to_owned()
@@ -217,6 +224,10 @@ impl NewsWorkspace {
         match control {
             NewsControl::Reset => self.filter.is_active() || self.show_calendar,
             NewsControl::ReadState | NewsControl::Bookmark => selected.is_some(),
+            NewsControl::Source => {
+                self.filter.source.is_some()
+                    || selected.is_some_and(|story| !story.provenance.sources.is_empty())
+            }
             NewsControl::Security | NewsControl::InsertSheet => {
                 selected.is_some_and(|story| !story.related_symbols.is_empty())
             }
@@ -231,6 +242,7 @@ impl NewsWorkspace {
             NewsControl::RegionAsia => self.filter.region.as_deref() == Some("AS"),
             NewsControl::Unread => self.filter.unread_only,
             NewsControl::Saved => self.filter.bookmarked_only,
+            NewsControl::Source => self.filter.source.is_some(),
             NewsControl::Calendar => self.show_calendar,
             NewsControl::ReadState => self
                 .selected_story(workbench)
@@ -265,6 +277,20 @@ impl NewsWorkspace {
             NewsControl::RegionAsia => "Show Asian news".to_owned(),
             NewsControl::Unread => "Toggle unread-only news".to_owned(),
             NewsControl::Saved => "Toggle saved-only news".to_owned(),
+            NewsControl::Source if self.filter.source.is_some() => {
+                "Show news from all publishers".to_owned()
+            }
+            NewsControl::Source => selected.map_or_else(
+                || "Filter news to the selected publisher".to_owned(),
+                |story| {
+                    let source = story
+                        .provenance
+                        .sources
+                        .first()
+                        .map_or("selected publisher", String::as_str);
+                    format!("Show only news from {source}")
+                },
+            ),
             NewsControl::Calendar => {
                 if self.show_calendar {
                     "Return to the selected story".to_owned()
@@ -320,7 +346,7 @@ impl NewsWorkspace {
         let selected_story = self.selected_story(workbench).cloned();
         let selected = selected_story.as_ref();
         if control.is_story_specific()
-            && expected_identity != selected.map(|story| story_identity(&story.id))
+            && expected_identity != Some(selected.map_or(0, |story| story_identity(&story.id)))
         {
             return false;
         }
@@ -348,6 +374,14 @@ impl NewsWorkspace {
             }
             NewsControl::Saved => {
                 self.filter.bookmarked_only = !self.filter.bookmarked_only;
+                self.selected = 0;
+            }
+            NewsControl::Source => {
+                self.filter.source = if self.filter.source.is_some() {
+                    None
+                } else {
+                    selected.and_then(|story| story.provenance.sources.first().cloned())
+                };
                 self.selected = 0;
             }
             NewsControl::Calendar => self.show_calendar = !self.show_calendar,
@@ -437,6 +471,12 @@ impl NewsWorkspace {
             "region" => self.filter.region = Some(value.to_ascii_uppercase()),
             "topic" => self.filter.topic = Some(value.to_ascii_uppercase()),
             "symbol" => self.filter.symbol = Some(value.to_ascii_uppercase()),
+            "source" => {
+                let source = value.trim();
+                if valid_source_filter(source) {
+                    self.filter.source = Some(source.to_owned());
+                }
+            }
             _ => {}
         }
     }
@@ -597,6 +637,9 @@ impl Workspace for NewsWorkspace {
             }
             KeyCode::Char('m') => {
                 self.activate_current_control(NewsControl::Saved, &workbench);
+            }
+            KeyCode::Char('p') => {
+                self.activate_current_control(NewsControl::Source, &workbench);
             }
             KeyCode::Char('e') => {
                 self.activate_current_control(NewsControl::Calendar, &workbench);
@@ -922,10 +965,11 @@ impl Workspace for NewsWorkspace {
         let feed_status = self.query.status();
         let areas = news_areas(area);
         let filter_label = format!(
-            "REGION {}  TOPIC {}  SYMBOL {}  {}{}",
+            "REGION {}  TOPIC {}  SYMBOL {}  SOURCE {}  {}{}",
             self.filter.region.as_deref().unwrap_or("ALL"),
             self.filter.topic.as_deref().unwrap_or("ALL"),
             self.filter.symbol.as_deref().unwrap_or("ALL"),
+            self.filter.source.as_deref().unwrap_or("ALL"),
             if self.filter.unread_only {
                 "UNREAD  "
             } else {
@@ -979,6 +1023,19 @@ impl Workspace for NewsWorkspace {
                 Some(ListItem::new(Line::from(vec![
                     Span::styled(format!("{status} {} ", story.headline.time), MUTED),
                     Span::styled(format!("{:<4}", story.headline.topic), AMBER),
+                    Span::styled(
+                        format!(
+                            "{:<13}",
+                            short_source(
+                                story
+                                    .provenance
+                                    .sources
+                                    .first()
+                                    .map_or("UNKNOWN", String::as_str)
+                            )
+                        ),
+                        MUTED,
+                    ),
                     Span::styled(
                         story.headline.title.as_str(),
                         if selected {
@@ -1061,6 +1118,7 @@ impl Workspace for NewsWorkspace {
             ("region", self.filter.region.as_ref()),
             ("topic", self.filter.topic.as_ref()),
             ("symbol", self.filter.symbol.as_ref()),
+            ("source", self.filter.source.as_ref()),
         ] {
             if let Some(value) = value {
                 state = state.with_field(name, ViewValue::Text(value.clone()));
@@ -1092,6 +1150,7 @@ impl Workspace for NewsWorkspace {
         restore_filter_field(state, "region", 8, &mut self.filter.region, &mut report);
         restore_filter_field(state, "topic", 16, &mut self.filter.topic, &mut report);
         restore_filter_field(state, "symbol", 32, &mut self.filter.symbol, &mut report);
+        restore_source_filter_field(state, &mut self.filter.source, &mut report);
         restore_boolean_field(
             state,
             "unread_only",
@@ -1143,10 +1202,11 @@ impl Workspace for NewsWorkspace {
             self.clamp_selection();
         }
 
-        const KNOWN_FIELDS: [&str; 7] = [
+        const KNOWN_FIELDS: [&str; 8] = [
             "region",
             "topic",
             "symbol",
+            "source",
             "unread_only",
             "bookmarked_only",
             "subview",
@@ -1222,6 +1282,28 @@ fn restore_boolean_field(
     }
 }
 
+fn restore_source_filter_field(
+    state: &WorkspaceViewState,
+    target: &mut Option<String>,
+    report: &mut ViewRestoreReport,
+) {
+    let Some(value) = state.fields.get("source") else {
+        return;
+    };
+    match value.as_text().filter(|value| valid_source_filter(value)) {
+        Some(value) => {
+            *target = Some(value.to_owned());
+            report.restored_fields += 1;
+        }
+        None => {
+            report.skipped_fields += 1;
+            report
+                .warnings
+                .push("news source filter is invalid".to_owned());
+        }
+    }
+}
+
 fn valid_filter_token(value: &str, maximum_bytes: usize) -> bool {
     !value.is_empty()
         && value.len() <= maximum_bytes
@@ -1230,6 +1312,13 @@ fn valid_filter_token(value: &str, maximum_bytes: usize) -> bool {
                 || byte.is_ascii_digit()
                 || matches!(byte, b'-' | b'.' | b'_' | b'^' | b'/')
         })
+}
+
+fn valid_source_filter(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 160
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
 }
 
 fn valid_story_id(value: &str) -> bool {
@@ -1271,6 +1360,23 @@ fn short_title(title: &str) -> String {
     let shortened = characters.by_ref().take(LIMIT).collect::<String>();
     if characters.next().is_some() {
         format!("{shortened}…")
+    } else {
+        shortened
+    }
+}
+
+fn short_source(source: &str) -> String {
+    const LIMIT: usize = 12;
+    let mut characters = source.chars();
+    let shortened = characters.by_ref().take(LIMIT).collect::<String>();
+    if characters.next().is_some() {
+        format!(
+            "{}…",
+            shortened
+                .chars()
+                .take(LIMIT.saturating_sub(1))
+                .collect::<String>()
+        )
     } else {
         shortened
     }
@@ -1756,6 +1862,22 @@ mod tests {
         }
     }
 
+    struct SourceQuery;
+    impl NewsFeed for SourceQuery {
+        fn load_news(&self) -> NewsSnapshot {
+            NewsSnapshot {
+                headlines: headlines(),
+            }
+        }
+
+        fn load_workbench(&self) -> NewsWorkbench {
+            let mut workbench = NewsWorkbench::from_snapshot(self.load_news());
+            workbench.stories[0].provenance.sources = vec!["Market Wire".to_owned()];
+            workbench.stories[1].provenance.sources = vec!["Chip Wire".to_owned()];
+            workbench
+        }
+    }
+
     #[derive(Default)]
     struct SymbolRequestQuery {
         symbols: Mutex<Vec<String>>,
@@ -1927,6 +2049,58 @@ mod tests {
     }
 
     #[test]
+    fn command_option_filters_to_one_exact_publisher() {
+        let mut workspace = NewsWorkspace::new(Arc::new(SourceQuery));
+        let invocation = CommandInvocation::parse(r#"NEWS "--source=Chip Wire""#).unwrap();
+
+        workspace.handle_command(&invocation);
+
+        assert_eq!(workspace.filter.source.as_deref(), Some("Chip Wire"));
+        assert_eq!(
+            workspace.visible_indices(&workspace.query.load_workbench()),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn source_control_filters_to_selected_publisher_and_toggles_back_to_all() {
+        let mut workspace = NewsWorkspace::new(Arc::new(SourceQuery));
+
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE)));
+        assert_eq!(workspace.filter.source.as_deref(), Some("Market Wire"));
+        assert_eq!(
+            workspace.visible_indices(&workspace.query.load_workbench()),
+            vec![0]
+        );
+
+        assert!(workspace.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE)));
+        assert_eq!(workspace.filter.source, None);
+        assert_eq!(
+            workspace.visible_indices(&workspace.query.load_workbench()),
+            vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn empty_source_filter_can_be_cleared_without_a_selected_story() {
+        let mut workspace = NewsWorkspace::new(Arc::new(SourceQuery));
+        let invocation = CommandInvocation::parse(r#"NEWS "--source=Missing Publisher""#).unwrap();
+        workspace.handle_command(&invocation);
+        let workbench = workspace.query.load_workbench();
+        assert!(workspace.visible_indices(&workbench).is_empty());
+        assert!(workspace.control_enabled(NewsControl::Source, &workbench));
+        assert_eq!(
+            workspace.control_action_label(NewsControl::Source, &workbench),
+            "Show news from all publishers"
+        );
+        assert!(workspace.activate_control(NewsControl::Source, Some(0), &workbench));
+        assert_eq!(workspace.visible_indices(&workbench), vec![0, 1]);
+        // The empty-state action cannot later apply a publisher to a new selection.
+        assert!(!workspace.activate_control(NewsControl::Source, Some(0), &workbench));
+        assert_eq!(workspace.filter.source, None);
+    }
+
+    #[test]
     fn positional_subject_filters_by_linked_symbol() {
         let mut workspace = NewsWorkspace::new(Arc::new(StubQuery));
         workspace.handle_command(&CommandInvocation {
@@ -1957,6 +2131,7 @@ mod tests {
             region: Some("AS".to_owned()),
             topic: Some("TEC".to_owned()),
             symbol: Some("NVDA".to_owned()),
+            source: Some("DETERMINISTIC REPLAY".to_owned()),
             unread_only: true,
             bookmarked_only: true,
         };
@@ -1967,7 +2142,7 @@ mod tests {
         source.detail_scroll = 42;
         let state = source.capture_view();
 
-        assert_eq!(state.fields.len(), 7);
+        assert_eq!(state.fields.len(), 8);
         assert_eq!(
             state.fields.get("selected_story_id"),
             Some(&ViewValue::Text("14:00:TEC:Chip rally".to_owned()))
@@ -1983,7 +2158,7 @@ mod tests {
         restored.bookmarks.insert("14:00:TEC:Chip rally".to_owned());
         let report = restored.restore_view(&state);
 
-        assert_eq!(report.restored_fields, 7);
+        assert_eq!(report.restored_fields, 8);
         assert_eq!(report.skipped_fields, 0);
         assert!(report.warnings.is_empty());
         assert!(restored.show_calendar);

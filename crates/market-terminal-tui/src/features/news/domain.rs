@@ -119,6 +119,7 @@ pub struct NewsFilter {
     pub region: Option<String>,
     pub topic: Option<String>,
     pub symbol: Option<String>,
+    pub source: Option<String>,
     pub unread_only: bool,
     pub bookmarked_only: bool,
 }
@@ -153,6 +154,15 @@ impl NewsFilter {
         }) {
             return false;
         }
+        if self.source.as_ref().is_some_and(|source| {
+            !story
+                .provenance
+                .sources
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(source))
+        }) {
+            return false;
+        }
         true
     }
 
@@ -160,6 +170,7 @@ impl NewsFilter {
         self.region.is_some()
             || self.topic.is_some()
             || self.symbol.is_some()
+            || self.source.is_some()
             || self.unread_only
             || self.bookmarked_only
     }
@@ -354,6 +365,23 @@ mod tests {
         };
         assert!(!filter.matches(&workbench.stories[0], false, false));
         assert!(filter.matches(&workbench.stories[1], false, false));
+    }
+
+    #[test]
+    fn source_filter_matches_one_exact_contributing_publisher() {
+        let mut workbench = NewsWorkbench::from_snapshot(NewsSnapshot {
+            headlines: headlines(),
+        });
+        workbench.stories[0].provenance.sources =
+            vec!["Market Wire".into(), "Syndication Desk".into()];
+        let filter = NewsFilter {
+            source: Some("syndication desk".into()),
+            ..NewsFilter::default()
+        };
+
+        assert!(filter.matches(&workbench.stories[0], false, false));
+        assert!(!filter.matches(&workbench.stories[1], false, false));
+        assert!(filter.is_active());
     }
 
     #[test]

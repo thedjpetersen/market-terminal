@@ -175,10 +175,11 @@ paths.
   exactly; a disappeared filing selects the first available row and discloses
   the fallback in the source-status panel. Provider page data and document URLs
   never enter the saved-view document. News owns its filter and selection schema:
-  region, topic, symbol, unread-only, saved-only, Stories/Events subview, and
-  optional provider story ID. Restore applies bounded filters first and then
-  resolves the story only within the filtered result by identity, so feed
-  reordering cannot silently change the selected headline. Removed stories
+  region, topic, symbol, exact publisher source, unread-only, saved-only,
+  Stories/Events subview, and optional provider story ID. Restore applies bounded
+  filters first and then resolves the story only within the filtered result by
+  identity, so feed reordering cannot silently change the selected headline.
+  Removed stories
   degrade to the first visible result, or to a disclosed empty state when no
   result survives. Calendar rendering selects an explicit full or compact column
   schema before constructing its table; narrow detail panes therefore preserve

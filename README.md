@@ -304,10 +304,11 @@ inspection cursor, zoom/pan window, and display modes. Security views retain
 the provider-neutral instrument ID, terminal symbol, active research tab, and
 stable selected Form 4 accession. The selection follows the accession when a
 refresh reorders rows; a missing filing falls back visibly instead of opening a
-different document. News views retain region, topic, symbol, unread, and saved
-filters; the Stories/Events subview; and selected story identity. Selection
-follows the story when a refreshed feed reorders rows; a missing story falls
-back visibly. Reader modals, article text, URLs, read history, and bookmarks
+different document. News views retain region, topic, symbol, exact publisher
+source, unread, and saved filters; the Stories/Events subview; and selected story
+identity. Selection follows the story when a refreshed feed reorders rows; a
+missing story falls back visibly. Reader modals, article text, URLs, read history,
+and bookmarks
 remain outside layout storage. Monitor views retain the watchlist identity,
 sort field and direction, exact configured column keys, active column preset,
 selected canonical instrument, and top visible instrument. Selection stays on
@@ -474,6 +475,11 @@ Press `Esc` from the list to enter spatial focus, or `F` at any time, to route
 directly to filters, headline rows, story operations, calendar events, or refresh.
 Inside the reader those navigation modes are modal-scoped, so workspace hotkeys
 and navigation-rail clicks cannot leave an open article accidentally.
+
+Press `P` or click `SOURCE` to filter the list to the selected story's primary
+publisher; press it again to return to all publishers. The exact command form is
+`NEWS "--source=MarketWatch.com - Top Stories"`, which also works for source names
+containing spaces. Source-filtered saved views retain that publisher identity.
 
 Override the defaults with comma-separated feeds:
 
@@ -999,6 +1005,23 @@ provider behavior. The machine-readable mappings live in
 [`docs/capability-evidence.json`](docs/capability-evidence.json), with the
 locked state matrix in
 [`docs/capability-gallery.json`](docs/capability-gallery.json).
+
+Run the native News end-to-end check with Python 3 and `pyte==0.8.2`:
+
+```sh
+python3 -m venv /tmp/market-news-e2e-venv
+/tmp/market-news-e2e-venv/bin/pip install pyte==0.8.2
+cargo build -p market-terminal-tui
+/tmp/market-news-e2e-venv/bin/python scripts/news_e2e.py --binary target/debug/market-terminal --evidence /tmp/market-news-e2e-evidence
+```
+
+The check drives the real terminal binary through a PTY, its HTTP news adapter,
+and disposable local persistence. A local synthetic publisher supplies feeds and
+an article failure/retry boundary. It verifies publisher filtering, reader
+recovery, saved-view readback after a process restart, and recovery from an empty
+publisher filter. The evidence directory retains terminal frames, correlated
+HTTP/action events, and a result with the repository revision and binary digest.
+This check does not establish availability of external publishers.
 
 ## Experience gallery
 
