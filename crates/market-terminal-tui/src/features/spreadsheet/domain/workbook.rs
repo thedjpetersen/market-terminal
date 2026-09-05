@@ -115,9 +115,29 @@ impl Workbook {
         }) {
             return Err(WorkbookError::DuplicateSheetName(name));
         }
+        let old = self.active_sheet().name().to_owned();
         self.sheets[self.active_sheet]
             .rename(name)
-            .map_err(WorkbookError::InvalidSheet)
+            .map_err(WorkbookError::InvalidSheet)?;
+        let new = self.active_sheet().name().to_owned();
+        for sheet in &mut self.sheets {
+            let replacements = sheet
+                .populated_cells()
+                .filter_map(|(address, cell)| {
+                    if !cell.raw().trim_start().starts_with('=') {
+                        return None;
+                    }
+                    let mut expression = parse_formula(cell.raw()).ok()?;
+                    expression
+                        .rename_sheet(&old, &new)
+                        .then(|| (address, format!("={expression}")))
+                })
+                .collect::<Vec<_>>();
+            for (address, raw) in replacements {
+                sheet.set(address, raw);
+            }
+        }
+        Ok(())
     }
 
     pub fn remove_active_sheet(&mut self) -> Result<Worksheet, WorkbookError> {

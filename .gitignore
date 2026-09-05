@@ -1,4 +1,11 @@
 /target/
+node_modules/
+web/dist/
+web/.wrangler/
+web/public/engine/
+web/.dev.vars*
+web/test-results/
+web/playwright-report/
 .env
 .env.*
 !.env.example

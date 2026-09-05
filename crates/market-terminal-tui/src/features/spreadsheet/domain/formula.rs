@@ -169,6 +169,35 @@ impl fmt::Display for Expr {
 }
 
 impl Expr {
+    pub(super) fn rename_sheet(&mut self, old: &str, new: &str) -> bool {
+        let sheet = match self {
+            Self::Reference(reference) => &mut reference.sheet,
+            Self::Range(range) => &mut range.sheet,
+            Self::Unary { operand, .. } => return operand.rename_sheet(old, new),
+            Self::Binary { left, right, .. } => {
+                let left_changed = left.rename_sheet(old, new);
+                return right.rename_sheet(old, new) || left_changed;
+            }
+            Self::Function { arguments, .. } => {
+                let mut changed = false;
+                for argument in arguments {
+                    changed |= argument.rename_sheet(old, new);
+                }
+                return changed;
+            }
+            Self::Number(_) | Self::Text(_) => return false,
+        };
+        if sheet
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case(old))
+        {
+            *sheet = Some(new.to_owned());
+            true
+        } else {
+            false
+        }
+    }
+
     fn fmt_with_precedence(
         &self,
         formatter: &mut fmt::Formatter<'_>,

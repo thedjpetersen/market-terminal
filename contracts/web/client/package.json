@@ -1,0 +1,14 @@
+{
+  "name": "@market-terminal/research-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./index.ts",
+  "scripts": {
+    "test": "node --experimental-strip-types --test client.test.ts",
+    "test:http": "node --experimental-strip-types --test http.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": { "lossless-json": "4.3.1" },
+  "devDependencies": { "@types/node": "^24.0.0", "typescript": "~5.9.3" }
+}

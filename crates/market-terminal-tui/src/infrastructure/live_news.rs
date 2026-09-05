@@ -1397,9 +1397,20 @@ mod tests {
                     }
                     Err(error) => panic!("local news server failed: {error}"),
                 };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
                 let mut buffer = [0_u8; 4096];
-                let count = stream.read(&mut buffer).unwrap();
-                let request = String::from_utf8_lossy(&buffer[..count]).to_string();
+                let mut received = Vec::new();
+                while !received.ends_with(b"\r\n\r\n") {
+                    let count = stream.read(&mut buffer).unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    received.extend_from_slice(&buffer[..count]);
+                }
+                let request = String::from_utf8_lossy(&received).to_string();
                 observed_requests.lock().unwrap().push(request.clone());
                 let (title, description) = if request.contains("s=AMZN") {
                     ("Company announces new service", "A current company report.")
@@ -1630,7 +1641,7 @@ mod tests {
     #[test]
     fn feed_requests_run_in_parallel_instead_of_accumulating_timeouts() {
         use std::{
-            io::Write,
+            io::{Read, Write},
             net::TcpListener,
             time::{Duration, Instant},
         };
@@ -1640,6 +1651,15 @@ mod tests {
             let address = listener.local_addr().unwrap();
             let worker = thread::spawn(move || {
                 let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 4096];
+                let mut received = Vec::new();
+                while !received.ends_with(b"\r\n\r\n") {
+                    let count = stream.read(&mut request).unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    received.extend_from_slice(&request[..count]);
+                }
                 thread::sleep(Duration::from_millis(500));
                 let body = r#"<?xml version="1.0"?><rss version="2.0"><channel><title>Wire</title><item><guid>x</guid><title>Market update</title></item></channel></rss>"#;
                 write!(
@@ -1656,6 +1676,7 @@ mod tests {
         let (second, second_worker) = delayed_feed();
         let client = Client::builder()
             .timeout(Duration::from_secs(2))
+            .http1_only()
             .build()
             .unwrap();
         let started = Instant::now();
@@ -1663,7 +1684,10 @@ mod tests {
         let elapsed = started.elapsed();
         first_worker.join().unwrap();
         second_worker.join().unwrap();
-        assert!(outcomes.iter().all(|(_, result)| result.is_ok()));
+        assert!(
+            outcomes.iter().all(|(_, result)| result.is_ok()),
+            "parallel feed outcomes failed: {outcomes:?}"
+        );
         assert!(
             elapsed < Duration::from_millis(850),
             "parallel refresh took {elapsed:?}"

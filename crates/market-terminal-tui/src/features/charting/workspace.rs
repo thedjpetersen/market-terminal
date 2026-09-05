@@ -1178,8 +1178,8 @@ impl ChartingWorkspace {
                 format!("VIEW {}-{}", window.range.start + 1, window.range.end),
                 AMBER,
             )),
-            Line::from(Span::styled(format!("HIGH {:.2}", view_high), GREEN)),
-            Line::from(Span::styled(format!("LOW  {:.2}", view_low), RED)),
+            Line::from(Span::styled(format!("HIGH {view_high:.2}"), GREEN)),
+            Line::from(Span::styled(format!("LOW  {view_low:.2}"), RED)),
             Line::from(Span::styled(
                 format!("SPAN {:.2}", view_high - view_low),
                 MUTED,

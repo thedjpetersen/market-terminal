@@ -98,12 +98,19 @@ pub fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         command_parts[2],
     );
 
-    let seconds = (app.ticks / 5) % 60;
+    let clock = app.wall_clock.map_or_else(
+        || "--:--:--".to_owned(),
+        |now| now.format("%H:%M:%S").to_string(),
+    );
+    let session = if app.runtime_settings().gallery_replay {
+        "DEMO"
+    } else {
+        "LOCAL"
+    };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("● LIVE  ", GREEN),
-            Span::styled(format!("10:42:{seconds:02}  "), INK),
-            Span::styled("NYC", MUTED),
+            Span::styled(format!("{session}  "), MUTED),
+            Span::styled(format!("{clock} UTC"), INK),
         ]))
         .alignment(Alignment::Right)
         .block(Block::new().borders(Borders::BOTTOM).border_style(MUTED)),
@@ -164,12 +171,6 @@ pub fn render_navigation(frame: &mut Frame, area: Rect, app: &App) {
         };
         spans.push(Span::styled(text, style));
     }
-    spans.extend([
-        Span::styled("  SPX 5,304.72 ", MUTED),
-        Span::styled("+0.86%", GREEN),
-        Span::styled("  NDX 18,658.32 ", MUTED),
-        Span::styled("+1.00%", GREEN),
-    ]);
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(Style::new().bg(NAV_BG.into())),
         area,

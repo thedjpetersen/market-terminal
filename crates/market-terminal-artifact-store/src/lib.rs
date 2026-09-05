@@ -6,6 +6,7 @@
 //! compose this implementation at their outermost boundary.
 
 use std::{
+    collections::BTreeMap,
     fmt, fs, io,
     path::{Path, PathBuf},
 };
@@ -165,7 +166,7 @@ impl ResearchArtifactQuery for LocalArtifactQuery {
             return Ok(empty_page());
         };
         let entries = fs::read_dir(directory).map_err(|_| ArtifactQueryFailure::Unavailable)?;
-        let mut documents = Vec::new();
+        let mut summaries = BTreeMap::new();
         let mut artifact_files = 0usize;
         for entry in entries {
             let path = entry.map_err(|_| ArtifactQueryFailure::Unavailable)?.path();
@@ -184,17 +185,17 @@ impl ResearchArtifactQuery for LocalArtifactQuery {
                     .cursor()
                     .is_none_or(|cursor| document.summary.artifact_id.as_str() > cursor)
             {
-                documents.push(document);
+                let summary = document.summary;
+                summaries.insert(summary.artifact_id.clone(), summary);
+                if summaries.len() > key.limit() + 1 {
+                    summaries.pop_last();
+                }
             }
         }
-        documents.sort_unstable_by(|left, right| {
-            left.summary.artifact_id.cmp(&right.summary.artifact_id)
-        });
-        let has_more = documents.len() > key.limit();
-        documents.truncate(key.limit());
-        let items = documents
-            .into_iter()
-            .map(|document| document.summary)
+        let has_more = summaries.len() > key.limit();
+        let items = summaries
+            .into_values()
+            .take(key.limit())
             .collect::<Vec<_>>();
         let next_cursor = has_more
             .then(|| items.last().map(|item| item.artifact_id.clone()))
@@ -453,6 +454,40 @@ mod tests {
         fs::write(&path, vec![b'x'; MAX_ARTIFACT_DOCUMENT_BYTES + 1]).unwrap();
         let error = service.get(&context("tenant-a"), "malformed").unwrap_err();
         assert_eq!(error.code, ApplicationErrorCode::ArtifactContractViolation);
+    }
+
+    #[test]
+    fn small_pages_scan_large_documents_in_stable_order() {
+        let root = TestRoot::new();
+        for index in (0..32).rev() {
+            let mut item = document(
+                "tenant-a",
+                &format!("run-{index:03}"),
+                ResearchArtifactKind::BacktestRun,
+            );
+            item.content = serde_json::json!({"evidence": "x".repeat(64 * 1024)});
+            write_document(&root.0, &item);
+        }
+        let service = ResearchArtifactApplicationService::new(std::sync::Arc::new(
+            LocalArtifactQuery::open(&root.0).unwrap(),
+        ));
+        let mut cursor = None;
+        for index in 0..32 {
+            let page = service
+                .list(
+                    &context("tenant-a"),
+                    ArtifactListRequest {
+                        kind: Some(ResearchArtifactKind::BacktestRun),
+                        cursor,
+                        limit: Some(1),
+                    },
+                )
+                .unwrap();
+            assert_eq!(page.items.len(), 1);
+            assert_eq!(page.items[0].artifact_id, format!("run-{index:03}"));
+            assert_eq!(page.next_cursor.is_some(), index < 31);
+            cursor = page.next_cursor;
+        }
     }
 
     #[test]

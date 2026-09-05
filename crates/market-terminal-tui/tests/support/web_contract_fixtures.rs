@@ -76,6 +76,16 @@ pub fn fixture_requests() -> Vec<EngineRequest> {
             "contract:analyze-bond",
             EngineOperation::AnalyzeBond(BondModelInput::default()),
         ),
+        request(
+            "contract:option-large-integer",
+            EngineOperation::PriceOption(OptionModelInput {
+                spot_micros: 1_000_000_000_001,
+                strike_micros: 1_000_000,
+                days_to_expiry: 0,
+                contract_multiplier: 9_999,
+                ..OptionModelInput::default()
+            }),
+        ),
     ]
 }
 

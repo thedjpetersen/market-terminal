@@ -839,6 +839,184 @@
           ]
         }
       }
+    },
+    {
+      "operation": "price_option",
+      "result_type": "option_analytics",
+      "request": {
+        "schema_version": 1,
+        "request_id": "contract:option-large-integer",
+        "operation": "price_option",
+        "input": {
+          "symbol": "AAPL",
+          "right": "call",
+          "spot_micros": 1000000000001,
+          "strike_micros": 1000000,
+          "days_to_expiry": 0,
+          "volatility_bps": 2500,
+          "risk_free_rate_bps": 500,
+          "dividend_yield_bps": 0,
+          "contract_multiplier": 9999
+        }
+      },
+      "response": {
+        "schema_version": 1,
+        "request_id": "contract:option-large-integer",
+        "status": "ok",
+        "result_type": "option_analytics",
+        "data": {
+          "input": {
+            "symbol": "AAPL",
+            "right": "call",
+            "spot_micros": 1000000000001,
+            "strike_micros": 1000000,
+            "days_to_expiry": 0,
+            "volatility_bps": 2500,
+            "risk_free_rate_bps": 500,
+            "dividend_yield_bps": 0,
+            "contract_multiplier": 9999
+          },
+          "price_micros": 999999000001,
+          "intrinsic_micros": 999999000001,
+          "time_value_micros": 0,
+          "delta_millionths": 1000000,
+          "gamma_billionths": 0,
+          "vega_micros_per_point": 0,
+          "theta_micros_per_day": 0,
+          "rho_micros_per_point": 0,
+          "scenarios": [
+            {
+              "spot_shock_bps": -2000,
+              "volatility_shift_bps": -500,
+              "spot_micros": 800000000000,
+              "volatility_bps": 2000,
+              "price_micros": 799999000000,
+              "contract_value_micros": 7999190001000000
+            },
+            {
+              "spot_shock_bps": -2000,
+              "volatility_shift_bps": 0,
+              "spot_micros": 800000000000,
+              "volatility_bps": 2500,
+              "price_micros": 799999000000,
+              "contract_value_micros": 7999190001000000
+            },
+            {
+              "spot_shock_bps": -2000,
+              "volatility_shift_bps": 500,
+              "spot_micros": 800000000000,
+              "volatility_bps": 3000,
+              "price_micros": 799999000000,
+              "contract_value_micros": 7999190001000000
+            },
+            {
+              "spot_shock_bps": -1000,
+              "volatility_shift_bps": -500,
+              "spot_micros": 900000000000,
+              "volatility_bps": 2000,
+              "price_micros": 899999000000,
+              "contract_value_micros": 8999090001000000
+            },
+            {
+              "spot_shock_bps": -1000,
+              "volatility_shift_bps": 0,
+              "spot_micros": 900000000000,
+              "volatility_bps": 2500,
+              "price_micros": 899999000000,
+              "contract_value_micros": 8999090001000000
+            },
+            {
+              "spot_shock_bps": -1000,
+              "volatility_shift_bps": 500,
+              "spot_micros": 900000000000,
+              "volatility_bps": 3000,
+              "price_micros": 899999000000,
+              "contract_value_micros": 8999090001000000
+            },
+            {
+              "spot_shock_bps": 0,
+              "volatility_shift_bps": -500,
+              "spot_micros": 1000000000001,
+              "volatility_bps": 2000,
+              "price_micros": 999999000001,
+              "contract_value_micros": 9998990001009999
+            },
+            {
+              "spot_shock_bps": 0,
+              "volatility_shift_bps": 0,
+              "spot_micros": 1000000000001,
+              "volatility_bps": 2500,
+              "price_micros": 999999000001,
+              "contract_value_micros": 9998990001009999
+            },
+            {
+              "spot_shock_bps": 0,
+              "volatility_shift_bps": 500,
+              "spot_micros": 1000000000001,
+              "volatility_bps": 3000,
+              "price_micros": 999999000001,
+              "contract_value_micros": 9998990001009999
+            },
+            {
+              "spot_shock_bps": 1000,
+              "volatility_shift_bps": -500,
+              "spot_micros": 1100000000001,
+              "volatility_bps": 2000,
+              "price_micros": 1099999000001,
+              "contract_value_micros": 10998890001009999
+            },
+            {
+              "spot_shock_bps": 1000,
+              "volatility_shift_bps": 0,
+              "spot_micros": 1100000000001,
+              "volatility_bps": 2500,
+              "price_micros": 1099999000001,
+              "contract_value_micros": 10998890001009999
+            },
+            {
+              "spot_shock_bps": 1000,
+              "volatility_shift_bps": 500,
+              "spot_micros": 1100000000001,
+              "volatility_bps": 3000,
+              "price_micros": 1099999000001,
+              "contract_value_micros": 10998890001009999
+            },
+            {
+              "spot_shock_bps": 2000,
+              "volatility_shift_bps": -500,
+              "spot_micros": 1200000000001,
+              "volatility_bps": 2000,
+              "price_micros": 1199999000001,
+              "contract_value_micros": 11998790001009999
+            },
+            {
+              "spot_shock_bps": 2000,
+              "volatility_shift_bps": 0,
+              "spot_micros": 1200000000001,
+              "volatility_bps": 2500,
+              "price_micros": 1199999000001,
+              "contract_value_micros": 11998790001009999
+            },
+            {
+              "spot_shock_bps": 2000,
+              "volatility_shift_bps": 500,
+              "spot_micros": 1200000000001,
+              "volatility_bps": 3000,
+              "price_micros": 1199999000001,
+              "contract_value_micros": 11998790001009999
+            }
+          ],
+          "model_version": "BLACK-SCHOLES-EUROPEAN-V1",
+          "input_digest": "OPT-721538F86D25EDC2",
+          "methodology": "EUROPEAN BLACK-SCHOLES · CONTINUOUS RATES/DIVIDENDS · ACT/365",
+          "disclosures": [
+            "MODEL OUTPUT ONLY · NOT A LIVE QUOTE OR INVESTMENT RECOMMENDATION",
+            "MODEL GREEKS ARE SEPARATE FROM PROVIDER GREEKS; NONE ARE LOADED",
+            "EUROPEAN EXERCISE · NO EARLY-EXERCISE OR DISCRETE-DIVIDEND MODEL",
+            "SCENARIOS HOLD TIME, RATES, AND DIVIDENDS CONSTANT"
+          ]
+        }
+      }
     }
   ]
 }

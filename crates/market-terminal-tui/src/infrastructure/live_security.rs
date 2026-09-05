@@ -1024,7 +1024,7 @@ fn chart_points(bars: &[crate::features::charting::PriceBar]) -> Vec<(f64, f64)>
 }
 
 fn financials_from_company_facts(payload: &Value) -> Vec<FinancialPeriod> {
-    let revenue = first_annual_facts(
+    let revenue = merged_annual_facts(
         payload,
         &[
             "Revenues",
@@ -1033,9 +1033,9 @@ fn financials_from_company_facts(payload: &Value) -> Vec<FinancialPeriod> {
         ],
         "USD",
     );
-    let operating_income = first_annual_facts(payload, &["OperatingIncomeLoss"], "USD");
-    let net_income = first_annual_facts(payload, &["NetIncomeLoss", "ProfitLoss"], "USD");
-    let diluted_eps = first_annual_facts(payload, &["EarningsPerShareDiluted"], "USD/shares");
+    let operating_income = merged_annual_facts(payload, &["OperatingIncomeLoss"], "USD");
+    let net_income = merged_annual_facts(payload, &["NetIncomeLoss", "ProfitLoss"], "USD");
+    let diluted_eps = merged_annual_facts(payload, &["EarningsPerShareDiluted"], "USD/shares");
     revenue
         .iter()
         .rev()
@@ -1055,14 +1055,21 @@ fn financials_from_company_facts(payload: &Value) -> Vec<FinancialPeriod> {
         .collect()
 }
 
-fn first_annual_facts(payload: &Value, tags: &[&str], unit: &str) -> AnnualFacts {
+fn merged_annual_facts(payload: &Value, tags: &[&str], unit: &str) -> AnnualFacts {
+    let mut merged = AnnualFacts::new();
     for tag in tags {
-        let facts = annual_facts(payload, tag, unit);
-        if !facts.is_empty() {
-            return facts;
+        for (period, observation) in annual_facts(payload, tag, unit) {
+            // Tags can retire independently of their history. Prefer the latest
+            // filing per period, then configured tag precedence on equal dates.
+            if merged
+                .get(&period)
+                .is_none_or(|(filed, _)| observation.0 > *filed)
+            {
+                merged.insert(period, observation);
+            }
         }
     }
-    BTreeMap::new()
+    merged
 }
 
 fn annual_facts(payload: &Value, tag: &str, unit: &str) -> AnnualFacts {
@@ -1244,6 +1251,38 @@ mod tests {
         assert_eq!(financials.len(), 1);
         assert_eq!(financials[0].period, "FY24A");
         assert_eq!(financials[0].revenue_billions, "11.0");
+    }
+
+    #[test]
+    fn financials_follow_reporting_periods_across_replacement_tags() {
+        let annual = |year: i32, value: f64, filed: &str| {
+            json!({
+                "start": format!("{year}-01-01"), "end": format!("{year}-12-31"),
+                "val": value, "form": "10-K", "fp": "FY", "filed": filed,
+            })
+        };
+        let payload = json!({"facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [
+                annual(2018, 265_000_000_000.0, "2019-02-01"),
+                annual(2024, 390_000_000_000.0, "2025-02-01")
+            ]}},
+            "RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": [
+                annual(2023, 383_000_000_000.0, "2024-02-01"),
+                annual(2024, 391_000_000_000.0, "2026-02-01"),
+                annual(2025, 416_000_000_000.0, "2026-02-01")
+            ]}}
+        }}});
+        let financials = financials_from_company_facts(&payload);
+        assert_eq!(
+            financials
+                .iter()
+                .map(|period| period.period.as_str())
+                .collect::<Vec<_>>(),
+            ["FY23A", "FY24A", "FY25A"]
+        );
+        assert_eq!(financials[1].revenue_billions, "391.0");
+        assert_eq!(financials[2].revenue_billions, "416.0");
+        assert_eq!(financials[2].operating_income_billions, "—");
     }
 
     #[test]

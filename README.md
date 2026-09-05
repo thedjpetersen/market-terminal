@@ -7,9 +7,14 @@ _I pasted this tweet into ChatGPT and just told it to keep going in between boog
 A native Rust, open-source market workstation inspired by the information
 density and keyboard ergonomics of professional financial terminals.
 
-The application runs directly in your terminal. Ratatui draws every panel,
-table, chart, border, and color; Crossterm handles input and terminal state.
-There is no HTML, CSS, JavaScript, WebAssembly, or browser runtime.
+The native application runs directly in your terminal. Ratatui draws its panels,
+tables and charts; Crossterm handles input and terminal state.
+
+The mobile-accessible research companion is live at **[market.frodojo.com](https://market.frodojo.com)**.
+It includes market research, charts, news, SEC filings, a device-local watchlist
+and saved evidence, plus options, bond and backtest models using the shared Rust
+engine through WebAssembly. Cloudflare Workers serves the app and public data
+adapters. See [web development and deployment](web/README.md).
 
 ## Workspaces
 
@@ -1231,6 +1236,9 @@ See [`docs/architecture.md`](docs/architecture.md) for dependency rules,
 for adding a new terminal or web function. The tenant-aware use-case boundary is
 specified in [`docs/application-services.md`](docs/application-services.md).
 
+See [`docs/research-baseline.md`](docs/research-baseline.md) for the application
+assessment, completed reliability milestone, and remaining browser workflow gaps.
+
 ### Headless analytical API
 
 The optional `market-terminal-api` binary exposes the deterministic engine
@@ -1256,7 +1264,7 @@ parameter. The routes remain absent with default configuration.
 See [`docs/web-api.md`](docs/web-api.md) for request examples, status contracts,
 configuration, and deployment constraints;
 [`docs/web-contracts.md`](docs/web-contracts.md) for the checked-in TypeScript
-types and replayable cross-language fixture workflow;
+types, exact-integer JavaScript client, and cross-language fixture workflow;
 [`docs/credentials.md`](docs/credentials.md) for catalog and rotation rules;
 [`docs/admission-control.md`](docs/admission-control.md) for rate, deadline, and
 bounded-execution semantics; and

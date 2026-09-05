@@ -236,10 +236,13 @@ fn build_app(providers: AppProviders) -> App {
             chart_primary,
         )),
         Box::new(ChatWorkspace::new(chat)),
-        Box::new(match alert_state_store {
-            Some(store) => AlertsWorkspace::persistent(alerts_query, store),
-            None => AlertsWorkspace::new(alerts_query),
-        }),
+        Box::new(
+            (match alert_state_store {
+                Some(store) => AlertsWorkspace::persistent(alerts_query, store),
+                None => AlertsWorkspace::new(alerts_query),
+            })
+            .with_refresh_interval(snapshot_refresh_interval),
+        ),
         Box::new(match security_document_opener {
             Some(opener) => SecurityWorkspace::with_symbol_and_document_opener(
                 security_query,

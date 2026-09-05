@@ -17,6 +17,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(180);
 pub fn run(mut app: App, terminal: &mut DefaultTerminal) -> io::Result<()> {
     let _mouse_capture = MouseCaptureGuard::enable()?;
     while !app.should_quit() {
+        app.set_wall_clock(chrono::Utc::now());
         let frame_area = terminal.draw(|frame| render(frame, &app))?.area;
         app.set_terminal_area(frame_area);
         if let Some(input) = read_input_event()? {
@@ -58,5 +59,41 @@ impl MouseCaptureGuard {
 impl Drop for MouseCaptureGuard {
     fn drop(&mut self) {
         let _ = execute!(io::stdout(), DisableMouseCapture);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn header_displays_host_time_and_does_not_claim_live_market_data() {
+        use chrono::{TimeZone, Utc};
+        use ratatui::{backend::TestBackend, Terminal};
+
+        for gallery in [true, false] {
+            let mut settings = crate::app::RuntimeSettingsSummary::demo();
+            settings.gallery_replay = gallery;
+            let mut app = crate::bootstrap::demo_app().with_runtime_settings(settings);
+            for code in std::iter::once(crossterm::event::KeyCode::Char('/'))
+                .chain("RISK".chars().map(crossterm::event::KeyCode::Char))
+                .chain(std::iter::once(crossterm::event::KeyCode::Enter))
+            {
+                app.handle_key(crossterm::event::KeyEvent::new(
+                    code,
+                    crossterm::event::KeyModifiers::NONE,
+                ));
+            }
+            app.set_wall_clock(Utc.with_ymd_and_hms(2026, 9, 5, 12, 34, 56).unwrap());
+            let mut terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+            terminal.draw(|frame| render(frame, &app)).unwrap();
+            let header = terminal.backend().buffer().content[..480]
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(header.contains("12:34:56 UTC"), "{header}");
+            assert!(header.contains(if gallery { "DEMO" } else { "LOCAL" }));
+            assert!(!header.contains("LIVE"));
+            assert!(!header.contains("NYC"));
+        }
     }
 }

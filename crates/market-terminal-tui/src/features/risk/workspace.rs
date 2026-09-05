@@ -12,7 +12,7 @@ use ratatui::{
 use crate::{
     app::{AppIntent, CommandInvocation, Workspace, WorkspaceDescriptor},
     ui::{
-        is_primary_click, scroll_key, table_row_at,
+        is_primary_click, scroll_key, table_row_at, table_viewport,
         theme::{AMBER, BG, CYAN, GREEN, INK, MUTED, RED, YELLOW},
     },
 };
@@ -112,6 +112,15 @@ impl Workspace for RiskWorkspace {
     }
 
     fn handle_command(&mut self, invocation: &CommandInvocation) -> bool {
+        if invocation.args.len() > 1
+            || invocation.args.first().is_some_and(|argument| {
+                !argument.eq_ignore_ascii_case("HISTORY")
+                    && !argument.eq_ignore_ascii_case("CONCENTRATION")
+            })
+        {
+            self.status = "USAGE: RISK [HISTORY|CONCENTRATION] · UNSUPPORTED ARGUMENTS".to_owned();
+            return true;
+        }
         if invocation
             .args
             .first()
@@ -183,8 +192,9 @@ impl Workspace for RiskWorkspace {
             let Ok(snapshot) = self.query.load_risk() else {
                 return false;
             };
-            if let Some(index) = table_row_at(event, areas.table, snapshot.positions.len()) {
-                self.selected = index;
+            let visible = table_viewport(areas.table, snapshot.positions.len(), self.selected);
+            if let Some(index) = table_row_at(event, areas.table, visible.len()) {
+                self.selected = visible.start + index;
                 return self.open_selected();
             }
         }
@@ -272,29 +282,32 @@ impl RiskWorkspace {
             }
         }
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(" 1/2/TAB ", AMBER),
-                Span::styled("VIEW  ", MUTED),
-                Span::styled(
-                    if self.view == RiskView::Concentration {
-                        " ↑↓/JK "
-                    } else {
-                        " "
-                    },
-                    AMBER,
-                ),
-                Span::styled(
-                    if self.view == RiskView::Concentration {
-                        "SELECT  ENTER/S SECURITY  "
-                    } else {
-                        ""
-                    },
-                    MUTED,
-                ),
-                Span::styled("R ", AMBER),
-                Span::styled("RECOMPUTE  ", MUTED),
-                Span::styled("PER-CURRENCY · INPUTS AND METHODS EXPLICIT", YELLOW),
-            ])),
+            Paragraph::new(vec![
+                Line::from(vec![
+                    Span::styled(" 1/2/TAB ", AMBER),
+                    Span::styled("VIEW  ", MUTED),
+                    Span::styled(
+                        if self.view == RiskView::Concentration {
+                            " ↑↓/JK "
+                        } else {
+                            " "
+                        },
+                        AMBER,
+                    ),
+                    Span::styled(
+                        if self.view == RiskView::Concentration {
+                            "SELECT  ENTER/S SECURITY  "
+                        } else {
+                            ""
+                        },
+                        MUTED,
+                    ),
+                    Span::styled("R ", AMBER),
+                    Span::styled("RECOMPUTE  ", MUTED),
+                    Span::styled("PER-CURRENCY · INPUTS AND METHODS EXPLICIT", YELLOW),
+                ]),
+                Line::styled(self.status.clone(), YELLOW),
+            ]),
             areas.footer,
         );
     }
@@ -386,6 +399,8 @@ fn render_positions(frame: &mut Frame, area: Rect, snapshot: &RiskSnapshot, sele
         .positions
         .iter()
         .enumerate()
+        .skip(table_viewport(area, snapshot.positions.len(), selected).start)
+        .take(table_viewport(area, snapshot.positions.len(), selected).len())
         .map(|(index, position)| {
             let values = [
                 format!(
@@ -803,6 +818,75 @@ mod tests {
             workspace.poll_intents(),
             vec![AppIntent::DispatchCommand {
                 command: "SEC AAPL".to_owned(),
+                origin: ID,
+            }]
+        );
+    }
+
+    #[test]
+    fn unsupported_risk_arguments_preserve_the_current_view() {
+        let mut workspace = RiskWorkspace::new(query());
+        for command in ["RISK AAPL", "RISK HISTORY extra"] {
+            workspace.handle_command(&CommandInvocation::parse(command).unwrap());
+            assert_eq!(workspace.view, RiskView::Concentration);
+            assert!(workspace.status.contains("UNSUPPORTED ARGUMENTS"));
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            terminal
+                .draw(|frame| workspace.render(frame, frame.area()))
+                .unwrap();
+            let text = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(text.contains("UNSUPPORTED ARGUMENTS"));
+        }
+    }
+
+    #[test]
+    fn long_position_tables_render_and_click_the_visible_position() {
+        let mut snapshot = query().load_risk().unwrap();
+        snapshot.positions = (0..40)
+            .map(|index| {
+                let mut position = snapshot.positions[0].clone();
+                position.symbol = format!("ROW{index:03}");
+                position
+            })
+            .collect();
+        let mut workspace = RiskWorkspace::new(Arc::new(TestRisk(snapshot)));
+        workspace.move_selection(39);
+        let area = Rect::new(0, 0, 120, 36);
+        let mut terminal = Terminal::new(TestBackend::new(120, 36)).unwrap();
+        terminal
+            .draw(|frame| workspace.render(frame, area))
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("ROW039"));
+        assert!(!text.contains("ROW000"));
+        let table = risk_layout(area).table;
+        let visible = table_viewport(table, 40, 39);
+        workspace.handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: table.x + 2,
+                row: table.y + 3,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        );
+        assert_eq!(workspace.selected, visible.start);
+        assert_eq!(
+            workspace.poll_intents(),
+            vec![AppIntent::DispatchCommand {
+                command: format!("SEC ROW{:03}", visible.start),
                 origin: ID,
             }]
         );

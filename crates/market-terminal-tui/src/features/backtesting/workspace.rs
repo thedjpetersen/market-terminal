@@ -20,7 +20,7 @@ use crate::{
     },
     ui::{
         components::terminal_block,
-        is_primary_click, table_row_at,
+        is_primary_click, scroll_key, table_row_at, table_viewport,
         theme::{AMBER, BG, CYAN, GREEN, INK, MUTED, RED, YELLOW},
     },
 };
@@ -465,7 +465,7 @@ impl BacktestWorkspace {
                     let commission = value
                         .parse::<f64>()
                         .map_err(|_| "COMMISSION requires a decimal amount".to_owned())?;
-                    if !commission.is_finite() || commission < 0.0 || commission > 10_000.0 {
+                    if !commission.is_finite() || !(0.0..=10_000.0).contains(&commission) {
                         return Err("COMMISSION must be between 0 and 10000".to_owned());
                     }
                     candidate.commission_micros = (commission * 1_000_000.0).round() as i64;
@@ -602,15 +602,16 @@ impl Workspace for BacktestWorkspace {
         }
         if self.view == BacktestView::Trades {
             let count = self.artifact.as_ref().map_or(0, |run| run.trades.len());
-            if let Some(index) = table_row_at(event, areas.body, count) {
-                self.selected_trade = index;
+            let visible = table_viewport(areas.body, count, self.selected_trade);
+            if let Some(index) = table_row_at(event, areas.body, visible.len()) {
+                self.selected_trade = visible.start + index;
                 return true;
             }
         }
         if is_primary_click(event, areas.footer) {
             return self.open_chart();
         }
-        Workspace::handle_mouse(self, event, area)
+        scroll_key(event, area).is_some_and(|key| self.handle_key(key))
     }
 
     fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
@@ -1122,25 +1123,32 @@ fn comparison_row(
 }
 
 fn render_trades(frame: &mut Frame, area: Rect, run: &BacktestArtifact, selected: usize) {
-    let rows = run.trades.iter().enumerate().map(|(index, trade)| {
-        let style = if index == selected {
-            Style::new().bg(CYAN.into()).fg(BG.into()).bold()
-        } else if trade.side == super::TradeSide::Buy {
-            Style::new().fg(GREEN.into())
-        } else {
-            Style::new().fg(RED.into())
-        };
-        Row::new(vec![
-            Cell::from((index + 1).to_string()),
-            Cell::from(trade.side.label()),
-            Cell::from(format_timestamp(trade.signal_timestamp)),
-            Cell::from(format_timestamp(trade.execution_timestamp)),
-            Cell::from(trade.quantity.to_string()),
-            Cell::from(format_price(trade.reference_price_micros)),
-            Cell::from(format_price(trade.execution_price_micros)),
-        ])
-        .style(style)
-    });
+    let visible = table_viewport(area, run.trades.len(), selected);
+    let rows = run
+        .trades
+        .iter()
+        .enumerate()
+        .skip(visible.start)
+        .take(visible.len())
+        .map(|(index, trade)| {
+            let style = if index == selected {
+                Style::new().bg(CYAN.into()).fg(BG.into()).bold()
+            } else if trade.side == super::TradeSide::Buy {
+                Style::new().fg(GREEN.into())
+            } else {
+                Style::new().fg(RED.into())
+            };
+            Row::new(vec![
+                Cell::from((index + 1).to_string()),
+                Cell::from(trade.side.label()),
+                Cell::from(format_timestamp(trade.signal_timestamp)),
+                Cell::from(format_timestamp(trade.execution_timestamp)),
+                Cell::from(trade.quantity.to_string()),
+                Cell::from(format_price(trade.reference_price_micros)),
+                Cell::from(format_price(trade.execution_price_micros)),
+            ])
+            .style(style)
+        });
     frame.render_widget(
         Table::new(
             rows,
@@ -1533,5 +1541,52 @@ mod tests {
         terminal
             .draw(|frame| workspace.render(frame, frame.area()))
             .unwrap();
+    }
+
+    #[test]
+    fn trade_navigation_renders_and_selects_fills_beyond_the_first_page() {
+        let mut workspace = ready_workspace();
+        let run = workspace.artifact.as_mut().unwrap();
+        assert!(!run.trades.is_empty());
+        run.trades = (0..80)
+            .map(|index| {
+                let mut trade = run.trades[0].clone();
+                trade.quantity = 900_000 + index;
+                trade
+            })
+            .collect();
+        workspace.view = BacktestView::Trades;
+        workspace.move_trade(79);
+        let area = Rect::new(0, 0, 120, 36);
+        let mut terminal = Terminal::new(TestBackend::new(120, 36)).unwrap();
+        terminal
+            .draw(|frame| workspace.render(frame, area))
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("900079"));
+        assert!(!text.contains("900000"));
+        let body = backtest_areas(area).body;
+        let visible = table_viewport(body, 80, 79);
+        let event = MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: body.x + 2,
+            row: body.y + 3,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        assert!(workspace.handle_mouse(event, area));
+        assert_eq!(workspace.selected_trade, visible.start);
+        assert!(!workspace.handle_mouse(
+            MouseEvent {
+                kind: crossterm::event::MouseEventKind::Moved,
+                ..event
+            },
+            area
+        ));
     }
 }

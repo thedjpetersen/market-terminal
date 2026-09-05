@@ -34,6 +34,8 @@ use super::{
 
 pub struct NewsWorkspace {
     query: Arc<dyn NewsFeed>,
+    workbench: NewsWorkbench,
+    reader: Option<NewsStory>,
     article_opener: Option<Arc<dyn NewsArticleOpener>>,
     article_status: String,
     selected: usize,
@@ -50,6 +52,8 @@ pub struct NewsWorkspace {
 impl NewsWorkspace {
     pub fn new(query: Arc<dyn NewsFeed>) -> Self {
         Self {
+            workbench: query.load_workbench(),
+            reader: None,
             query,
             article_opener: None,
             article_status: "ENTER READS HERE · O OPENS THE PUBLISHER".to_owned(),
@@ -92,7 +96,10 @@ impl NewsWorkspace {
             .collect()
     }
 
-    fn selected_story<'a>(&self, workbench: &'a NewsWorkbench) -> Option<&'a NewsStory> {
+    fn selected_story<'a>(&'a self, workbench: &'a NewsWorkbench) -> Option<&'a NewsStory> {
+        if self.detail_expanded {
+            return self.reader.as_ref();
+        }
         let visible = self.visible_indices(workbench);
         visible
             .get(self.selected.min(visible.len().saturating_sub(1)))
@@ -100,10 +107,35 @@ impl NewsWorkspace {
     }
 
     fn clamp_selection(&mut self) {
-        let workbench = self.query.load_workbench();
+        let workbench = self.workbench.clone();
         self.selected = self
             .selected
             .min(self.visible_indices(&workbench).len().saturating_sub(1));
+    }
+
+    fn refresh_feed(&mut self) {
+        let selected_id = self
+            .visible_indices(&self.workbench)
+            .get(self.selected)
+            .map(|index| self.workbench.stories[*index].id.clone());
+        let workbench = self.query.load_workbench();
+        let visible = self.visible_indices(&workbench);
+        self.selected = selected_id
+            .as_ref()
+            .and_then(|id| {
+                visible
+                    .iter()
+                    .position(|index| &workbench.stories[*index].id == id)
+            })
+            .unwrap_or_else(|| self.selected.min(visible.len().saturating_sub(1)));
+        // Retain an open article if it falls out of the rolling feed. New body
+        // extraction results may update that article, but never switch its ID.
+        if let Some(reader) = &mut self.reader {
+            if let Some(updated) = workbench.stories.iter().find(|story| story.id == reader.id) {
+                *reader = updated.clone();
+            }
+        }
+        self.workbench = workbench;
     }
 
     fn select_story_identity(&mut self, workbench: &NewsWorkbench, story_id: &str) -> bool {
@@ -285,7 +317,8 @@ impl NewsWorkspace {
         if !self.control_enabled(control, workbench) {
             return false;
         }
-        let selected = self.selected_story(workbench);
+        let selected_story = self.selected_story(workbench).cloned();
+        let selected = selected_story.as_ref();
         if control.is_story_specific()
             && expected_identity != selected.map(|story| story_identity(&story.id))
         {
@@ -442,6 +475,7 @@ impl NewsWorkspace {
             story.body_state,
             ArticleBodyState::ExcerptOnly | ArticleBodyState::Unavailable(_)
         );
+        self.reader = Some(story.clone());
         self.read.insert(story_id.clone());
         self.detail_expanded = true;
         self.detail_scroll = 0;
@@ -517,7 +551,8 @@ impl Workspace for NewsWorkspace {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
-        let workbench = self.query.load_workbench();
+        self.refresh_feed();
+        let workbench = self.workbench.clone();
         if self.detail_expanded {
             match key.code {
                 KeyCode::Esc | KeyCode::Char('v' | 'V') => self.toggle_expanded_detail(),
@@ -594,7 +629,8 @@ impl Workspace for NewsWorkspace {
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect) -> bool {
-        let workbench = self.query.load_workbench();
+        self.refresh_feed();
+        let workbench = self.workbench.clone();
         if self.detail_expanded {
             match event.kind {
                 MouseEventKind::ScrollUp => self.scroll_expanded_detail(&workbench, -3),
@@ -668,7 +704,7 @@ impl Workspace for NewsWorkspace {
     }
 
     fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
-        let workbench = self.query.load_workbench();
+        let workbench = self.workbench.clone();
         if self.detail_expanded {
             let Some(selected) = self.selected_story(&workbench) else {
                 return vec![WorkspaceAction::new(
@@ -756,7 +792,8 @@ impl Workspace for NewsWorkspace {
     }
 
     fn activate_action(&mut self, id: &str) -> bool {
-        let workbench = self.query.load_workbench();
+        self.refresh_feed();
+        let workbench = self.workbench.clone();
         if let Some(identity) = id.strip_prefix("modal:close:") {
             let missing = identity == "missing" && self.selected_story(&workbench).is_none();
             if !self.detail_expanded
@@ -855,11 +892,12 @@ impl Workspace for NewsWorkspace {
     }
 
     fn poll_intents(&mut self) -> Vec<AppIntent> {
+        self.refresh_feed();
         std::mem::take(&mut self.pending_intents)
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
-        let workbench = self.query.load_workbench();
+        let workbench = self.workbench.clone();
         if self.detail_expanded {
             if let Some(story) = self.selected_story(&workbench) {
                 render_expanded_story(
@@ -1004,7 +1042,7 @@ impl Workspace for NewsWorkspace {
     }
 
     fn capture_view(&self) -> WorkspaceViewState {
-        let workbench = self.query.load_workbench();
+        let workbench = self.workbench.clone();
         let mut state = WorkspaceViewState::new(ID.as_str())
             .with_field("unread_only", ViewValue::Boolean(self.filter.unread_only))
             .with_field(
@@ -1035,6 +1073,7 @@ impl Workspace for NewsWorkspace {
     }
 
     fn restore_view(&mut self, state: &WorkspaceViewState) -> ViewRestoreReport {
+        self.refresh_feed();
         if !state.workspace.eq_ignore_ascii_case(ID.as_str()) {
             return ViewRestoreReport::warning(format!(
                 "saved state belongs to {}, not news",
@@ -1081,7 +1120,7 @@ impl Workspace for NewsWorkspace {
             }
         }
 
-        let workbench = self.query.load_workbench();
+        let workbench = self.workbench.clone();
         if let Some(value) = state.fields.get("selected_story_id") {
             match value.as_text().filter(|value| valid_story_id(value)) {
                 Some(story_id) if self.select_story_identity(&workbench, story_id) => {
@@ -1756,6 +1795,56 @@ mod tests {
         }
     }
 
+    #[test]
+    fn feed_refresh_preserves_selection_and_the_open_reader() {
+        struct ChangingFeed(Mutex<NewsWorkbench>);
+        impl NewsFeed for ChangingFeed {
+            fn load_news(&self) -> NewsSnapshot {
+                NewsSnapshot::default()
+            }
+            fn load_workbench(&self) -> NewsWorkbench {
+                self.0.lock().unwrap().clone()
+            }
+        }
+        let query = Arc::new(ChangingFeed(Mutex::new(LinkedQuery.load_workbench())));
+        let mut workspace = NewsWorkspace::new(query.clone());
+        workspace.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let selected = workspace
+            .selected_story(&workspace.workbench)
+            .unwrap()
+            .id
+            .clone();
+        query.0.lock().unwrap().stories.reverse();
+        workspace.poll_intents();
+        assert_eq!(
+            workspace.selected_story(&workspace.workbench).unwrap().id,
+            selected
+        );
+        workspace.filter.unread_only = true;
+        workspace.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(workspace.detail_expanded);
+        assert_eq!(
+            workspace.selected_story(&workspace.workbench).unwrap().id,
+            selected
+        );
+        query
+            .0
+            .lock()
+            .unwrap()
+            .stories
+            .retain(|story| story.id != selected);
+        workspace.poll_intents();
+        assert_eq!(
+            workspace.selected_story(&workspace.workbench).unwrap().id,
+            selected
+        );
+        workspace.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!workspace.detail_expanded);
+        assert!(workspace
+            .selected_story(&workspace.workbench)
+            .is_none_or(|story| story.id != selected));
+    }
+
     struct LongLinkedQuery;
     impl NewsFeed for LongLinkedQuery {
         fn load_news(&self) -> NewsSnapshot {
@@ -1873,6 +1962,7 @@ mod tests {
         };
         source.bookmarks.insert("14:00:TEC:Chip rally".to_owned());
         source.show_calendar = true;
+        source.reader = source.selected_story(&source.workbench).cloned();
         source.detail_expanded = true;
         source.detail_scroll = 42;
         let state = source.capture_view();

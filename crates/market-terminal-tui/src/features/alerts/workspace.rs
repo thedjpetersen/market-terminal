@@ -1,4 +1,5 @@
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 use std::{
     cell::Cell as StateCell,
     sync::{
@@ -64,6 +65,9 @@ pub struct AlertsWorkspace {
     refresh_sender: SyncSender<AlertsRefresh>,
     refresh_receiver: Receiver<AlertsRefreshResult>,
     pending_refresh: Option<AlertsRefresh>,
+    refresh_in_flight: bool,
+    refresh_interval: Duration,
+    next_refresh: Instant,
     desired_generation: u64,
     state_revision: u64,
     persisted_revision: u64,
@@ -175,6 +179,9 @@ impl AlertsWorkspace {
             refresh_sender,
             refresh_receiver,
             pending_refresh: None,
+            refresh_in_flight: false,
+            refresh_interval: Duration::from_secs(60),
+            next_refresh: Instant::now(),
             desired_generation: 0,
             state_revision,
             persisted_revision,
@@ -191,6 +198,11 @@ impl AlertsWorkspace {
 
     pub fn rules(&self) -> &[AlertRule] {
         &self.rules
+    }
+
+    pub fn with_refresh_interval(mut self, interval: Duration) -> Self {
+        self.refresh_interval = interval.max(Duration::from_secs(1));
+        self
     }
 
     fn refresh(&mut self) {
@@ -213,11 +225,14 @@ impl AlertsWorkspace {
     }
 
     fn dispatch_pending_refresh(&mut self) {
+        if self.refresh_in_flight {
+            return;
+        }
         let Some(refresh) = self.pending_refresh.take() else {
             return;
         };
         match self.refresh_sender.try_send(refresh) {
-            Ok(()) => {}
+            Ok(()) => self.refresh_in_flight = true,
             Err(TrySendError::Full(refresh)) => self.pending_refresh = Some(refresh),
             Err(TrySendError::Disconnected(_)) => {
                 self.status = "ALERT OBSERVATION WORKER STOPPED".to_owned();
@@ -226,7 +241,13 @@ impl AlertsWorkspace {
     }
 
     fn poll_refresh(&mut self) {
+        self.poll_refresh_at(Instant::now());
+    }
+
+    fn poll_refresh_at(&mut self, now: Instant) {
         while let Ok(refresh) = self.refresh_receiver.try_recv() {
+            self.refresh_in_flight = false;
+            self.next_refresh = now + self.refresh_interval;
             if refresh.generation != self.desired_generation {
                 continue;
             }
@@ -236,6 +257,10 @@ impl AlertsWorkspace {
             }
         }
         self.dispatch_pending_refresh();
+        if !self.refresh_in_flight && self.pending_refresh.is_none() && now >= self.next_refresh {
+            self.next_refresh = now + self.refresh_interval;
+            self.refresh();
+        }
     }
 
     fn apply_snapshot(&mut self, snapshot: AlertSnapshot) {
@@ -274,7 +299,10 @@ impl AlertsWorkspace {
         for observation in &snapshot.observations {
             for rule in &mut self.rules {
                 match rule.evaluate(observation) {
-                    AlertEvaluation::Triggered(_) => triggered += 1,
+                    AlertEvaluation::Triggered(_) => {
+                        triggered += 1;
+                        state_changed = true;
+                    }
                     AlertEvaluation::Duplicate => duplicates += 1,
                     AlertEvaluation::NotApplicable => {}
                     _ => state_changed = true,
@@ -1568,6 +1596,62 @@ mod tests {
     }
 
     #[test]
+    fn a_trigger_without_other_changes_survives_restart() {
+        let mut rule = test_rule(0);
+        rule.debounce = DebouncePolicy::consecutive(2);
+        let observation = |id| {
+            AlertObservation::new(
+                id,
+                rule.instrument.canonical_id.as_str(),
+                1_000_000.0,
+                1.0,
+                "2026-09-05T12:00:00Z",
+            )
+        };
+        let first = observation("first");
+        let second = observation("second");
+        assert!(matches!(
+            rule.evaluate(&first),
+            AlertEvaluation::Pending { .. }
+        ));
+        let store = Arc::new(MemoryAlertState {
+            state: Mutex::new(Some(AlertRulesState::new(1, vec![rule]).unwrap())),
+        });
+        let query = Arc::new(StubAlerts {
+            snapshots: Mutex::new(VecDeque::from([AlertSnapshot::new(
+                2,
+                "now",
+                vec![],
+                vec![second.clone()],
+                "TEST",
+            )])),
+        });
+        let mut workspace = AlertsWorkspace::persistent(query, store.clone());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while !matches!(workspace.rules[0].status, AlertStatus::Triggered { .. })
+            && std::time::Instant::now() < deadline
+        {
+            workspace.poll_intents();
+            std::thread::yield_now();
+        }
+        assert!(matches!(
+            workspace.rules[0].status,
+            AlertStatus::Triggered { .. }
+        ));
+        drop(workspace);
+        let mut restored = AlertsWorkspace::persistent(stub_query(false), store);
+        assert!(matches!(
+            restored.rules[0].status,
+            AlertStatus::Triggered { .. }
+        ));
+        assert_eq!(
+            restored.rules[0].evaluate(&second),
+            AlertEvaluation::Duplicate
+        );
+        assert_eq!(restored.state_revision, 2);
+    }
+
+    #[test]
     fn alert_provider_never_blocks_workspace_construction() {
         struct SlowAlerts;
 
@@ -1591,5 +1675,54 @@ mod tests {
         let workspace = AlertsWorkspace::new(Arc::new(SlowAlerts));
         assert!(started.elapsed() < std::time::Duration::from_millis(100));
         assert!(workspace.rules.is_empty());
+    }
+
+    #[test]
+    fn scheduled_observations_confirm_rules_without_manual_refresh() {
+        let mut rule = test_rule(0);
+        rule.debounce = DebouncePolicy::consecutive(2);
+        let snapshots = (1..=2)
+            .map(|sequence| {
+                AlertSnapshot::new(
+                    sequence,
+                    "now",
+                    vec![rule.clone()],
+                    vec![AlertObservation::new(
+                        format!("tick-{sequence}"),
+                        rule.instrument.canonical_id.as_str(),
+                        110.0,
+                        1.0,
+                        "now",
+                    )],
+                    "TEST",
+                )
+            })
+            .collect();
+        let mut workspace = AlertsWorkspace::new(Arc::new(StubAlerts {
+            snapshots: Mutex::new(snapshots),
+        }))
+        .with_refresh_interval(Duration::from_secs(5));
+        settle(&mut workspace);
+        assert!(matches!(
+            workspace.rules[0].status,
+            AlertStatus::Pending { .. }
+        ));
+        let due = workspace.next_refresh;
+        workspace.poll_refresh_at(due - Duration::from_millis(1));
+        assert_eq!(workspace.desired_generation, 1);
+        workspace.poll_refresh_at(due);
+        assert_eq!(workspace.desired_generation, 2);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !matches!(workspace.rules[0].status, AlertStatus::Triggered { .. })
+            && Instant::now() < deadline
+        {
+            workspace.poll_refresh_at(due);
+            std::thread::yield_now();
+        }
+        assert!(matches!(
+            workspace.rules[0].status,
+            AlertStatus::Triggered { .. }
+        ));
+        assert_eq!(workspace.desired_generation, 2);
     }
 }

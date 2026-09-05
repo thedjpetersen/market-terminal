@@ -635,7 +635,7 @@ async fn run_engine(
         Ok(Json(request)) => request,
         Err(rejection) => return json_rejection(rejection),
     };
-    let request_id = request.request_id.clone();
+    let request_id = request_id_header(&request.request_id);
     let service = state.service;
     let execution = execute_bounded(
         state.engine_semaphore.clone(),
@@ -648,19 +648,32 @@ async fn run_engine(
         Ok(Err(error)) => return application_rejection(error),
         Err(error) => {
             let mut response = bounded_execution_rejection(error);
-            if let Ok(request_id) = HeaderValue::from_str(&request_id) {
+            if let Some(request_id) = request_id {
                 response.headers_mut().insert("x-request-id", request_id);
             }
             return response;
         }
     };
     let status = engine_status(&response);
-    let request_id = HeaderValue::from_str(&response.request_id).ok();
     let mut response = secure_response((status, Json(response)));
     if let Some(request_id) = request_id {
         response.headers_mut().insert("x-request-id", request_id);
     }
     response
+}
+
+// Only bounded correlation tokens can reach response headers and trace fields.
+// The engine still reports its typed validation error for invalid input IDs.
+fn request_id_header(id: &str) -> Option<HeaderValue> {
+    if id.is_empty()
+        || id.len() > 128
+        || !id.bytes().all(|value| {
+            value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_' | b'.' | b':')
+        })
+    {
+        return None;
+    }
+    HeaderValue::from_str(id).ok()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1358,6 +1371,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_request_ids_never_escape_into_headers_or_trace_fields() {
+        for id in ["x".repeat(129), "x".repeat(100_000), "bad id".to_owned()] {
+            let mut request = option_request();
+            request["request_id"] = json!(id);
+            let response = router(ApiConfig::new(TOKEN).unwrap())
+                .oneshot(authenticated(request))
+                .await
+                .unwrap();
+            assert!(!response.headers().contains_key("x-request-id"));
+            assert_eq!(
+                json_body(response).await["error"]["code"],
+                "invalid_request_id"
+            );
+        }
+        assert!(request_id_header(&"x".repeat(128)).is_some());
+    }
+
+    #[tokio::test]
     async fn deployment_policy_rejects_disabled_operation_before_execution() {
         let policy = OperationPolicy::from_names(["analyze_bond"]).unwrap();
         let app = router(ApiConfig::new(TOKEN).unwrap().with_operation_policy(policy));
@@ -1614,7 +1645,7 @@ mod tests {
     #[test]
     fn configuration_is_bounded_and_never_debugs_the_secret() {
         assert!(ApiConfig::new("short").is_err());
-        assert!(ApiConfig::new(format!("{} ", TOKEN)).is_err());
+        assert!(ApiConfig::new(format!("{TOKEN} ")).is_err());
         assert!(OperationPolicy::from_names([]).is_err());
         assert!(OperationPolicy::from_names(["unknown"]).is_err());
         assert!(ApiConfig::for_principal(TOKEN, "bad tenant", "principal").is_err());

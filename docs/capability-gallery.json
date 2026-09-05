@@ -20,7 +20,7 @@
       "disposition": "rendered",
       "scenario": "help-directory",
       "reason": "The live Help catalog renders every exact shell and workspace command.",
-      "semantic_hash": "1cb90f7520d280b4"
+      "semantic_hash": "202fb40b6af9227f"
     },
     {
       "id": "otui-001-empty",
@@ -29,7 +29,7 @@
       "disposition": "rendered",
       "scenario": "empty-command",
       "reason": "An empty command editor remains usable and exposes its editing contract.",
-      "semantic_hash": "f57a8a9bfe3c9719"
+      "semantic_hash": "d775e17f4ea5fb98"
     },
     {
       "id": "otui-001-delayed",
@@ -92,7 +92,7 @@
       "disposition": "rendered",
       "scenario": "follow-hints",
       "reason": "The populated Overview viewport exposes shell and feature-owned follow targets.",
-      "semantic_hash": "bd89b1f32e081dbf"
+      "semantic_hash": "8702a4736e3ba9db"
     },
     {
       "id": "otui-002-empty",
@@ -101,7 +101,7 @@
       "disposition": "rendered",
       "scenario": "empty-panel-focus",
       "reason": "A workspace without leaf actions falls back to deterministic workspace-rail focus.",
-      "semantic_hash": "d755b4092257a2eb"
+      "semantic_hash": "43825438bd04d721"
     },
     {
       "id": "otui-002-delayed",

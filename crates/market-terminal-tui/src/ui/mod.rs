@@ -289,13 +289,26 @@ pub(crate) fn scroll_key(event: MouseEvent, area: Rect) -> Option<KeyEvent> {
 }
 
 /// Finds a one-line table row below a bordered header with one line of margin.
+pub(crate) fn table_viewport(
+    area: Rect,
+    row_count: usize,
+    selected: usize,
+) -> std::ops::Range<usize> {
+    let capacity = usize::from(area.height.saturating_sub(4));
+    let selected = selected.min(row_count.saturating_sub(1));
+    let start = selected.saturating_add(1).saturating_sub(capacity);
+    start..start.saturating_add(capacity).min(row_count)
+}
+
+/// Finds a one-line table row below a bordered header with one line of margin.
 pub(crate) fn table_row_at(event: MouseEvent, area: Rect, row_count: usize) -> Option<usize> {
     if !is_primary_click(event, area) {
         return None;
     }
     let first_row = area.y.saturating_add(3);
     let index = usize::from(event.row.saturating_sub(first_row));
-    (event.row >= first_row && index < row_count).then_some(index)
+    (event.row >= first_row && event.row < area.bottom().saturating_sub(1) && index < row_count)
+        .then_some(index)
 }
 
 /// Finds a one-line list item immediately inside a bordered block.

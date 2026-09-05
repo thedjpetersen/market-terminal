@@ -16,5 +16,34 @@ jobs:
       - run: cargo test --workspace --all-features
       - run: cargo run -p market-terminal-tui --example export_web_contracts -- --check
       - run: node --experimental-strip-types --check contracts/web/v3/market-terminal-api.ts
+      - run: npm ci --prefix contracts/web/client
+      - run: npm run typecheck --prefix contracts/web/client
+      - run: npm test --prefix contracts/web/client
       - run: cargo build --workspace --all-features --release
+      - run: npm run test:http --prefix contracts/web/client
+        env:
+          MARKET_TERMINAL_API_BINARY: ${{ github.workspace }}/target/release/market-terminal-api
       - run: cargo run -p market-terminal-tui --release --example performance_gate -- 50
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install wasm-pack --locked --version 0.13.1
+      - run: npm ci --prefix contracts/web/client
+      - run: npm ci --prefix web
+      - run: npm run build --prefix web
+      - run: npm test --prefix web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: npm run test:browser --prefix web
+      - run: npx wrangler deploy --dry-run
+        working-directory: web

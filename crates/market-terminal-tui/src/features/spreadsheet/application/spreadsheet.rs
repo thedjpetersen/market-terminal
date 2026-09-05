@@ -827,6 +827,47 @@ mod tests {
     }
 
     #[test]
+    fn renaming_sheets_preserves_formulas_and_is_one_undoable_change() {
+        let mut sheet = Spreadsheet::new();
+        sheet.rename_active_sheet("Inputs").unwrap();
+        sheet.set_cell("A1", "10").unwrap();
+        sheet.set_cell("A2", "20").unwrap();
+        sheet.add_sheet("Model").unwrap();
+        sheet.select_sheet("Model").unwrap();
+        sheet.set_cell("A1", "=inputs!$A$1 * 2").unwrap();
+        sheet.set_cell("A2", "=SUM(Inputs!A1:A2)").unwrap();
+        sheet
+            .set_cell("A3", "=CONCAT(\"Inputs!A1\", Inputs!A1)")
+            .unwrap();
+        sheet.set_cell("A4", "= 2 + 3").unwrap();
+        sheet.select_sheet("Inputs").unwrap();
+        let before = sheet.to_document_payload().unwrap();
+        sheet.rename_active_sheet("Owner's Inputs").unwrap();
+        let after = sheet.to_document_payload().unwrap();
+        sheet.select_sheet("Model").unwrap();
+        assert_eq!(sheet.cell("A1").unwrap().value, CellValue::Number(20.0));
+        assert_eq!(sheet.cell("A2").unwrap().value, CellValue::Number(30.0));
+        assert_eq!(
+            sheet.cell("A3").unwrap().value,
+            CellValue::Text("Inputs!A110".to_owned())
+        );
+        assert_eq!(sheet.cell("A4").unwrap().raw, "= 2 + 3");
+        assert!(sheet
+            .cell("A1")
+            .unwrap()
+            .raw
+            .contains("'Owner''s Inputs'!$A$1"));
+        sheet.select_sheet("Owner's Inputs").unwrap();
+        assert!(sheet.undo());
+        assert_eq!(sheet.to_document_payload().unwrap(), before);
+        assert!(sheet.redo());
+        assert_eq!(sheet.to_document_payload().unwrap(), after);
+        assert!(sheet.rename_active_sheet("Model").is_err());
+        assert!(sheet.rename_active_sheet("  ").is_err());
+        assert_eq!(sheet.to_document_payload().unwrap(), after);
+    }
+
+    #[test]
     fn workbook_document_round_trip_preserves_tabs_formulas_and_selection() {
         let mut spreadsheet = Spreadsheet::new();
         spreadsheet.rename_active_sheet("Model").unwrap();

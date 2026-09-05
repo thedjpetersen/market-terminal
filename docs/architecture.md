@@ -1,5 +1,24 @@
 # Architecture
 
+## Cloudflare web companion
+
+`web/` is a separate mobile-accessible host deployed at `market.frodojo.com`.
+Its feature directories preserve the same ownership and dependency direction as
+the native host: feature-owned contracts, infrastructure adapters, domain-free UI
+primitives and composition in `src/bootstrap.tsx`. It does not import TUI code.
+
+`market-terminal-wasm` is the browser analytical host. It enters
+`market-terminal-application` with a fixed local-device context and application
+budgets. A disposable browser Web Worker loads its WASM lazily and enforces a
+30-second execution lifetime. Shared lossless JSON contracts preserve the engine's
+integer evidence. Browser fixtures replay the actual WASM against native results.
+
+The Cloudflare Worker serves static assets and bounded, cached public Yahoo/SEC
+read endpoints. It contains no analytical business rules and grants no access to
+the authenticated HTTP API or artifact store. Watchlists and evidence are local
+to the browser. [Web host details](../web/README.md) describe its product scope,
+provider limitations, build and deployment workflow.
+
 Market Terminal uses domain-driven design with package-by-feature boundaries.
 The goal is to let many teams add terminal and web functions without
 coordinating changes through a central screen enum, global data service, or

@@ -128,6 +128,7 @@ pub struct App {
     assistant_workspace: Option<WorkspaceId>,
     assistant_drawer_visible: bool,
     pub(crate) ticks: u64,
+    pub(crate) wall_clock: Option<chrono::DateTime<chrono::Utc>>,
     pub(crate) workspaces: WorkspaceRegistry,
     events: EventBus,
     command_inference: Option<Arc<dyn CommandInference>>,
@@ -175,6 +176,7 @@ impl App {
             assistant_workspace,
             assistant_drawer_visible: false,
             ticks: 0,
+            wall_clock: None,
             workspaces,
             events: EventBus::default(),
             command_inference: None,
@@ -191,6 +193,11 @@ impl App {
             preset_preview: None,
             should_quit: false,
         }
+    }
+
+    /// Receives wall time from the native host; deterministic hosts can omit it.
+    pub(crate) fn set_wall_clock(&mut self, now: chrono::DateTime<chrono::Utc>) {
+        self.wall_clock = Some(now);
     }
 
     /// Attaches durable shell state and restores the last valid layout.

@@ -14,7 +14,7 @@ use crate::{
     },
     ui::{
         components::terminal_block,
-        is_primary_click, table_row_at,
+        is_primary_click, scroll_key, table_row_at, table_viewport,
         theme::{AMBER, BG, CYAN, GREEN, INK, MUTED, RED, YELLOW},
     },
 };
@@ -194,11 +194,12 @@ impl Workspace for FixedIncomeWorkspace {
             });
             return true;
         }
-        if let Some(index) = table_row_at(event, areas.body, self.row_count()) {
-            self.selected_row = index;
+        let visible = table_viewport(areas.body, self.row_count(), self.selected_row);
+        if let Some(index) = table_row_at(event, areas.body, visible.len()) {
+            self.selected_row = visible.start + index;
             return true;
         }
-        Workspace::handle_mouse(self, event, area)
+        scroll_key(event, area).is_some_and(|key| self.handle_key(key))
     }
 
     fn actions(&self, area: Rect) -> Vec<WorkspaceAction> {
@@ -625,6 +626,8 @@ fn render_cash_flows(frame: &mut Frame, area: Rect, analytics: &BondAnalytics, s
         .cash_flows
         .iter()
         .enumerate()
+        .skip(table_viewport(area, analytics.cash_flows.len(), selected).start)
+        .take(table_viewport(area, analytics.cash_flows.len(), selected).len())
         .map(|(index, flow)| {
             let style = if index == selected {
                 Style::new().bg(CYAN.into()).fg(BG.into()).bold()
@@ -678,6 +681,8 @@ fn render_shocks(frame: &mut Frame, area: Rect, analytics: &BondAnalytics, selec
         .scenarios
         .iter()
         .enumerate()
+        .skip(table_viewport(area, analytics.scenarios.len(), selected).start)
+        .take(table_viewport(area, analytics.scenarios.len(), selected).len())
         .map(|(index, scenario)| {
             let style = if index == selected {
                 Style::new().bg(CYAN.into()).fg(BG.into()).bold()
@@ -792,6 +797,49 @@ mod tests {
             workspace.select_view(FixedIncomeView::Shocks);
             assert!(render(&workspace, width, height).contains("PARALLEL"));
         }
+    }
+
+    #[test]
+    fn cash_flow_navigation_reaches_maturity_and_mouse_wheel_returns() {
+        let mut workspace = FixedIncomeWorkspace::new();
+        workspace.handle_command(
+            &CommandInvocation::parse("BOND LONG USD 1000 5 4 100 QUARTER 0").unwrap(),
+        );
+        workspace.select_view(FixedIncomeView::CashFlows);
+        for _ in 0..400 {
+            workspace.handle_key(KeyEvent::new(
+                KeyCode::Down,
+                crossterm::event::KeyModifiers::NONE,
+            ));
+        }
+        assert_eq!(workspace.selected_row, 399);
+        assert!(render(&workspace, 120, 36).contains("100.000000"));
+        let area = Rect::new(0, 0, 120, 36);
+        let body = fixed_income_areas(area).body;
+        let visible = table_viewport(body, 400, 399);
+        let event = MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: body.x + 2,
+            row: body.y + 3,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        assert!(workspace.handle_mouse(event, area));
+        assert_eq!(workspace.selected_row, visible.start);
+        assert!(workspace.handle_mouse(
+            MouseEvent {
+                kind: crossterm::event::MouseEventKind::ScrollUp,
+                ..event
+            },
+            area
+        ));
+        assert_eq!(workspace.selected_row, visible.start - 1);
+        assert!(!workspace.handle_mouse(
+            MouseEvent {
+                kind: crossterm::event::MouseEventKind::Moved,
+                ..event
+            },
+            area
+        ));
     }
 
     #[test]
