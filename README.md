@@ -415,8 +415,11 @@ Key names use `[ctrl-][alt-][shift-]key`, where `key` is a character, `F1`–
 `previous_theme`, `refresh`, `up`, `down`, `left`, `right`, `page_up`,
 `page_down`, and `open`. Invalid, duplicate, reserved, and conflicting entries
 fall back safely and are counted in Settings. `Esc`, `F`, `Ctrl+C`, `Ctrl+B`, direct
-workspace hotkeys, the tmux post-prefix keys, and command-mode Vim/Emacs editing
-remain fixed escape routes.
+workspace hotkeys, `F4`, the tmux post-prefix keys, and command-mode Vim/Emacs
+editing remain fixed escape routes. Press `F4` to suspend mouse reporting and
+use the terminal's native drag selection and copy behavior; press `F4` again to
+restore clickable controls. Unmodified `F4` is reserved; modified bindings such
+as `shift-f4` remain configurable.
 
 ## Live news
 
@@ -1022,6 +1025,16 @@ recovery, saved-view readback after a process restart, and recovery from an empt
 publisher filter. The evidence directory retains terminal frames, correlated
 HTTP/action events, and a result with the repository revision and binary digest.
 This check does not establish availability of external publishers.
+
+Use the same environment for the native keybinding journey:
+
+```sh
+/tmp/market-news-e2e-venv/bin/python scripts/news_e2e.py --flow keybindings --binary target/debug/market-terminal --evidence /tmp/market-keybindings-e2e-evidence
+```
+
+This flow checks PTY mouse-reporting mode, click suppression and recovery,
+rejected remaps, and persisted state readback after a process restart. OS
+clipboard copying remains unverified by the PTY check.
 
 ## Experience gallery
 

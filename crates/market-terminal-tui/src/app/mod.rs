@@ -121,6 +121,7 @@ pub struct App {
     runtime_settings: RuntimeSettingsSummary,
     keymap: Keymap,
     pub(crate) tmux_prefix_pending: bool,
+    text_selection_mode: bool,
     panel_focus: bool,
     focused_action: Option<String>,
     hint_mode: Option<HintMode>,
@@ -169,6 +170,7 @@ impl App {
             runtime_settings: RuntimeSettingsSummary::demo(),
             keymap: Keymap::default(),
             tmux_prefix_pending: false,
+            text_selection_mode: false,
             panel_focus: false,
             focused_action: None,
             hint_mode: None,
@@ -615,6 +617,10 @@ impl App {
     /// Keeping input handling independent of the runtime makes the application
     /// state machine directly usable from integration tests and alternate hosts.
     pub fn handle_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::F(4) && key.modifiers.is_empty() {
+            self.text_selection_mode = !self.text_selection_mode;
+            return;
+        }
         if input::is_force_quit(key) {
             self.should_quit = true;
             return;
@@ -1081,6 +1087,9 @@ impl App {
 
     /// Applies a terminal mouse event using the geometry of the last rendered frame.
     pub fn handle_mouse(&mut self, event: MouseEvent, frame_area: Rect) {
+        if self.text_selection_mode {
+            return;
+        }
         if self.preset_preview.is_some() {
             return;
         }
@@ -1179,6 +1188,12 @@ impl App {
             Some(ShellClickTarget::Quit) => self.should_quit = true,
             None => {}
         }
+    }
+
+    /// Whether the native host should suspend mouse reporting so the terminal
+    /// can own drag selection and its ordinary copy interaction.
+    pub fn text_selection_mode(&self) -> bool {
+        self.text_selection_mode
     }
 
     fn execute_command(&mut self) {
@@ -3216,6 +3231,42 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
         assert!(!app.settings_visible());
         assert!(app.help_visible());
+    }
+
+    #[test]
+    fn f4_toggles_terminal_text_selection_and_suppresses_click_routing() {
+        let frame_area = Rect::new(0, 0, 160, 48);
+        let mut app = bootstrap::demo_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+        let command_point = (0..frame_area.height)
+            .flat_map(|row| (0..frame_area.width).map(move |column| (column, row)))
+            .find(|(column, row)| {
+                crate::ui::hit_test(&app, frame_area, *column, *row)
+                    == Some(crate::ui::ShellClickTarget::CommandInput)
+            })
+            .unwrap();
+
+        app.handle_key(KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE));
+        assert!(app.text_selection_mode());
+        let mut terminal = Terminal::new(TestBackend::new(120, 36)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render(frame, &app))
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("TEXT SELECTION"));
+        app.handle_mouse(left_click(command_point.0, command_point.1), frame_area);
+        assert_eq!(app.input_mode(), InputMode::Navigation);
+
+        app.handle_key(KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE));
+        assert!(!app.text_selection_mode());
+        app.handle_mouse(left_click(command_point.0, command_point.1), frame_area);
+        assert_eq!(app.input_mode(), InputMode::Command);
     }
 
     #[test]

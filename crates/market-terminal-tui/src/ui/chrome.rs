@@ -186,6 +186,22 @@ pub(super) fn navigation_item_text(index: usize, item: WorkspaceNavigationItem) 
 }
 
 pub fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
+    if app.text_selection_mode() {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    " TEXT SELECTION ",
+                    Style::new().bg(AMBER.into()).fg(BG.into()).bold(),
+                ),
+                Span::raw("  DRAG TO SELECT WITH THE TERMINAL   COPY NORMALLY   "),
+                Span::styled("F4 ", AMBER),
+                Span::raw("RETURN TO CLICKS"),
+            ]))
+            .style(Style::new().bg(FOOTER_BG.into())),
+            area,
+        );
+        return;
+    }
     if app.settings_visible() {
         frame.render_widget(
             Paragraph::new(Line::from(vec![

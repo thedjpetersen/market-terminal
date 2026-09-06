@@ -15,14 +15,17 @@ const POLL_INTERVAL: Duration = Duration::from_millis(180);
 /// Terminal I/O and rendering live here so the application layer remains a
 /// deterministic state machine with no dependency on the presentation layer.
 pub fn run(mut app: App, terminal: &mut DefaultTerminal) -> io::Result<()> {
-    let _mouse_capture = MouseCaptureGuard::enable()?;
+    let mut mouse_capture = MouseCaptureGuard::enable()?;
     while !app.should_quit() {
         app.set_wall_clock(chrono::Utc::now());
         let frame_area = terminal.draw(|frame| render(frame, &app))?.area;
         app.set_terminal_area(frame_area);
         if let Some(input) = read_input_event()? {
             match input {
-                Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    app.handle_key(key);
+                    mouse_capture.set_enabled(!app.text_selection_mode())?;
+                }
                 Event::Mouse(mouse) => app.handle_mouse(mouse, frame_area),
                 _ => {}
             }
@@ -47,24 +50,46 @@ fn read_input_event() -> io::Result<Option<Event>> {
     Ok(Some(event::read()?))
 }
 
-struct MouseCaptureGuard;
+struct MouseCaptureGuard {
+    enabled: bool,
+}
 
 impl MouseCaptureGuard {
     fn enable() -> io::Result<Self> {
-        execute!(io::stdout(), EnableMouseCapture)?;
-        Ok(Self)
+        write_mouse_capture(&mut io::stdout(), true)?;
+        Ok(Self { enabled: true })
+    }
+
+    fn set_enabled(&mut self, enabled: bool) -> io::Result<()> {
+        if self.enabled == enabled {
+            return Ok(());
+        }
+        write_mouse_capture(&mut io::stdout(), enabled)?;
+        self.enabled = enabled;
+        Ok(())
     }
 }
 
 impl Drop for MouseCaptureGuard {
     fn drop(&mut self) {
-        let _ = execute!(io::stdout(), DisableMouseCapture);
+        if self.enabled {
+            let _ = write_mouse_capture(&mut io::stdout(), false);
+        }
+    }
+}
+
+fn write_mouse_capture(writer: &mut impl io::Write, enabled: bool) -> io::Result<()> {
+    if enabled {
+        execute!(writer, EnableMouseCapture)
+    } else {
+        execute!(writer, DisableMouseCapture)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn header_displays_host_time_and_does_not_claim_live_market_data() {
         use chrono::{TimeZone, Utc};
@@ -95,5 +120,17 @@ mod tests {
             assert!(!header.contains("LIVE"));
             assert!(!header.contains("NYC"));
         }
+    }
+
+    #[test]
+    fn mouse_capture_can_be_suspended_for_native_text_selection() {
+        let mut output = Vec::new();
+
+        write_mouse_capture(&mut output, true).unwrap();
+        write_mouse_capture(&mut output, false).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("\u{1b}[?1000h"));
+        assert!(output.contains("\u{1b}[?1000l"));
     }
 }

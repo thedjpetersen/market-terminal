@@ -25,11 +25,14 @@ jobs:
           python3 -m venv .venv-native-e2e
           .venv-native-e2e/bin/pip install pyte==0.8.2
           .venv-native-e2e/bin/python scripts/news_e2e.py --binary target/release/market-terminal --evidence native-e2e-evidence
+          .venv-native-e2e/bin/python scripts/news_e2e.py --flow keybindings --binary target/release/market-terminal --evidence native-keybindings-evidence
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: native-news-e2e
-          path: native-e2e-evidence/
+          path: |
+            native-e2e-evidence/
+            native-keybindings-evidence/
           if-no-files-found: ignore
       - run: npm run test:http --prefix contracts/web/client
         env:

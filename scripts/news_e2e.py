@@ -27,6 +27,7 @@ import pyte
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--flow', choices=['news', 'keybindings'], default='news')
     parser.add_argument('--binary', required=True, type=Path)
     parser.add_argument('--evidence', required=True, type=Path)
     args = parser.parse_args()
@@ -80,6 +81,8 @@ def main():
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 48, 160, 0, 0))
             self.screen = pyte.Screen(160, 48)
             self.stream = pyte.Stream(self.screen)
+            self.mouse_reporting = None
+            self.escape_tail = ""
             self.decoder = codecs.getincrementaldecoder('utf-8')('replace')
             self.proc = subprocess.Popen([str(binary)], stdin=slave, stdout=slave,
                                          stderr=slave, cwd=cwd, env=env, start_new_session=True)
@@ -95,7 +98,15 @@ def main():
                         break
                     if not data:
                         break
-                    self.stream.feed(self.decoder.decode(data))
+                    decoded = self.decoder.decode(data)
+                    self.stream.feed(decoded)
+                    controls = self.escape_tail + decoded
+                    position, enabled = max((controls.rfind(code), enabled) for enabled, code in
+                                            [(True, '\x1b[?1000h'), (False, '\x1b[?1000l')])
+                    if position >= 0 and self.mouse_reporting != enabled:
+                        self.mouse_reporting = enabled
+                        event('terminal_mouse_reporting', enabled=enabled)
+                    self.escape_tail = controls[-12:]
 
         def text(self):
             return '\n'.join(self.screen.display)
@@ -128,6 +139,7 @@ def main():
                 except subprocess.TimeoutExpired:
                     self.proc.terminate()
                     self.proc.wait(timeout=5)
+            event('process_exit', return_code=self.proc.returncode)
             os.close(self.master)
 
     server = ThreadingHTTPServer(('127.0.0.1', 0), Publisher)
@@ -148,40 +160,101 @@ def main():
                    MARKET_TERMINAL_NEWS_SYMBOL_FEED_URL=endpoint+'/alpha.xml',
                    MARKET_TERMINAL_MARKET_DATA_PROVIDER='alpaca', ALPACA_DATA_URL=endpoint,
                    MARKET_TERMINAL_AI_PROVIDER='openrouter')
-        terminal = Terminal(env, disposable)
-        terminal.expect('00-startup', ['WELCOME TO MARKET TERMINAL'])
-        terminal.send('q')
-        terminal.command('NEWS')
-        terminal.expect('01-all-publishers', ['Alpha synthetic research', 'Beta synthetic report'])
-        terminal.send('p')
-        terminal.expect('02-source-filter', ['SOURCE Alpha Wire', 'Alpha synthetic research'], ['Beta synthetic report'])
-        terminal.send('v')
-        terminal.expect('03-article-rejection', ['FULL TEXT UNAVAILABLE', '503'])
-        terminal.send('r')
-        terminal.expect('04-article-recovery', ['ARTICLE TEXT EXTRACTED', 'Recovered synthetic article body'])
-        terminal.send('\x1b')
-        terminal.command('VIEW SAVE Publisher QA')
-        terminal.expect('05-view-saved', ['VIEW SAVED', 'Publisher QA'])
-        terminal.close()
-        terminal = None
-        documents = list((state/'documents').rglob('*.json'))
-        matching = [p for p in documents if 'Publisher QA' in p.read_text()]
-        assert matching, 'Saved view was not written to disposable persistence'
-        saved = json.loads(matching[0].read_text())
-        assert 'Alpha Wire' in json.dumps(saved)
-        event('persistence_readback', outcome='pass', document_count=len(matching), source_filter='Alpha Wire')
-        terminal = Terminal(env, disposable)
-        terminal.expect('06-startup', ['MARKET TERMINAL RUST'])
-        terminal.command('NEWS')
-        terminal.expect('06-restarted-feed', ['Alpha synthetic research', 'Beta synthetic report'])
-        terminal.command('VIEW RESTORE Publisher QA')
-        terminal.expect('07-restored-view', ['SOURCE Alpha Wire', 'Alpha synthetic research'], ['Beta synthetic report'])
-        terminal.command('NEWS "--source=Missing Publisher"')
-        terminal.expect('08-empty-source', ['SOURCE Missing Publisher', 'P ALL SRC'], ['Alpha synthetic research', 'Beta synthetic report'])
-        terminal.send('p')
-        terminal.expect('09-empty-source-recovery', ['SOURCE ALL', 'Alpha synthetic research', 'Beta synthetic report'])
-        terminal.command('VIEW RESTORE Publisher QA')
-        terminal.expect('10-saved-view-retained', ['SOURCE Alpha Wire', 'Alpha synthetic research'], ['Beta synthetic report'])
+        if args.flow == 'keybindings':
+            env['MARKET_TERMINAL_KEYBINDINGS'] = 'open=F4'
+            terminal = Terminal(env, disposable)
+            terminal.expect('f4-01-startup', ['WELCOME TO MARKET TERMINAL'])
+            terminal.send('q')
+            terminal.command('NEWS')
+            terminal.expect('f4-02-news', ['Alpha synthetic research', 'Beta synthetic report'])
+            terminal.send('\x1bOS')
+            terminal.expect('f4-03-selection', ['TEXT SELECTION'])
+            assert terminal.mouse_reporting is False
+            # Report an already queued click to verify app-side suppression too.
+            terminal.send('\x1b[<0;45;2M\x1b[<0;45;2m')
+            terminal.expect('f4-04-click-suppressed', ['TEXT SELECTION', 'PRESS / FOR COMMAND'])
+            terminal.send('\x1bOS')
+            terminal.expect('f4-05-clicks-enabled', ['Alpha synthetic research'], ['TEXT SELECTION'])
+            assert terminal.mouse_reporting is True
+            terminal.send('\x1b[<0;45;2M\x1b[<0;45;2m')
+            terminal.send('NEWS "--source=Beta Wire"\r')
+            terminal.expect('f4-05a-same-process-click-recovery', ['SOURCE Beta Wire', 'Beta synthetic report'], ['Alpha synthetic research'])
+            terminal.command('NEWS')
+            terminal.expect('f4-05b-reset-for-open', ['SOURCE ALL', 'Alpha synthetic research'])
+            terminal.send('\r')
+            terminal.expect('f4-06-reserved-open-fallback', ['FULL TEXT UNAVAILABLE', '503'])
+            terminal.send('r')
+            terminal.expect('f4-07-reader-retry', ['ARTICLE TEXT EXTRACTED'])
+            terminal.send('\x1b')
+            terminal.send('p')
+            terminal.command('VIEW SAVE Binding QA')
+            terminal.expect('f4-08-view-saved', ['VIEW SAVED', 'Binding QA'])
+            terminal.close()
+            terminal = None
+            docs = list((state/'documents').rglob('*.json'))
+            assert any('Binding QA' in p.read_text() and 'Alpha Wire' in p.read_text() for p in docs)
+            event('persistence_readback', outcome='pass', source_filter='Alpha Wire')
+            # One invalid mapping and a duplicate key must not discard a valid remap.
+            env['MARKET_TERMINAL_KEYBINDINGS'] = 'open=shift-F4;help=not-a-key;next_panel=F6;previous_panel=F6'
+            terminal = Terminal(env, disposable)
+            terminal.expect('f4-09-restarted', ['MARKET TERMINAL RUST'])
+            terminal.command('SETTINGS')
+            terminal.expect('f4-10-config-rejections', ['WARNING(S)', 'CUSTOM ACTION(S)'])
+            terminal.send('q')
+            terminal.command('NEWS')
+            terminal.expect('f4-11-feed-ready', ['Alpha synthetic research', 'Beta synthetic report'])
+            terminal.command('VIEW RESTORE Binding QA')
+            terminal.expect('f4-12-view-restored', ['SOURCE Alpha Wire'], ['Beta synthetic report'])
+            # Restored click routing can enter a real command using the terminal mouse protocol.
+            terminal.send('\x1b[<0;45;2M\x1b[<0;45;2m')
+            terminal.send('NEWS\r')
+            terminal.expect('f4-13-click-command', ['SOURCE ALL', 'Beta synthetic report'])
+            terminal.send('\x1b[1;2S')
+            terminal.expect('f4-14-valid-open-remap', ['ARTICLE TEXT EXTRACTED'])
+            terminal.send('\x1b')
+            terminal.send('\x1bOP')
+            terminal.expect('f4-15-invalid-help-fallback', ['UNIFIED DESTINATION DIRECTORY'])
+            terminal.send('\x1b')
+            terminal.command('NEWS')
+            terminal.send('\x1b[17~')
+            terminal.expect('f4-16-next-panel-remap', ['XL  WORKBOOK'])
+            terminal.send('\x10')
+            terminal.expect('f4-17-conflict-fallback', ['NEWS  FILTERS & WORKFLOW'])
+        else:
+            terminal = Terminal(env, disposable)
+            terminal.expect('00-startup', ['WELCOME TO MARKET TERMINAL'])
+            terminal.send('q')
+            terminal.command('NEWS')
+            terminal.expect('01-all-publishers', ['Alpha synthetic research', 'Beta synthetic report'])
+            terminal.send('p')
+            terminal.expect('02-source-filter', ['SOURCE Alpha Wire', 'Alpha synthetic research'], ['Beta synthetic report'])
+            terminal.send('v')
+            terminal.expect('03-article-rejection', ['FULL TEXT UNAVAILABLE', '503'])
+            terminal.send('r')
+            terminal.expect('04-article-recovery', ['ARTICLE TEXT EXTRACTED', 'Recovered synthetic article body'])
+            terminal.send('\x1b')
+            terminal.command('VIEW SAVE Publisher QA')
+            terminal.expect('05-view-saved', ['VIEW SAVED', 'Publisher QA'])
+            terminal.close()
+            terminal = None
+            documents = list((state/'documents').rglob('*.json'))
+            matching = [p for p in documents if 'Publisher QA' in p.read_text()]
+            assert matching, 'Saved view was not written to disposable persistence'
+            saved = json.loads(matching[0].read_text())
+            assert 'Alpha Wire' in json.dumps(saved)
+            event('persistence_readback', outcome='pass', document_count=len(matching), source_filter='Alpha Wire')
+            terminal = Terminal(env, disposable)
+            terminal.expect('06-startup', ['MARKET TERMINAL RUST'])
+            terminal.command('NEWS')
+            terminal.expect('06-restarted-feed', ['Alpha synthetic research', 'Beta synthetic report'])
+            terminal.command('VIEW RESTORE Publisher QA')
+            terminal.expect('07-restored-view', ['SOURCE Alpha Wire', 'Alpha synthetic research'], ['Beta synthetic report'])
+            terminal.command('NEWS "--source=Missing Publisher"')
+            terminal.expect('08-empty-source', ['SOURCE Missing Publisher', 'P ALL SRC'], ['Alpha synthetic research', 'Beta synthetic report'])
+            terminal.send('p')
+            terminal.expect('09-empty-source-recovery', ['SOURCE ALL', 'Alpha synthetic research', 'Beta synthetic report'])
+            terminal.command('VIEW RESTORE Publisher QA')
+            terminal.expect('10-saved-view-retained', ['SOURCE Alpha Wire', 'Alpha synthetic research'], ['Beta synthetic report'])
         outcome = 'pass'
     finally:
         if terminal:
@@ -191,7 +264,7 @@ def main():
         server.server_close()
         revision = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
         (evidence/'events.json').write_text(json.dumps(events, indent=2))
-        summary = dict(run_id=run_id, revision=revision, tracked_source_dirty=bool(subprocess.check_output(['git','diff','HEAD','--name-only'])), binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(), outcome=outcome, duration_seconds=round(time.monotonic()-started,2), environment='local native PTY 160x48; real app/HTTP adapters/filesystem; synthetic publisher boundary', flows=['publisher filter + reader failure/retry + saved view process restart/readback','empty publisher filter rejection/recovery'], samples=1)
+        summary = dict(run_id=run_id, revision=revision, tracked_source_dirty=bool(subprocess.check_output(['git','diff','HEAD','--name-only'])), binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(), outcome=outcome, duration_seconds=round(time.monotonic()-started,2), environment='local native PTY 160x48; real app/HTTP adapters/filesystem; synthetic publisher boundary', flows=(['reserved F4 rejection and selection/click recovery', 'valid remap with invalid/conflicting fallback and saved-view restart'] if args.flow == 'keybindings' else ['publisher filter + reader failure/retry + saved view process restart/readback','empty publisher filter rejection/recovery']), samples=1)
         (evidence/'result.json').write_text(json.dumps(summary, indent=2))
         print(json.dumps(summary))
 

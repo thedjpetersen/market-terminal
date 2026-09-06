@@ -375,6 +375,7 @@ fn named_key(name: &str) -> Option<KeyCode> {
 
 fn is_reserved(combo: KeyCombo) -> bool {
     combo.code == KeyCode::Esc
+        || (combo.code == KeyCode::F(4) && combo.modifiers.is_empty())
         || (combo.code == KeyCode::Char('c') && combo.modifiers.contains(KeyModifiers::CONTROL))
         || (combo.code == KeyCode::Char('b') && combo.modifiers.contains(KeyModifiers::CONTROL))
 }
@@ -427,6 +428,26 @@ fn combo_label(combo: KeyCombo) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reserved_f4_keeps_open_default_while_modified_f4_remains_available() {
+        let (map, warnings) = Keymap::from_spec("open=F4;help=shift-F4");
+        assert!(warnings.iter().any(|warning| warning.contains("reserved")));
+        assert_eq!(
+            map.resolve(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            BindingMatch::Action {
+                action: ShellAction::Open,
+                customized: false
+            }
+        );
+        assert_eq!(
+            map.resolve(KeyEvent::new(KeyCode::F(4), KeyModifiers::SHIFT)),
+            BindingMatch::Action {
+                action: ShellAction::Help,
+                customized: true
+            }
+        );
+    }
 
     #[test]
     fn custom_bindings_replace_defaults_and_preserve_unlisted_actions() {
