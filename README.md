@@ -494,7 +494,10 @@ MARKET_TERMINAL_NEWS_TIMEOUT_SECS=12
 ```
 
 At most 24 distinct validated feeds are accepted. Refresh intervals are bounded
-to 60–3,600 seconds and per-source timeouts to 3–30 seconds.
+to 60–3,600 seconds and per-source timeouts to 3–30 seconds. SEC article pages
+reuse `MARKET_TERMINAL_SEC_USER_AGENT`; set it to an application name and your
+contact address as shown in `.env.example` so SEC fair-access requests are not
+rejected.
 
 ## Live market data
 

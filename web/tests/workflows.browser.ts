@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
 test.beforeEach(async ({ page }) => {
+  if (!process.env.MARKET_WEB_URL) {
+    const { token } = (await (
+      await fetch("http://127.0.0.1:8900/token")
+    ).json()) as { token: string };
+    await page.setExtraHTTPHeaders({ "Cf-Access-Jwt-Assertion": token });
+  }
   if (process.env.MARKET_LIVE === "1") return;
   const bars = Array.from({ length: 160 }, (_, i) => ({
     timestamp: 1700000000 + i * 86400,
@@ -90,7 +96,7 @@ test.beforeEach(async ({ page }) => {
           },
         ],
       };
-    else data = { status: "ok" };
+    else return route.continue();
     await route.fulfill({ json: data });
   });
 });
@@ -149,7 +155,7 @@ test("research, watchlist and library work across navigation and reload", async 
   ).toBe(true);
   expect(errors).toEqual([]);
 });
-test("all three models execute actual browser WASM and preserve saved evidence", async ({
+test("all three models execute the authenticated Cloudflare WASM host and preserve saved evidence", async ({
   page,
 }) => {
   await page.goto("/?view=models&symbol=AAPL");

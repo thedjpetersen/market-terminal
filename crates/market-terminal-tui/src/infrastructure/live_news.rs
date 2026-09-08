@@ -48,6 +48,7 @@ pub struct LiveNewsConfig {
     symbol_feed_url: String,
     refresh_interval: Duration,
     timeout: Duration,
+    sec_user_agent: String,
 }
 
 impl LiveNewsConfig {
@@ -90,6 +91,7 @@ impl LiveNewsConfig {
                 .unwrap_or_else(|| DEFAULT_SYMBOL_FEED_URL.to_owned()),
             refresh_interval: Duration::from_secs(refresh_seconds),
             timeout: Duration::from_secs(timeout_seconds),
+            sec_user_agent: configured_sec_user_agent(),
         }
     }
 }
@@ -262,6 +264,7 @@ fn run_worker(
     state: Arc<RwLock<FeedState>>,
     commands: mpsc::Receiver<WorkerCommand>,
 ) {
+    let sec_user_agent = config.sec_user_agent.clone();
     let client = match Client::builder()
         .user_agent("market-terminal/0.1 (local desktop market reader)")
         .timeout(config.timeout)
@@ -284,7 +287,7 @@ fn run_worker(
                 refresh_symbol_feed(&client, &config.symbol_feed_url, &state, &symbol);
             }
             Ok(WorkerCommand::FetchArticle { story_id, url }) => {
-                fetch_and_store_article(&client, &state, &story_id, &url);
+                fetch_and_store_article(&client, &state, &story_id, &url, &sec_user_agent);
             }
             Ok(WorkerCommand::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
@@ -783,8 +786,14 @@ fn story_from_entry(
     ))
 }
 
-fn fetch_and_store_article(client: &Client, state: &RwLock<FeedState>, story_id: &str, url: &str) {
-    match fetch_article(client, url) {
+fn fetch_and_store_article(
+    client: &Client,
+    state: &RwLock<FeedState>,
+    story_id: &str,
+    url: &str,
+    sec_user_agent: &str,
+) {
+    match fetch_article(client, url, sec_user_agent) {
         Ok(article) => {
             let mut state = state.write().expect("news state lock");
             if let Some(story) = state
@@ -828,18 +837,25 @@ struct DownloadedArticle {
     language: Option<String>,
 }
 
-fn fetch_article(client: &Client, url: &str) -> Result<DownloadedArticle, String> {
+fn fetch_article(
+    client: &Client,
+    url: &str,
+    sec_user_agent: &str,
+) -> Result<DownloadedArticle, String> {
     let url = canonical_http_url(url, None)
         .ok_or_else(|| "article link is not an HTTP(S) URL".to_owned())?;
-    let response = client
-        .get(url)
-        .header(
-            reqwest::header::ACCEPT,
-            "text/html,application/xhtml+xml;q=0.9",
-        )
+    let url = Url::parse(&url).map_err(|_| "article link is not an HTTP(S) URL".to_owned())?;
+    let sec_request = is_sec_host(&url);
+    let response = article_request(client, url, sec_user_agent)
         .send()
         .map_err(|error| format!("article request failed: {error}"))?;
     if !response.status().is_success() {
+        if sec_request && response.status() == reqwest::StatusCode::FORBIDDEN {
+            return Err(
+                "SEC returned HTTP 403 Forbidden; configure MARKET_TERMINAL_SEC_USER_AGENT with your contact"
+                    .to_owned(),
+            );
+        }
         return Err(format!("publisher returned HTTP {}", response.status()));
     }
     if response
@@ -863,6 +879,32 @@ fn fetch_article(client: &Client, url: &str) -> Result<DownloadedArticle, String
     }
     let html = String::from_utf8_lossy(&bytes).into_owned();
     extract_article(&html, &document_url)
+}
+
+fn article_request(
+    client: &Client,
+    url: Url,
+    sec_user_agent: &str,
+) -> reqwest::blocking::RequestBuilder {
+    let sec_request = is_sec_host(&url);
+    let request = client
+        .get(url)
+        .header(
+            reqwest::header::ACCEPT,
+            "text/html,application/xhtml+xml;q=0.9",
+        )
+        .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9");
+    if sec_request {
+        request.header(reqwest::header::USER_AGENT, sec_user_agent)
+    } else {
+        request
+    }
+}
+
+fn is_sec_host(url: &Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        host.eq_ignore_ascii_case("sec.gov") || host.to_ascii_lowercase().ends_with(".sec.gov")
+    })
 }
 
 fn extract_article(html: &str, document_url: &str) -> Result<DownloadedArticle, String> {
@@ -1368,6 +1410,18 @@ fn env_u64(name: &str) -> Option<u64> {
     env::var(name).ok()?.parse().ok()
 }
 
+fn configured_sec_user_agent() -> String {
+    env::var("MARKET_TERMINAL_SEC_USER_AGENT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| {
+            format!(
+                "market-terminal/{} mr.mandible@gmail.com",
+                env!("CARGO_PKG_VERSION")
+            )
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1437,6 +1491,7 @@ mod tests {
             symbol_feed_url: format!("http://{address}/symbol"),
             refresh_interval: Duration::from_secs(3_600),
             timeout: Duration::from_secs(1),
+            sec_user_agent: "market-terminal/test".to_owned(),
         });
         let deadline = Instant::now() + Duration::from_secs(1);
         while feed.load_workbench().stories.is_empty() && Instant::now() < deadline {
@@ -1563,6 +1618,26 @@ mod tests {
             Some("https://example.com/story?id=7")
         );
         assert!(canonical_http_url("javascript:alert(1)", None).is_none());
+    }
+
+    #[test]
+    fn sec_article_request_uses_the_configured_fair_access_identity() {
+        let client = Client::builder()
+            .user_agent("market-terminal/test generic")
+            .build()
+            .unwrap();
+        let request = article_request(
+            &client,
+            Url::parse("https://www.sec.gov/newsroom/press-releases/example").unwrap(),
+            "Market Terminal operator@example.com",
+        )
+        .build()
+        .unwrap();
+
+        assert_eq!(
+            request.headers().get(reqwest::header::USER_AGENT).unwrap(),
+            "Market Terminal operator@example.com"
+        );
     }
 
     #[test]
@@ -1782,7 +1857,7 @@ mod tests {
             .filter_map(|(_, story)| story.url)
             .collect::<Vec<_>>();
         let readable = candidates.iter().find_map(|url| {
-            fetch_article(&client, url)
+            fetch_article(&client, url, &configured_sec_user_agent())
                 .ok()
                 .map(|article| (url, article.body))
         });
@@ -1793,6 +1868,64 @@ mod tests {
         assert!(
             body.iter().map(String::len).sum::<usize>() >= 240,
             "reader returned a short article from {url}"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires live network access"]
+    fn live_seeking_alpha_article_requests_are_not_uniformly_forbidden() {
+        let client = Client::builder()
+            .user_agent("market-terminal/0.1 (live integration test)")
+            .timeout(Duration::from_secs(15))
+            .build()
+            .unwrap();
+        let results = DEFAULT_FEEDS[..2]
+            .iter()
+            .filter_map(|feed| fetch_feed_at(&client, feed, Utc::now()).ok())
+            .flat_map(|stories| stories.into_iter().take(3))
+            .filter_map(|(_, story)| story.url)
+            .map(|url| {
+                let result = fetch_article(&client, &url, &configured_sec_user_agent())
+                    .map(|article| article.body.len());
+                (url, result)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            !results.is_empty(),
+            "Seeking Alpha feeds returned no article URLs"
+        );
+        assert!(
+            results.iter().any(|(_, result)| match result {
+                Ok(_) => true,
+                Err(error) => !error.contains("HTTP 403"),
+            }),
+            "every Seeking Alpha article request was forbidden: {results:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires live network access"]
+    fn live_sec_article_request_is_not_rejected_for_missing_identity() {
+        let client = Client::builder()
+            .user_agent("market-terminal/0.1 (live integration test)")
+            .timeout(Duration::from_secs(15))
+            .build()
+            .unwrap();
+        let url = fetch_feed_at(&client, DEFAULT_FEEDS[5], Utc::now())
+            .unwrap()
+            .into_iter()
+            .find_map(|(_, story)| story.url)
+            .expect("SEC feed returned no article URL");
+        let result = fetch_article(&client, &url, &configured_sec_user_agent())
+            .map(|article| article.body.len());
+
+        assert!(
+            match &result {
+                Ok(_) => true,
+                Err(error) => !error.contains("HTTP 403"),
+            },
+            "SEC article request was rejected: {result:?}"
         );
     }
 }

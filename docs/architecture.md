@@ -7,17 +7,20 @@ Its feature directories preserve the same ownership and dependency direction as
 the native host: feature-owned contracts, infrastructure adapters, domain-free UI
 primitives and composition in `src/bootstrap.tsx`. It does not import TUI code.
 
-`market-terminal-wasm` is the browser analytical host. It enters
-`market-terminal-application` with a fixed local-device context and application
-budgets. A disposable browser Web Worker loads its WASM lazily and enforces a
-30-second execution lifetime. Shared lossless JSON contracts preserve the engine's
-integer evidence. Browser fixtures replay the actual WASM against native results.
+`market-terminal-wasm` provides browser and Cloudflare analytical entry points.
+The production web app sends exact JSON text to `/api/engine`, where the Worker
+validates a Cloudflare Access session before calling the authenticated WASM
+export. Rust constructs the validated application context from the verified
+principal and server-owned capabilities, then enters
+`market-terminal-application`. No identity or grant comes from the request body.
+The browser-only export retains a fixed local context for fixture parity.
 
-The Cloudflare Worker serves static assets and bounded, cached public Yahoo/SEC
-read endpoints. It contains no analytical business rules and grants no access to
-the authenticated HTTP API or artifact store. Watchlists and evidence are local
-to the browser. [Web host details](../web/README.md) describe its product scope,
-provider limitations, build and deployment workflow.
+The Cloudflare Worker owns authentication, transport bounds, a platform rate
+limiter, cached public Yahoo/SEC adapters and static assets. It contains no
+analytical business rules and grants no access to native artifacts or credentials.
+All assets and APIs require authentication; results and sessions use `no-store`.
+Watchlists and evidence remain local to the browser. [Web host details](../web/README.md)
+describe sign-in, provider limitations, build and deployment workflow.
 
 Market Terminal uses domain-driven design with package-by-feature boundaries.
 The goal is to let many teams add terminal and web functions without

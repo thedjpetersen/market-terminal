@@ -2,7 +2,7 @@
 
 Production: **https://market.frodojo.com**
 
-A responsive public research workspace, deployed as Cloudflare Worker
+An authenticated research workspace, deployed as Cloudflare Worker
 `market-terminal` with Workers Static Assets. It serves markets, ticker search,
 price charts, headlines, SEC financials and filings, a local watchlist, research
 snapshots, and options, fixed-income and moving-average backtest models.
@@ -18,12 +18,12 @@ cargo install wasm-pack --locked --version 0.13.1
 npm ci --prefix contracts/web/client
 npm ci --prefix web
 npm run build --prefix web
-npm run preview --prefix web
 ```
 
-Open http://127.0.0.1:8799. For UI hot reload, also run `npm run dev --prefix web`
-and open Vite's printed URL. Vite proxies `/api` to the local Worker on 8799.
-The Worker provides the production-equivalent asset headers and WASM execution.
+The browser suite automatically runs `tests/local-host.mjs`. It starts the Worker on 8899 and a loopback-only test identity provider on 8900.
+The browser tests obtain short-lived, freshly signed test JWTs from that provider;
+the production Worker has no authentication bypass. The direct `npm run preview`
+command uses production authentication settings and will reject unsigned requests.
 
 ```sh
 npm run check --prefix web
@@ -33,22 +33,34 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-Unit checks replay **every native engine fixture through the actual compiled
-WASM**, including values above JavaScript's safe-integer limit. Browser tests
-exercise both desktop and 390-pixel touch layouts, all three models, saving,
+Unit and HTTP integration checks replay **every native engine fixture through
+the actual compiled WASM**, including values above JavaScript's safe-integer
+limit. Authentication tests cover absent, forged, expired, future, wrong-audience,
+wrong-issuer and unapproved-user tokens. HTTP tests exercise private assets,
+sessions, body caps, methods, cross-origin rejection and per-user rate limiting.
+Browser tests exercise both desktop and 390-pixel touch layouts, all three models, saving,
 downloads, search, watchlist persistence and provider failure states. The normal
 browser suite uses explicitly deterministic provider fixtures; the engine is real.
 To exercise real providers after deployment:
 
 ```sh
-MARKET_WEB_URL=https://market.frodojo.com MARKET_LIVE=1 npm run test:browser
+MARKET_WEB_URL=https://market.frodojo.com MARKET_LIVE=1 MARKET_STORAGE_STATE=/private/path/session.json npm run test:browser
 ```
 
 ## Deployment
 
 `wrangler.jsonc` declares the account, custom domain, assets binding, SPA fallback,
-API routing and observability. No market-data secret or private account is required.
-With Cloudflare Wrangler authentication available:
+API routing and observability. No market-data API secret is required.
+Cloudflare Access application `feafb6c5-40f9-4eb0-a389-6b7d269dd594` protects the
+entire hostname. Google and email one-time-code login allow only
+`thedjpetersen@gmail.com`, with a 24-hour session. The Worker independently
+verifies the Access JWT signature, issuer, audience, expiry and email allowlist
+before serving any API or asset. `workers.dev` and preview URLs are disabled.
+
+To add a user, update both the Access application policy and `ACCESS_EMAILS` in
+`wrangler.jsonc`; neither change alone grants access. Access owns interactive
+sessions and revocation. No passwords or long-lived bearer secrets are embedded
+in the app. With Cloudflare Wrangler authentication available:
 
 ```sh
 npm run deploy --prefix web
@@ -60,8 +72,19 @@ authenticated Cloudflare connector's direct asset-upload and Worker APIs; no
 account token is stored in the project. The CI web job checks builds, fixtures,
 browser workflows and Wrangler dry-run without publishing automatically.
 
-Use `/api/health` for deployment smoke checks. Zone browser-integrity rules may
-reject generic command-line user agents; a normal browser or a browser user agent
+The deployment on 2026-09-05 is Worker version
+`03c4dacc-42fb-438f-a3d9-f2f19bd03331`. Google sign-in and production option,
+bond and backtest execution were checked in a real browser.
+
+Use `/api/health` and `/api/session` after signing in for deployment smoke checks.
+`POST /api/engine` accepts the shared engine request JSON and returns its exact
+response JSON. All four operations enter `AnalyticalApplicationService` with a
+verified principal and server-owned analytical capabilities. Results and sessions
+are never cached. Requests have a 4 MiB body cap, a 10-second body-read deadline,
+a 30-second Worker CPU budget, and 30 model requests per principal per minute
+per Cloudflare location. The platform limiter is approximate, not a global quota.
+Shared Rust application budgets still bound bars and comparison points.
+Zone browser-integrity rules may reject generic command-line user agents; a normal browser or a browser user agent
 can verify the route. Existing zone-wide security settings are unchanged.
 
 ## Ownership and product limits
@@ -70,18 +93,20 @@ can verify the route. Existing zone-wide security settings are unchanged.
   analytical port and inputs; `watchlist` owns its consumer contract; `library`
   owns saved evidence. Shared `ui` contains domain-free primitives.
 - `src/bootstrap.tsx` wires features and adapters. `src/infrastructure` handles
-  HTTP and the browser Worker. `worker/infrastructure` owns Yahoo and SEC wire
+  the authenticated engine HTTP client. `worker/infrastructure` owns Yahoo and SEC wire
   formats, bounded response reads, provider URLs and caching.
-- `crates/market-terminal-wasm` enters `AnalyticalApplicationService`. It grants
-  only a fixed local-browser execution context, with application workload limits,
-  a 4 MiB request cap and a 30-second browser worker lifetime. It never grants
-  access to the authenticated HTTP host's artifacts, tenants or credentials.
-- The engine is lazy-loaded in a Web Worker. The lossless shared client emits
-  bigint as exact JSON integer tokens; downloads retain original request/result
-  text. Chart coordinates alone use display-rounded numbers.
+- `crates/market-terminal-wasm` enters `AnalyticalApplicationService` through
+  an authenticated edge export. The Worker obtains identity only from a verified
+  Access JWT and capabilities only from deployment configuration. The existing
+  local browser export remains available for fixture parity and grants no remote
+  artifact, tenant or credential access.
+- The engine runs as compiled WASM inside the Cloudflare Worker. The lossless
+  client sends exact JSON integer tokens; neither HTTP boundary parses and
+  rounds engine evidence through JavaScript numbers. Downloads retain original
+  request/result text. Chart coordinates alone use display-rounded numbers.
 - Watchlists (32 tickers) and snapshots (30) remain in localStorage on this
   browser. Storage failures are visible. Download research to back it up; there
-  is no login, cloud synchronization, portfolio import or trade execution.
+  is no cloud synchronization, portfolio import or trade execution.
 - Yahoo is a public, unofficial, potentially delayed source. SEC coverage is
   for matched US reporting companies. Provider outages are shown explicitly;
   the app never substitutes fabricated market prices. Search may fall back to

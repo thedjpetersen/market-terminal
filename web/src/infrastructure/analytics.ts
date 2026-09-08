@@ -1,36 +1,34 @@
 import type { AnalyticsPort } from "../features/models/contracts";
-export const browserAnalytics: AnalyticsPort = {
-  execute(request) {
-    return new Promise((resolve, reject) => {
-      const worker = new Worker(
-        new URL("./analytics.worker.ts", import.meta.url),
-        { type: "module" },
+export const cloudAnalytics: AnalyticsPort = {
+  async execute(request) {
+    const response = await fetch("/api/engine", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: request,
+      credentials: "same-origin",
+      redirect: "error",
+      signal: AbortSignal.timeout(35000),
+    }).catch(() => {
+      throw new Error(
+        "The engine could not be reached. Reload to refresh your session, then retry.",
       );
-      const timer = setTimeout(() => {
-        worker.terminate();
-        reject(
-          new Error(
-            "The model exceeded the 30-second device budget. Try a smaller input.",
-          ),
-        );
-      }, 30_000);
-      worker.onmessage = (event) => {
-        clearTimeout(timer);
-        worker.terminate();
-        if (event.data.error) reject(new Error(event.data.error));
-        else resolve(event.data.result);
-      };
-      worker.onerror = () => {
-        clearTimeout(timer);
-        worker.terminate();
-        reject(
-          new Error(
-            "The research engine could not start. Reload the page and try again.",
-          ),
-        );
-      };
-      worker.postMessage({ request });
     });
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403)
+        throw new Error("Your session has expired. Reload to sign in again.");
+      const error = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      throw new Error(
+        error.error ?? "The model could not complete. Try again.",
+      );
+    }
+    if (!response.headers.get("Content-Type")?.includes("application/json"))
+      throw new Error("Your session has expired. Reload to sign in again.");
+    return response.text();
   },
   async bars(symbol) {
     const response = await fetch(

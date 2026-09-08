@@ -118,16 +118,16 @@ export function Shell({
           <time className="host-clock">
             {clock.toISOString().slice(11, 19)} <span>UTC</span>
           </time>
-          <span className="avatar" title="Local workspace">
-            MT
-          </span>
+          <a className="quiet" href="/cdn-cgi/access/logout">
+            Sign out
+          </a>
         </header>
         <main id="main-content" key={page}>
           {children}
         </main>
         <footer className="app-footer">
           <span>
-            <span className="status-dot" /> Public market research
+            <span className="status-dot" /> Authenticated market research
           </span>
           <span>Source timestamps shown · Quotes may be delayed</span>
         </footer>
@@ -158,7 +158,7 @@ export function Shell({
             <p>
               Explore public market data and SEC filings. Options, bonds and
               backtests use the same Rust engine as the native terminal, running
-              on your device.
+              securely on Cloudflare.
             </p>
             <p>
               Watchlists and saved research stay in this browser. They are not

@@ -1,3 +1,5 @@
+import { authenticate } from "./infrastructure/auth";
+import { analytics, privateJson } from "./analytics";
 import {
   getQuote,
   getHistory,
@@ -27,7 +29,25 @@ export default {
     ctx: ExecutionContext,
   ): Promise<Response> {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
+    const session = await authenticate(request, env);
+    if (!session)
+      return privateJson(
+        { error: "Sign in to Market Terminal to continue." },
+        401,
+      );
+    if (!url.pathname.startsWith("/api/")) {
+      const asset = await env.ASSETS.fetch(request);
+      const response = new Response(asset.body, asset);
+      response.headers.set("Cache-Control", "private, no-store");
+      return response;
+    }
+    if (url.pathname === "/api/engine") return analytics(request, env, session);
+    if (url.pathname === "/api/session" && request.method === "GET")
+      return privateJson({
+        email: session.email,
+        principal: session.principal,
+        analytics: "cloudflare-wasm",
+      });
     if (request.method !== "GET")
       return json({ error: "Method not allowed" }, 405);
     if (url.pathname === "/api/health")
@@ -35,7 +55,7 @@ export default {
         status: "ok",
         service: "market-terminal",
         schema: 1,
-        analytics: "browser-wasm",
+        analytics: "cloudflare-wasm",
       });
     if (url.search.length > 512)
       return json({ error: "Query is too long" }, 400);

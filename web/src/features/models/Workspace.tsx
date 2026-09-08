@@ -160,7 +160,10 @@ export function Models({
           <h1>
             Research models<span className="accent">.</span>
           </h1>
-          <p>Explicit assumptions. Reproducible calculations. Your device.</p>
+          <p>
+            Explicit assumptions. Reproducible calculations. Secure cloud
+            execution.
+          </p>
         </div>
         <span className="engine-badge">
           <Cpu size={15} /> RUST + WEBASSEMBLY
@@ -290,7 +293,9 @@ export function Models({
                 Choose your inputs and run a model. Results include scenario
                 analysis and the engine’s methodology.
               </p>
-              <span className="tag">Exact integer evidence · Runs locally</span>
+              <span className="tag">
+                Exact integer evidence · Runs on Cloudflare
+              </span>
             </div>
           )}
           {result?.status === "ok" && <ModelResult result={result} />}

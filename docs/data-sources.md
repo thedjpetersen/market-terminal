@@ -73,9 +73,10 @@ Saved views retain only typed inputs and presentation state.
   provider-neutral instrument ID, terminal symbol, stable research-tab key, and
   optional Form 4 accession; they exclude SEC page content, filing URLs, prices,
   fundamentals, and publisher responses. News fields include bounded region,
-  topic, and symbol filters, unread/saved filter flags, the Stories/Events
-  subview, and optional provider story ID. They exclude headline or article
-  content, publisher URLs, reader state, read history, and bookmark membership.
+  topic, symbol, and exact publisher-source filters, unread/saved filter flags,
+  the Stories/Events subview, and optional provider story ID. They exclude
+  headline or article content, publisher URLs, reader state, read history, and
+  bookmark membership.
   Monitor fields include the watchlist ID, stable sort and column keys, column
   preset, selected canonical instrument ID, and top visible instrument ID.
   They exclude quote snapshots, provider timestamps, subscription metrics,
@@ -330,6 +331,8 @@ endorsed by, or sponsored by Yahoo.
   sources continue advancing, and a complete absence remains visibly unavailable.
   Symbol requests are validated, queued on the existing bounded background worker,
   and attach the requested identity to every row returned by the symbol-scoped feed.
+  Article retrieval negotiates HTTP/2 where a publisher requires it. SEC article
+  pages reuse the operator's fair-access `MARKET_TERMINAL_SEC_USER_AGENT` identity.
 
 ## User portfolio CSV
 

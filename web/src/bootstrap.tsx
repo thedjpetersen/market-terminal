@@ -6,7 +6,7 @@ import { Watchlist } from "./features/watchlist/Workspace";
 import { Models } from "./features/models/Workspace";
 import { Library } from "./features/library/Workspace";
 import { publicResearch } from "./infrastructure/research";
-import { browserAnalytics } from "./infrastructure/analytics";
+import { cloudAnalytics } from "./infrastructure/analytics";
 import { useWatchlist } from "./features/watchlist/state";
 import { useLibrary } from "./features/library/state";
 import { deviceWatchlist, deviceLibrary } from "./infrastructure/deviceStorage";
@@ -83,11 +83,7 @@ export function Application() {
           />
         )}{" "}
         {current.page === "models" && (
-          <Models
-            port={browserAnalytics}
-            symbol={current.symbol}
-            onSave={save}
-          />
+          <Models port={cloudAnalytics} symbol={current.symbol} onSave={save} />
         )}{" "}
         {current.page === "saved" && (
           <Library items={saved} onRemove={remove} />

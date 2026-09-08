@@ -8,7 +8,7 @@
     "build:wasm": "wasm-pack build ../crates/market-terminal-wasm --target web --out-dir ../../web/public/engine --out-name research_engine",
     "build": "npm run build:wasm && tsc --noEmit && vite build",
     "check": "tsc --noEmit",
-    "test": "vitest run tests/research.test.ts",
+    "test": "vitest run tests/research.test.ts tests/auth.test.ts",
     "preview": "wrangler dev --port 8799",
     "deploy": "npm run build && wrangler deploy",
     "types": "wrangler types",
@@ -16,6 +16,7 @@
     "test:browser": "playwright test"
   },
   "dependencies": {
+    "jose": "^6.2.12",
     "lossless-json": "4.3.1",
     "lucide-react": "^0.577.0",
     "react": "19.2.8",

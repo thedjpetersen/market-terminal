@@ -4,8 +4,9 @@ export default defineConfig({
   testMatch: "**/*.browser.ts",
   timeout: 45_000,
   use: {
-    baseURL: process.env.MARKET_WEB_URL || "http://127.0.0.1:8799",
+    baseURL: process.env.MARKET_WEB_URL || "http://127.0.0.1:8899",
     trace: "retain-on-failure",
+    storageState: process.env.MARKET_STORAGE_STATE,
   },
   projects: [
     {
@@ -23,8 +24,8 @@ export default defineConfig({
   webServer: process.env.MARKET_WEB_URL
     ? undefined
     : {
-        command: "npm run preview",
-        url: "http://127.0.0.1:8799",
-        reuseExistingServer: !process.env.CI,
+        command: "node tests/local-host.mjs",
+        url: "http://127.0.0.1:8900/ready",
+        reuseExistingServer: false,
       },
 });

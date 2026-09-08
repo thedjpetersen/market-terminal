@@ -1,9 +1,12 @@
-//! Local browser computation. This actor grants no remote data or storage access.
+//! WebAssembly hosts. Neither entry point grants artifact or credential access.
 use market_terminal_application::{
     AnalyticalApplicationService, CapabilitySet, EngineRequest, ExecutionBudget, ExecutionContext,
     PrincipalId, TenantId,
 };
 use wasm_bindgen::prelude::*;
+
+mod edge;
+pub use edge::execute_authenticated_research;
 
 #[wasm_bindgen]
 pub fn execute_research(request: &str) -> Result<String, String> {
