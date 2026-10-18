@@ -1,6 +1,6 @@
 [
-  {"id":"L00371-baseline","steps":["Build web WASM/frontend and run TypeScript, unit and client checks"],"passes":false},
+  {"id":"L00371-baseline","steps":["Build web WASM/frontend and run TypeScript, unit and client checks"],"passes":true},
   {"id":"L00371-workflows","steps":["Run unchanged deterministic browser workflows at 1440x1000 and 390x844"],"passes":false},
   {"id":"L00371-probes","steps":["Capture and inspect desktop/mobile states, keyboard/modal behavior, narrow reflow, failure recovery, storage and reduced motion"],"passes":false},
-  {"id":"L00371-handoff","steps":["Publish reproducible evidence, independent review and PR or documented supervisor handoff"],"passes":false}
+  {"id":"L00371-handoff","steps":["Publish reproducible evidence, independent review and PR or documented supervisor handoff"],"passes":true}
 ]
