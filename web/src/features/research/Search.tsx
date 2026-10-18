@@ -12,10 +12,22 @@ export function Search({
   onSelect: (symbol: string) => void;
   onClose: () => void;
 }) {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Instrument[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  // Each edit has its own identity, even when returning to the same query text.
+  const [request, setRequest] = useState({ query: "" });
+  const { query } = request;
+  const [response, setResponse] = useState<{
+    request: typeof request;
+    port: ResearchPort;
+    results: Instrument[];
+    error?: string;
+  }>();
+  const current =
+    response?.request === request && response.port === port
+      ? response
+      : undefined;
+  const results = current?.results ?? [];
+  const loading = !current;
+  const error = current?.error;
   const [selected, select] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   useModal(true, onClose);
@@ -30,28 +42,33 @@ export function Search({
   useEffect(() => {
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      setLoading(true);
-      setError("");
       port
         .search(query.trim() || "AAPL", controller.signal)
         .then((result) => {
           if (!controller.signal.aborted) {
-            setResults(result);
+            setResponse({ request, port, results: result });
             select(0);
           }
         })
         .catch((e) => {
-          if (!controller.signal.aborted) setError(String(e.message));
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) setLoading(false);
+          if (!controller.signal.aborted)
+            setResponse({
+              request,
+              port,
+              results: [],
+              error: e instanceof Error ? e.message : String(e),
+            });
         });
     }, 200);
     return () => {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [query, port]);
+  }, [request, port]);
+  function activate(index: number) {
+    const result = results[index];
+    if (result) onSelect(result.symbol);
+  }
   return (
     <div className="modal-backdrop search-backdrop" onClick={onClose}>
       <section
@@ -68,18 +85,20 @@ export function Search({
             aria-label="Ticker or company"
             placeholder="Search a ticker or company…"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => setRequest({ query: e.target.value })}
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") {
                 e.preventDefault();
-                select(Math.min(results.length - 1, selected + 1));
+                select(Math.max(0, Math.min(results.length - 1, selected + 1)));
               }
               if (e.key === "ArrowUp") {
                 e.preventDefault();
                 select(Math.max(0, selected - 1));
               }
-              if (e.key === "Enter" && results[selected])
-                onSelect(results[selected].symbol);
+              if (e.key === "Enter") {
+                e.preventDefault();
+                activate(selected);
+              }
             }}
           />
           <button
@@ -105,7 +124,7 @@ export function Search({
               <button
                 key={item.symbol}
                 className={selected === index ? "selected" : ""}
-                onClick={() => onSelect(item.symbol)}
+                onClick={() => activate(index)}
               >
                 <span className="ticker-icon">{item.symbol.slice(0, 2)}</span>
                 <span>

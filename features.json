@@ -1,0 +1,11 @@
+[
+  {
+    "id": "L00372",
+    "steps": [
+      "Bind search activation to the current successful request",
+      "Cover debounce, loading, failure, and out-of-order completions deterministically",
+      "Verify desktop/mobile keyboard and pointer selection and review screenshots"
+    ],
+    "passes": false
+  }
+]
