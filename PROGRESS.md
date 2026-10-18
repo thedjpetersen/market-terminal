@@ -24,3 +24,10 @@
   `bootstrap_check_in ... MachPortRendezvousServer` (permission denied 1100).
   Deterministic component tests use jsdom instead. Desktop/mobile browser
   checks remain provided for execution in a permitted environment.
+- Fix: every edit carries a distinct request identity; a response is visible
+  and actionable only when both that identity and the provider match. Keyboard
+  and pointer share activation, failures carry no results, and success resets
+  selection. Existing abort protection remains in place.
+- Evidence so far: regression suite reproduced the same 5 failures twice before
+  the fix, then passed 10/10; full web tests pass 19/19. Formatting passes.
+  Independent review and final build/architecture checks are in progress.

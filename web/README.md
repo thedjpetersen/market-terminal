@@ -33,6 +33,19 @@ npx playwright install chromium
 npm run test:browser
 ```
 
+Search activation regressions run in `npm test` with the real React component,
+fake timers, and deferred provider responses (including responses that ignore
+cancellation). An edit immediately makes the previous results unavailable;
+keyboard and pointer activation require a successful response for the current
+input edit and provider. Loading, failure, and returning to earlier query text
+cannot reactivate old results.
+
+`npm run test:search --prefix web` runs the focused desktop/mobile Chromium
+workflow through Vite on loopback port 41772, without a Worker or login. It uses
+deterministic API responses and saves ready, pending, and failure screenshots
+under `web/test-results/`. The full `test:browser` command also runs this suite
+after the authenticated Worker checks.
+
 Unit and HTTP integration checks replay **every native engine fixture through
 the actual compiled WASM**, including values above JavaScript's safe-integer
 limit. Authentication tests cover absent, forged, expired, future, wrong-audience,
