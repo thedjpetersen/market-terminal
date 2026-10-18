@@ -6,6 +6,10 @@ web/public/engine/
 web/.dev.vars*
 web/test-results/
 web/playwright-report/
+.factory/
+FACTORY_RESULT.json
+web/.l00371-*
+web/tests/l00371-*
 .env
 .env.*
 !.env.example
