@@ -1,0 +1,7 @@
+[
+  {"id":"L00309-baseline","steps":["Record existing web build, TypeScript, unit and browser checks with exit codes"],"passes":true},
+  {"id":"L00309-flows","steps":["Assess research, watchlist, saved evidence and models at desktop and mobile widths using synthetic fixtures"],"passes":false},
+  {"id":"L00309-accessibility","steps":["Probe keyboard navigation, focus, accessible state, narrow reflow and reduced motion"],"passes":false},
+  {"id":"L00309-states-attribution","steps":["Assess loading, failure, empty states and source attribution; distinguish live evidence from fixture evidence"],"passes":true},
+  {"id":"L00309-handoff","steps":["Publish a prioritized bounded audit with evidence and screenshots, independent verification and PR or documented git handoff"],"passes":false}
+]

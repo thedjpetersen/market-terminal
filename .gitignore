@@ -9,3 +9,7 @@ web/playwright-report/
 .env
 .env.*
 !.env.example
+/.factory/
+/FACTORY_RESULT.json
+/web/.l00309-*
+/web/tests/l00309-*
