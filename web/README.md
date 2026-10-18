@@ -120,3 +120,11 @@ can verify the route. Existing zone-wide security settings are unchanged.
 
 The app has a web manifest for Add to Home Screen. It requires connectivity for
 market data and first load; it does not promise offline data freshness.
+
+## Readiness audit
+
+The [2026-10-18 readiness and accessibility audit](../docs/audits/l00309/README.md)
+records current local checks, source-confirmed gaps and bounded follow-ups.
+Desktop/mobile browser verification and screenshots remain pending because the
+audit runner could not obtain permitted browser access; passing HTTP tests do
+not establish UI readiness.

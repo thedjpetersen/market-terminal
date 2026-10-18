@@ -1,0 +1,196 @@
+L00309 executed-check evidence — 2026-10-18
+Baseline: afb01cacb17a5d3a1e652e534191298a3e106564
+All data/model inputs were synthetic or checked-in native fixtures.
+
+COMMAND: npm run build --prefix web
+EXIT: 0
+> market-terminal-web@0.1.0 build
+> npm run build:wasm && tsc --noEmit && vite build
+
+
+> market-terminal-web@0.1.0 build:wasm
+> wasm-pack build ../crates/market-terminal-wasm --target web --out-dir ../../web/public/engine --out-name research_engine
+
+[INFO]: 🎯  Checking for the Wasm target...
+[INFO]: 🌀  Compiling to Wasm...
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling wasm-bindgen-shared v0.2.127
+   Compiling serde_core v1.0.229
+   Compiling rustversion v1.0.23
+   Compiling serde v1.0.229
+   Compiling zmij v1.0.23
+   Compiling bumpalo v3.20.3
+   Compiling serde_json v1.0.151
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling cfg-if v1.0.4
+   Compiling once_cell v1.21.4
+   Compiling wasm-bindgen v0.2.127
+   Compiling syn v3.0.4
+   Compiling syn v2.0.119
+   Compiling serde_derive v1.0.229
+   Compiling wasm-bindgen-macro-support v0.2.127
+   Compiling market-terminal-engine v0.1.0 (<worktree>/crates/market-terminal-engine)
+   Compiling market-terminal-application v0.1.0 (<worktree>/crates/market-terminal-application)
+   Compiling wasm-bindgen-macro v0.2.127
+   Compiling market-terminal-wasm v0.1.0 (<worktree>/crates/market-terminal-wasm)
+    Finished `release` profile [optimized] target(s) in 1m 33s
+[INFO]: ⬇️  Installing wasm-bindgen...
+[INFO]: Optional field missing from Cargo.toml: 'repository'. This is not necessary, but recommended
+[INFO]: License key is set in Cargo.toml but no LICENSE file(s) were found; Please add the LICENSE file(s) to your project directory
+[INFO]: ✨   Done in 1m 34s
+[INFO]: 📦   Your wasm pkg is ready to publish at ../web/public/engine.
+[WARN]: ⚠️   There's a newer version of wasm-pack available, the new version is: 0.15.0, you are using: 0.13.1. To update, navigate to: https://rustwasm.github.io/wasm-pack/installer/
+vite v8.2.2 building client environment for production...
+transforming...
+✓ 1755 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.82 kB │ gzip:  0.43 kB
+dist/assets/index-Bga7jaH0.css   19.77 kB │ gzip:  4.91 kB
+dist/assets/index-CmjTR9mU.js   246.15 kB │ gzip: 76.89 kB
+
+✓ built in 852ms
+
+COMMAND: npm run check --prefix web
+EXIT: 0
+> market-terminal-web@0.1.0 check
+> tsc --noEmit
+
+COMMAND: npm test --prefix web
+EXIT: 0
+> market-terminal-web@0.1.0 test
+> vitest run tests/research.test.ts tests/auth.test.ts
+
+
+ RUN  v5.0.0 <worktree>/web
+
+
+ Test Files  2 passed (2)
+      Tests  9 passed (9)
+   Start at  16:18:40
+   Duration  1.27s (tests 62%, transform 25%, import 12%, worker 1%)
+
+COMMAND: npm run typecheck --prefix contracts/web/client
+EXIT: 0
+> @market-terminal/research-client@0.1.0 typecheck
+> tsc --noEmit
+
+COMMAND: npm test --prefix contracts/web/client
+EXIT: 0
+> @market-terminal/research-client@0.1.0 test
+> node --experimental-strip-types --test client.test.ts
+
+✔ exact Rust fixture round trip: contract:run-backtest (228.44425ms)
+✔ exact Rust fixture round trip: contract:compare-backtests (0.684333ms)
+✔ exact Rust fixture round trip: contract:price-option (3.199792ms)
+✔ exact Rust fixture round trip: contract:analyze-bond (13.789917ms)
+✔ exact Rust fixture round trip: contract:option-large-integer (0.463792ms)
+✔ large engine outputs retain every digit (0.358542ms)
+✔ signed and unsigned 64-bit limits, strings, and unsafe inputs (0.473791ms)
+✔ typed engine rejections and HTTP problems remain distinct (0.564041ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 498.315917
+
+COMMAND: cd web && ./node_modules/.bin/playwright test --config .l00309-playwright.config.ts l00309-engine --workers=1
+EXIT: 0
+Running 6 tests using 1 worker
+
+(node:78920) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 [desktop] › tests/l00309-engine.browser.ts:22:1 › every native fixture replays through authenticated HTTP without integer loss (268ms)
+  ✓  2 [desktop] › tests/l00309-engine.browser.ts:44:1 › assets, session and engine reject absent or invalid authentication (742ms)
+  ✓  3 [desktop] › tests/l00309-engine.browser.ts:68:1 › engine bounds bodies, methods, origins, workload and request rates (694ms)
+(node:79030) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  4 [mobile] › tests/l00309-engine.browser.ts:22:1 › every native fixture replays through authenticated HTTP without integer loss (255ms)
+  ✓  5 [mobile] › tests/l00309-engine.browser.ts:44:1 › assets, session and engine reject absent or invalid authentication (348ms)
+  ✓  6 [mobile] › tests/l00309-engine.browser.ts:68:1 › engine bounds bodies, methods, origins, workload and request rates (1.3s)
+
+  6 passed (7.2s)
+
+COMMAND: cd web && ./node_modules/.bin/wrangler deploy --dry-run
+EXIT: 0
+Total Upload: 360.34 KiB / gzip: 127.38 KiB
+--dry-run: exiting now.
+
+COMMAND: npm audit --prefix web --json
+EXIT: 1
+{
+  "counts": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 5,
+    "critical": 0,
+    "total": 5
+  },
+  "packages": {
+    "miniflare": {
+      "severity": "high",
+      "fixAvailable": {
+        "name": "wrangler",
+        "version": "4.151.1",
+        "isSemVerMajor": false
+      }
+    },
+    "sharp": {
+      "severity": "high",
+      "fixAvailable": {
+        "name": "wrangler",
+        "version": "4.151.1",
+        "isSemVerMajor": false
+      }
+    },
+    "source-map-js": {
+      "severity": "high",
+      "fixAvailable": true
+    },
+    "undici": {
+      "severity": "high",
+      "fixAvailable": {
+        "name": "wrangler",
+        "version": "4.151.1",
+        "isSemVerMajor": false
+      }
+    },
+    "wrangler": {
+      "severity": "high",
+      "fixAvailable": {
+        "name": "wrangler",
+        "version": "4.151.1",
+        "isSemVerMajor": false
+      }
+    }
+  }
+}
+
+COMMAND: npm audit --prefix web --omit=dev --json
+EXIT: 0
+{
+  "info": 0,
+  "low": 0,
+  "moderate": 0,
+  "high": 0,
+  "critical": 0,
+  "total": 0
+}
+
+COMMAND: Chromium launch smoke via installed Playwright
+EXIT: 1
+Chromium 153 / revision 1243 failed before page navigation.
+FATAL: base/apple/mach_port_rendezvous_mac.cc:159
+bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer: Permission denied (1100)
+Browser process exited with SIGTRAP; Playwright cleaned temporary profile.
+
+CONNECTED BROWSER: local navigation to http://127.0.0.1:42002 rejected by automatic browser approval because permission was denied. No product page or screenshots obtained. Viewport reset and unused tab closed.
+PUBLIC READ-ONLY CHECK: unauthenticated HEAD https://market.frodojo.com returned HTTP 302 to Cloudflare Access; no login attempted. Headers, cookies and redirect metadata are intentionally not retained.
+CLEANUP: all servers stopped through their exec sessions; lsof found no listeners on 41999–42002.

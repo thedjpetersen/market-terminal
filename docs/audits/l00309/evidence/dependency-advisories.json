@@ -1,0 +1,164 @@
+{
+  "observed_at": "2026-10-18",
+  "command": "npm audit --prefix web --json",
+  "exit_code": 1,
+  "baseline": "afb01cacb17a5d3a1e652e534191298a3e106564",
+  "production_only_audit_count": 0,
+  "packages": [
+    {
+      "name": "miniflare",
+      "severity": "high",
+      "range": "<=0.0.0-fec45ed61 || 4.20250508.3 - 5.20260926.0-alpha",
+      "isDirect": false,
+      "via": [
+        "sharp",
+        "undici"
+      ],
+      "fixAvailable": {
+        "name": "wrangler",
+        "version": "4.151.1",
+        "isSemVerMajor": false
+      }
+    },
+    {
+      "name": "sharp",
+      "severity": "high",
+      "range": "<=0.35.5-rc.1",
+      "isDirect": false,
+      "via": [
+        {
+          "name": "sharp",
+          "title": "sharp: Vulnerabilities in libheif: GHSA-g89c-p67h-r497 and GHSA-2jg2-4ch7-h545",
+          "url": "https://github.com/advisories/GHSA-rgj7-g3m4-5g8c",
+          "severity": "high",
+          "range": "<0.35.4"
+        },
+        {
+          "name": "sharp",
+          "title": "sharp : Vulnerability in librsvg dependency CVE-2026-96889",
+          "url": "https://github.com/advisories/GHSA-wq5f-xc86-pv6w",
+          "severity": "high",
+          "range": "<0.35.5"
+        }
+      ],
+      "fixAvailable": {
+        "name": "wrangler",
+        "version": "4.151.1",
+        "isSemVerMajor": false
+      }
+    },
+    {
+      "name": "source-map-js",
+      "severity": "high",
+      "range": "1.0.0 - 1.2.1",
+      "isDirect": false,
+      "via": [
+        {
+          "name": "source-map-js",
+          "title": "source-map-js allows event-loop denial of service through indexed source-map section offsets",
+          "url": "https://github.com/advisories/GHSA-68fv-2mgg-jv7q",
+          "severity": "high",
+          "range": ">=1.0.0 <1.2.2"
+        }
+      ],
+      "fixAvailable": true
+    },
+    {
+      "name": "undici",
+      "severity": "high",
+      "range": "7.0.0 - 7.29.0",
+      "isDirect": false,
+      "via": [
+        {
+          "name": "undici",
+          "title": "undici vulnerable to Denial of Service via unhandled error in WebSocket permessage-deflate decompression",
+          "url": "https://github.com/advisories/GHSA-3wwx-pv8p-q78v",
+          "severity": "moderate",
+          "range": ">=7.28.0 <7.29.1"
+        },
+        {
+          "name": "undici",
+          "title": "undici vulnerable to Denial of Service via orphaned RetryHandler response body",
+          "url": "https://github.com/advisories/GHSA-pmjh-fq2x-6v4x",
+          "severity": "moderate",
+          "range": ">=7.11.0 <7.29.1"
+        },
+        {
+          "name": "undici",
+          "title": "undici vulnerable to downstream response splitting via retry interceptor",
+          "url": "https://github.com/advisories/GHSA-r53p-7pc4-xj5r",
+          "severity": "low",
+          "range": ">=7.0.0 <7.29.1"
+        },
+        {
+          "name": "undici",
+          "title": "undici vulnerable to Denial of Service via unrequested WebSocket subprotocol",
+          "url": "https://github.com/advisories/GHSA-rfgv-xxqx-mfg5",
+          "severity": "high",
+          "range": ">=7.0.0 <7.29.1"
+        },
+        {
+          "name": "undici",
+          "title": "undici vulnerable to Denial of Service via unbounded decompression of compressed responses",
+          "url": "https://github.com/advisories/GHSA-3xpg-4rpp-hhhm",
+          "severity": "moderate",
+          "range": ">=7.15.0 <7.29.1"
+        },
+        {
+          "name": "undici",
+          "title": "undici vulnerable to cross-user cookie disclosure via Set-Cookie caching in shared caches",
+          "url": "https://github.com/advisories/GHSA-2jfj-6hjv-fm6j",
+          "severity": "moderate",
+          "range": ">=7.0.0 <7.29.1"
+        },
+        {
+          "name": "undici",
+          "title": "undici vulnerable to response truncation via oversized chunked responses in the dump interceptor",
+          "url": "https://github.com/advisories/GHSA-2gqq-gqf2-x968",
+          "severity": "low",
+          "range": ">=7.1.0 <7.29.1"
+        },
+        {
+          "name": "undici",
+          "title": "undici vulnerable to TLS certificate validation bypass via dropped connect options in BalancedPool",
+          "url": "https://github.com/advisories/GHSA-w293-vg96-wgc3",
+          "severity": "high",
+          "range": ">=7.24.1 <7.29.1"
+        },
+        {
+          "name": "undici",
+          "title": "undici vulnerable to caching and replay of unsafe HTTP method responses",
+          "url": "https://github.com/advisories/GHSA-8436-99hf-9mmv",
+          "severity": "low",
+          "range": ">=7.0.0 <7.29.1"
+        },
+        {
+          "name": "undici",
+          "title": "undici vulnerable to Denial of Service via WebSocketStream unclean close",
+          "url": "https://github.com/advisories/GHSA-rx4f-c7p8-82vq",
+          "severity": "moderate",
+          "range": ">=7.0.0 <7.29.1"
+        }
+      ],
+      "fixAvailable": {
+        "name": "wrangler",
+        "version": "4.151.1",
+        "isSemVerMajor": false
+      }
+    },
+    {
+      "name": "wrangler",
+      "severity": "high",
+      "range": "<=0.0.0-7ae5dd357 || 4.16.0 - 4.130.0",
+      "isDirect": true,
+      "via": [
+        "miniflare"
+      ],
+      "fixAvailable": {
+        "name": "wrangler",
+        "version": "4.151.1",
+        "isSemVerMajor": false
+      }
+    }
+  ]
+}
