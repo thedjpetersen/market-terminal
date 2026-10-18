@@ -19,3 +19,7 @@ generated ready/pending/failure screenshots be reviewed? Copy the screenshots
 from `web/test-results/` into `.factory/screenshots/` as factory evidence.
 This suite starts and stops its own local Vite server on port 41772; it needs no
 production access, credentials, or deployment.
+
+Update: hosted GitHub CI is a permitted Chromium harness. It caught an Enter
+default-action issue in the new application workflow; the fix and retained CI
+screenshots are being verified there. Local Chromium remains unavailable.

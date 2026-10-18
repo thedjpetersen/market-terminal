@@ -59,5 +59,12 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: web
       - run: npm run test:browser --prefix web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-browser-evidence
+          path: web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
       - run: npx wrangler deploy --dry-run
         working-directory: web

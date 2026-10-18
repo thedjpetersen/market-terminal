@@ -95,7 +95,10 @@ export function Search({
                 e.preventDefault();
                 select(Math.max(0, selected - 1));
               }
-              if (e.key === "Enter") activate(selected);
+              if (e.key === "Enter") {
+                e.preventDefault();
+                activate(selected);
+              }
             }}
           />
           <button

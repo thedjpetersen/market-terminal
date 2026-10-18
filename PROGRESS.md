@@ -31,3 +31,17 @@
 - Evidence so far: regression suite reproduced the same 5 failures twice before
   the fix, then passed 10/10; full web tests pass 19/19. Formatting passes.
   Independent review and final build/architecture checks are in progress.
+- Native architecture check passed 10/10 with debug info/incremental compilation
+  disabled to keep the worktree build modest. Independent review passed all
+  19 web tests and typecheck with no substantive correctness findings.
+- Hosted CI can run Chromium. Its 12 existing browser tests passed; the two new
+  search workflows caught uncanceled Enter reopening the dialog after selection
+  restores focus. Added a failing event-cancellation regression and consumed
+  Enter before activation; unchanged desktop/mobile assertions will verify it.
+- CI now retains `web/test-results/` for seven days so this restricted worker can
+  download and review the generated browser evidence without changing sandbox
+  permissions.
+- Separate CI finding: Node 24.21.0 rejects `export type` in the unchanged
+  generated-contract syntax-check step. The same command passes locally on Node
+  26.7.0; neither the generated contract nor that CI command changed in this task.
+  Track this as a separate Node 24 CI-compatibility follow-up.

@@ -48,9 +48,13 @@ function edit(query: string) {
   });
 }
 function press(key: string) {
-  act(() =>
-    input().dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })),
-  );
+  const event = new KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+  });
+  act(() => input().dispatchEvent(event));
+  return event;
 }
 async function advance(ms = 200) {
   await act(async () => {
@@ -146,6 +150,12 @@ test("pending requests block activation even when previous results were selected
   press("ArrowUp");
   press("Enter");
   expect(onSelect.mock.calls).toEqual([["MSFT"]]);
+});
+
+test("Enter is consumed before selection can restore focus to the search trigger", async () => {
+  await initialResults();
+  expect(press("Enter").defaultPrevented).toBe(true);
+  expect(onSelect.mock.calls).toEqual([["AAPL"]]);
 });
 
 test("failure blocks old results and a subsequent successful query recovers", async () => {
