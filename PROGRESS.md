@@ -38,9 +38,11 @@
   search workflows caught uncanceled Enter reopening the dialog after selection
   restores focus. Added a failing event-cancellation regression and consumed
   Enter before activation; unchanged desktop/mobile assertions will verify it.
-- CI now retains `web/test-results/` for seven days so this restricted worker can
-  download and review the generated browser evidence without changing sandbox
-  permissions.
+- Attempted to retain CI browser screenshots, but GitHub rejected the push
+  because its OAuth token lacks `workflow` scope. Removed the upload step in a
+  new commit, preserving history and the original workflow. No credentials or
+  permissions changed. Existing CI can run browser tests; screenshot review
+  still needs a permitted harness because that workflow does not export them.
 - Separate CI finding: Node 24.21.0 rejects `export type` in the unchanged
   generated-contract syntax-check step. The same command passes locally on Node
   26.7.0; neither the generated contract nor that CI command changed in this task.

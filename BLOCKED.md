@@ -21,5 +21,9 @@ This suite starts and stops its own local Vite server on port 41772; it needs no
 production access, credentials, or deployment.
 
 Update: hosted GitHub CI is a permitted Chromium harness. It caught an Enter
-default-action issue in the new application workflow; the fix and retained CI
-screenshots are being verified there. Local Chromium remains unavailable.
+default-action issue in the new application workflow; the fix is being verified
+there. Its existing workflow does not export web screenshots, and GitHub rejected
+an artifact-upload workflow change because the OAuth token lacks `workflow`
+scope. That change was removed in a new commit without rewriting history. Local
+Chromium remains unavailable; screenshot review still requires a permitted
+harness. Do not broaden credentials or permissions as part of this task.
