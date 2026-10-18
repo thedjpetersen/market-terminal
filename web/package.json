@@ -8,12 +8,13 @@
     "build:wasm": "wasm-pack build ../crates/market-terminal-wasm --target web --out-dir ../../web/public/engine --out-name research_engine",
     "build": "npm run build:wasm && tsc --noEmit && vite build",
     "check": "tsc --noEmit",
-    "test": "vitest run tests/research.test.ts tests/auth.test.ts",
+    "test": "vitest run tests/research.test.ts tests/auth.test.ts tests/search.test.tsx",
     "preview": "wrangler dev --port 8799",
     "deploy": "npm run build && wrangler deploy",
     "types": "wrangler types",
     "format": "prettier --write src worker tests *.ts *.json *.jsonc",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test && npm run test:search",
+    "test:search": "playwright test --config search.playwright.config.ts"
   },
   "dependencies": {
     "jose": "^6.2.12",
@@ -28,6 +29,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "latest",
+    "jsdom": "^30.1.3",
     "prettier": "^3.9.6",
     "typescript": "~5.9.3",
     "vite": "8.2.2",
