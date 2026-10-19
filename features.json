@@ -1,0 +1,12 @@
+[
+  {
+    "id": "L00374-research-recovery",
+    "steps": [
+      "Research and backtest history classify expired sessions before parsing JSON and preserve useful provider errors.",
+      "Market Refresh includes headlines and failed research panels expose working retries.",
+      "Successful empty SEC filings show an explanatory state distinct from loading and failure.",
+      "Focused adapter and desktop/mobile browser recovery checks pass alongside the existing web checks."
+    ],
+    "passes": false
+  }
+]
