@@ -33,3 +33,16 @@ its owning exec session and a socket check confirmed port 42600 closed.
 This repeats the **permission outcome**, not the previous install/build/Chromium
 attempt. The new preflight deliberately gates expensive setup. Pending work and
 independent-review limits are in [the handoff](docs/audits/l00426/README.md).
+
+## Final staging fallback
+
+Initial checkpoint `20dd4fe36f8573f757cec3ffcfa347cb2a801b1f` succeeded. Staging
+the final independent-review notes later failed:
+
+```text
+fatal: Unable to create '/Users/thedjpetersen/code/market-terminal/.git/worktrees/L00426/index.lock': Operation not permitted
+```
+
+Per the current Factory finish protocol, final edits remain in this worktree for
+the supervisor to commit on the task branch. No alternate writer, staging retry,
+push or PR was attempted. Partial status does not authorize publication to main.

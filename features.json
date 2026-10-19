@@ -3,5 +3,5 @@
   {"id":"L00426-workflows","steps":["Run the original deterministic workflows at 1440x1000 and 390x844 without changing assertions"],"passes":false},
   {"id":"L00426-probes","steps":["Execute the L00371 pending probe matrix, capture screenshots in .factory/screenshots, and inspect every image"],"passes":false},
   {"id":"L00426-independent-browser-verification","steps":["Obtain fresh-context independent browser verification of the tested revision and evidence"],"passes":false},
-  {"id":"L00426-handoff","steps":["Record exact access outcome, unchanged baseline checks, cleanup and remaining acceptance without claiming a browser pass"],"passes":false}
+  {"id":"L00426-handoff","steps":["Record exact access outcome, unchanged baseline checks, cleanup and remaining acceptance without claiming a browser pass"],"passes":true}
 ]

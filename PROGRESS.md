@@ -40,5 +40,20 @@
 
 ## Verification and handoff
 
-See the audit for executed checks and their limits. Browser checklist entries
-stay false. Final commit/check information will be recorded before handoff.
+- Scope/blocker checkpoint: `20dd4fe36f8573f757cec3ffcfa347cb2a801b1f`.
+- `git diff --check afb01cacb17a5d3a1e652e534191298a3e106564..HEAD` passed.
+  Python validation passed for feature JSON, pending browser flags, all four
+  recorded hashes, local document links and preflight-server cleanup.
+- A fresh-context read-only Codex reviewer found no substantive reporting errors.
+  It independently checked changed-file scope, local main, hashes, JSON and port
+  cleanup. It did not invoke a browser or reproduce the permission denial.
+- All browser feature entries remain false. Only the documented handoff passes;
+  this review does not satisfy independent browser verification.
+- Final review-note staging failed with `Operation not permitted` when creating
+  `/Users/thedjpetersen/code/market-terminal/.git/worktrees/L00426/index.lock`.
+  No alternate Git writer or retry was attempted. HEAD remains the checkpoint
+  above; final review notes/checklist updates are uncommitted for the supervisor.
+- Checkpoint SHA and partial result are in uncommitted `FACTORY_RESULT.json`.
+  The supervisor should commit the pending handoff edits on this task branch and
+  resolve the runner prerequisite before resuming the existing V1 tasks. No
+  partial checkpoint may be pushed to main.

@@ -29,6 +29,7 @@ returned by the browser. No workaround followed the denial.
 | CUA inventory and local-development documentation | Available; this alone does not establish navigation permission |
 | CUA navigation to `http://127.0.0.1:42600` | Denied by automatic approval review before rendering |
 | Preflight process cleanup | Owning exec session exited 0; socket check confirmed port 42600 closed |
+| `git diff --check` and Python handoff validation | Exit 0; feature JSON, pending browser flags, recorded hashes and local document links validated |
 | Build, TypeScript, unit/client and HTTP suites | Not rerun; application setup stopped at the access gate |
 | Deterministic browser suites, screenshots and probes | Not run; all browser feature entries remain false |
 
@@ -92,5 +93,21 @@ deployment changes. No push, PR or deployment. Revert the L00426 documentation
 commit to roll back; there is no production rollback. A partial result never
 authorizes publication to main.
 
-Independent review is pending; even a successful read-only handoff review would
-not constitute the required independent browser verification.
+Checkpoint `20dd4fe36f8573f757cec3ffcfa347cb2a801b1f` is committed. The final
+review-note/checklist update remains uncommitted because subsequent staging
+could not create the Git index lock (`Operation not permitted`). Under the
+Factory fallback, the supervisor must commit those remaining documentation edits
+on this task branch. No alternate Git writer was attempted.
+
+## Independent handoff review
+
+A fresh-context read-only Codex reviewer checked `afb01ca..20dd4fe` and found no
+substantive errors. It independently verified that only four documentation and
+checklist files changed, all recorded hashes match the original baseline suites,
+JSON parses, local main matches the stated baseline, and port 42600 refuses
+connections. It confirmed the remaining acceptance matrix is preserved.
+
+The reviewer did not invoke a browser, independently reproduce the denial or run
+application checks. This is reporting validation, **not independent browser
+verification**. This final documentation update marks only the handoff feature
+as passing; all four browser-dependent features remain false.
