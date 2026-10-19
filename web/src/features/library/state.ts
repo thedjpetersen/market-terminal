@@ -1,43 +1,56 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { SavedItem, LibraryStorage } from "./contracts";
 export function useLibrary(
   storage: LibraryStorage,
   notify: (message: string) => void,
 ) {
-  const [items, setItems] = useState(() => storage.read().slice(0, 30));
-  function persist(next: SavedItem[]): boolean {
+  const [items, setItems] = useState<SavedItem[]>(() => {
     try {
-      storage.write(next);
-      setItems(next);
-      return true;
+      return storage.read();
     } catch {
-      notify(
-        "Browser storage is full or unavailable. Download your evidence to keep it.",
-      );
-      return false;
+      return [];
     }
-  }
-  function save(title: string, content: string) {
-    if (items.length >= 30) {
-      notify("Your library is full. Download and remove a snapshot first.");
-      return;
-    }
-    if (
-      persist([
-        {
-          id: crypto.randomUUID(),
-          title,
-          content,
-          createdAt: new Date().toISOString(),
-        },
-        ...items,
-      ])
-    )
+  });
+  useEffect(() => {
+    const refresh = () => {
+      try {
+        setItems(storage.read());
+      } catch {
+        notify("Library storage cannot be read; existing data is unchanged.");
+      }
+    };
+    const unsubscribe = storage.subscribe(refresh);
+    refresh();
+    return unsubscribe;
+  }, [storage, notify]);
+  async function save(title: string, content: string) {
+    const item = {
+      id: crypto.randomUUID(),
+      title,
+      content,
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      await storage.mutate((current) => {
+        if (current.length >= 30)
+          throw new Error(
+            "Your library is full. Download and remove a snapshot first.",
+          );
+        return [item, ...current];
+      });
       notify("Snapshot saved on this device.");
+    } catch (error) {
+      notify(`Snapshot could not be saved: ${String(error)}`);
+    }
   }
-  return {
-    items,
-    save,
-    remove: (id: string) => persist(items.filter((item) => item.id !== id)),
-  };
+  async function remove(id: string) {
+    try {
+      await storage.mutate((current) =>
+        current.filter((item) => item.id !== id),
+      );
+    } catch (error) {
+      notify(`Snapshot could not be removed: ${String(error)}`);
+    }
+  }
+  return { items, save, remove };
 }

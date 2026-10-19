@@ -8,12 +8,13 @@
     "build:wasm": "wasm-pack build ../crates/market-terminal-wasm --target web --out-dir ../../web/public/engine --out-name research_engine",
     "build": "npm run build:wasm && tsc --noEmit && vite build",
     "check": "tsc --noEmit",
-    "test": "vitest run tests/research.test.ts tests/auth.test.ts",
+    "test": "vitest run tests/research.test.ts tests/auth.test.ts tests/units.test.ts",
     "preview": "wrangler dev --port 8799",
     "deploy": "npm run build && wrangler deploy",
     "types": "wrangler types",
     "format": "prettier --write src worker tests *.ts *.json *.jsonc",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "test:audit": "playwright test --config playwright.audit.config.ts"
   },
   "dependencies": {
     "jose": "^6.2.12",

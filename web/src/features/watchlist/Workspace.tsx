@@ -1,3 +1,4 @@
+import { formatQuotePrice } from "../../foundation/quoteUnits";
 import { Star, Trash2, Plus } from "lucide-react";
 import { Loading, Notice, Sparkline, useQuery } from "../../ui/primitives";
 import type { WatchlistPort } from "./contracts";
@@ -62,10 +63,7 @@ export function Watchlist({
                 </span>
                 <Sparkline values={q.points} positive={q.changePercent >= 0} />
                 <span className="asset-price">
-                  {new Intl.NumberFormat(undefined, {
-                    style: "currency",
-                    currency: q.currency,
-                  }).format(q.price)}
+                  {formatQuotePrice(q.price, q.currency)}
                   <small
                     className={q.changePercent >= 0 ? "positive" : "negative"}
                   >

@@ -14,7 +14,9 @@ export function Search({
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Instrument[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const currentQuery = useRef(query);
+  const [resultQuery, setResultQuery] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [selected, select] = useState(0);
   const input = useRef<HTMLInputElement>(null);
@@ -35,7 +37,8 @@ export function Search({
       port
         .search(query.trim() || "AAPL", controller.signal)
         .then((result) => {
-          if (!controller.signal.aborted) {
+          if (!controller.signal.aborted && currentQuery.current === query) {
+            setResultQuery(query);
             setResults(result);
             select(0);
           }
@@ -68,7 +71,14 @@ export function Search({
             aria-label="Ticker or company"
             placeholder="Search a ticker or company…"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              currentQuery.current = e.target.value;
+              setQuery(e.target.value);
+              setResults([]);
+              setResultQuery(null);
+              select(0);
+              setLoading(true);
+            }}
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") {
                 e.preventDefault();
@@ -78,7 +88,12 @@ export function Search({
                 e.preventDefault();
                 select(Math.max(0, selected - 1));
               }
-              if (e.key === "Enter" && results[selected])
+              if (
+                e.key === "Enter" &&
+                !loading &&
+                resultQuery === query &&
+                results[selected]
+              )
                 onSelect(results[selected].symbol);
             }}
           />
@@ -105,7 +120,10 @@ export function Search({
               <button
                 key={item.symbol}
                 className={selected === index ? "selected" : ""}
-                onClick={() => onSelect(item.symbol)}
+                onClick={() => {
+                  if (!loading && resultQuery === currentQuery.current)
+                    onSelect(item.symbol);
+                }}
               >
                 <span className="ticker-icon">{item.symbol.slice(0, 2)}</span>
                 <span>

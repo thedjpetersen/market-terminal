@@ -120,3 +120,23 @@ can verify the route. Existing zone-wide security settings are unchanged.
 
 The app has a web manifest for Add to Home Screen. It requires connectivity for
 market data and first load; it does not promise offline data freshness.
+
+Quote units are case-sensitive: `GBp`/`GBX` are displayed as pence without
+changing their numeric value; recognized major currencies use currency formatting,
+and unknown codes remain explicit. Research, watchlists and history chart labels
+share this handling. Backtests currently require history explicitly denominated
+in USD, matching USD capital and fees; GBP, pence, other or missing currency
+provenance is rejected with a UI diagnostic. No FX rate is invented.
+
+Watchlist and library mutations acquire same-origin Web Locks, read the current
+stored value inside the lock, and notify mounted views through storage events.
+A stale mount never writes storage. Browsers lacking Web Locks fail closed on
+mutations; malformed stored data is left untouched. No destructive migration or
+silent truncation is performed. Search results are tied to their originating
+query and cannot be selected while a replacement search is pending.
+
+Run `npm run test:audit --prefix web` for local Chromium two-page persistence and
+search regressions (install Chromium with `npx playwright install chromium` from
+`web` first). The isolated Vite fixture uses synthetic data, no provider calls,
+and no authenticated service. `npm test --prefix web` includes unit-provenance
+and unsupported-backtest checks.

@@ -6,5 +6,6 @@ export interface SavedItem {
 }
 export interface LibraryStorage {
   read(): SavedItem[];
-  write(items: SavedItem[]): void;
+  mutate(change: (current: SavedItem[]) => SavedItem[]): Promise<SavedItem[]>;
+  subscribe(listener: () => void): () => void;
 }

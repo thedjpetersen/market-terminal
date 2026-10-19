@@ -1,19 +1,29 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { WatchlistStorage } from "./contracts";
 export function useWatchlist(
   storage: WatchlistStorage,
   notify: (message: string) => void,
 ) {
-  const [symbols, setSymbols] = useState(() =>
-    [...new Set(storage.read())]
-      .filter(
-        (symbol) =>
-          /^[A-Z0-9^][A-Z0-9.^=-]{0,19}$/.test(symbol) &&
-          !symbol.includes(".."),
-      )
-      .slice(0, 32),
-  );
-  function toggle(symbol: string) {
+  const [symbols, setSymbols] = useState<string[]>(() => {
+    try {
+      return storage.read();
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    const refresh = () => {
+      try {
+        setSymbols(storage.read());
+      } catch {
+        notify("Watchlist storage cannot be read; existing data is unchanged.");
+      }
+    };
+    const unsubscribe = storage.subscribe(refresh);
+    refresh();
+    return unsubscribe;
+  }, [storage, notify]);
+  async function toggle(symbol: string) {
     if (
       !/^[A-Z0-9^][A-Z0-9.^=-]{0,19}$/.test(symbol) ||
       symbol.includes("..")
@@ -21,20 +31,19 @@ export function useWatchlist(
       notify("This ticker is not valid.");
       return;
     }
-    if (!symbols.includes(symbol) && symbols.length >= 32) {
-      notify("Your watchlist is full. Remove an asset before adding another.");
-      return;
-    }
-    const next = symbols.includes(symbol)
-      ? symbols.filter((s) => s !== symbol)
-      : [...symbols, symbol];
+    const add = !symbols.includes(symbol);
     try {
-      storage.write(next);
-      setSymbols(next);
-    } catch {
-      notify(
-        "Browser storage is full or unavailable. Your watchlist could not be saved.",
-      );
+      await storage.mutate((current) => {
+        if (!add) return current.filter((s) => s !== symbol);
+        if (current.includes(symbol)) return current;
+        if (current.length >= 32)
+          throw new Error(
+            "Your watchlist is full. Remove an asset before adding another.",
+          );
+        return [...current, symbol];
+      });
+    } catch (error) {
+      notify(`Watchlist could not be saved: ${String(error)}`);
     }
   }
   return { symbols, toggle };

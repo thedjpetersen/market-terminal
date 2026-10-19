@@ -8,12 +8,9 @@ import {
   Sparkline,
   useQuery,
 } from "../../ui/primitives";
+import { formatQuotePrice } from "../../foundation/quoteUnits";
 export const money = (n: number, currency = "USD") =>
-  new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 2,
-  }).format(n);
+  formatQuotePrice(n, currency);
 export function QuoteTile({
   quote,
   onSelect,
@@ -152,6 +149,9 @@ export function Markets({
           {history.error && <Notice>{history.error}</Notice>}
           {history.data && (
             <SeriesChart
+              format={(value) =>
+                formatQuotePrice(value, history.data!.currency)
+              }
               points={history.data.bars.map((b) => ({
                 x: b.timestamp,
                 y: b.close,
@@ -341,6 +341,9 @@ export function Research({
             {history.error && <Notice>{history.error}</Notice>}
             {history.data && (
               <SeriesChart
+                format={(value) =>
+                  formatQuotePrice(value, history.data!.currency)
+                }
                 points={history.data.bars.map((b) => ({
                   x: b.timestamp,
                   y: b.close,

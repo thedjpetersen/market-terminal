@@ -15,5 +15,6 @@ export interface WatchlistPort {
 }
 export interface WatchlistStorage {
   read(): string[];
-  write(symbols: string[]): void;
+  mutate(change: (current: string[]) => string[]): Promise<string[]>;
+  subscribe(listener: () => void): () => void;
 }

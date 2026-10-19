@@ -37,9 +37,14 @@ export const cloudAnalytics: AnalyticsPort = {
     const data = (await response.json()) as {
       bars?: Awaited<ReturnType<AnalyticsPort["bars"]>>;
       error?: string;
+      currency?: string;
     };
     if (!response.ok || !data.bars)
       throw new Error(data.error ?? "Historical prices are unavailable.");
+    if (data.currency !== "USD")
+      throw new Error(
+        `Backtests currently require USD prices, capital and fees. This history is ${data.currency || "of unknown currency"}; no FX conversion is available.`,
+      );
     return data.bars;
   },
 };
