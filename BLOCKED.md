@@ -17,7 +17,7 @@ The prepared local-only harness is `web/.factory/playwright.config.ts`; it uses 
 
 ```sh
 cd web
-WRANGLER_LOG_PATH="$PWD/.factory/wrangler-logs" WRANGLER_REGISTRY_PATH="$PWD/.factory/wrangler-registry" MARKET_TEST_ISSUER=http://127.0.0.1:41775 npx playwright test --config=.factory/playwright.config.ts
+node .factory/run-browser.mjs
 ```
 
-The prepared harness and port-only acceptance copies are uncommitted verification artifacts; the normal checked-in suite remains runnable with `npm run test:browser` in an environment where its default ports are allowed. The new tests save session and empty-filings screenshots under `.factory/screenshots/` at the repository root.
+The prepared harness is an ignored verification artifact. Its runner creates temporary port-only acceptance copies, sets the local Wrangler paths and issuer, runs Playwright, and removes the copies afterward. The normal checked-in suite remains runnable with `npm run test:browser` in an environment where its default ports are allowed. The new tests save session and empty-filings screenshots under `.factory/screenshots/` at the repository root.
