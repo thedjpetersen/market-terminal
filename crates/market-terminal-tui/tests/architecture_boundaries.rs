@@ -647,7 +647,7 @@ fn bounded_contexts_do_not_import_adapters_or_each_other() {
     for context in &contexts {
         let context_root = features.join(context);
         for path in rust_sources(&context_root) {
-            let source = production_source(&path);
+            let source = production_dependencies(&path);
             assert_absent(
                 &path,
                 &source,
@@ -679,7 +679,8 @@ fn domain_and_port_layers_do_not_depend_on_shell_or_rendering() {
     for path in rust_sources(&features) {
         let is_domain = path
             .components()
-            .any(|component| component.as_os_str() == "domain");
+            .any(|component| component.as_os_str() == "domain")
+            || path.file_name().is_some_and(|name| name == "domain.rs");
         let is_port = path
             .file_name()
             .is_some_and(|name| name == "port.rs" || name == "ports.rs");
@@ -687,7 +688,7 @@ fn domain_and_port_layers_do_not_depend_on_shell_or_rendering() {
             continue;
         }
 
-        let source = production_source(&path);
+        let source = production_dependencies(&path);
         for (needle, reason) in [
             (
                 "crate::app",
@@ -711,7 +712,7 @@ fn domain_and_port_layers_do_not_depend_on_shell_or_rendering() {
 fn foundation_and_ui_keep_their_stable_dependency_direction() {
     let root = tui_root();
     for path in rust_sources(&root.join("src/foundation")) {
-        let source = production_source(&path);
+        let source = production_dependencies(&path);
         for needle in [
             "crate::app",
             "crate::features",
@@ -728,7 +729,7 @@ fn foundation_and_ui_keep_their_stable_dependency_direction() {
     }
 
     for path in rust_sources(&root.join("src/ui")) {
-        let source = production_source(&path);
+        let source = production_dependencies(&path);
         for needle in ["crate::features", "crate::infrastructure"] {
             assert_absent(
                 &path,
@@ -744,4 +745,136 @@ fn foundation_and_ui_keep_their_stable_dependency_direction() {
     assert!(library.contains("mod ui;"));
     assert!(!library.contains("pub mod infrastructure;"));
     assert!(!library.contains("pub mod ui;"));
+}
+
+fn dependency_paths(source: &str) -> Vec<String> {
+    use syn::visit::Visit;
+    #[derive(Default)]
+    struct Dependencies {
+        paths: Vec<Vec<String>>,
+        aliases: std::collections::BTreeMap<String, Vec<String>>,
+    }
+    fn test_only(attrs: &[syn::Attribute]) -> bool {
+        attrs.iter().any(|attr| {
+            attr.path().is_ident("cfg")
+                && attr
+                    .parse_args::<syn::Path>()
+                    .is_ok_and(|path| path.is_ident("test"))
+        })
+    }
+    impl Dependencies {
+        fn use_tree(&mut self, tree: &syn::UseTree, mut prefix: Vec<String>) {
+            match tree {
+                syn::UseTree::Path(path) => {
+                    prefix.push(path.ident.to_string());
+                    self.use_tree(&path.tree, prefix);
+                }
+                syn::UseTree::Group(group) => {
+                    for item in &group.items {
+                        self.use_tree(item, prefix.clone());
+                    }
+                }
+                syn::UseTree::Name(name) => {
+                    if name.ident != "self" {
+                        prefix.push(name.ident.to_string());
+                    }
+                    if let Some(last) = prefix.last() {
+                        self.aliases.insert(last.clone(), prefix.clone());
+                    }
+                    self.paths.push(prefix);
+                }
+                syn::UseTree::Rename(rename) => {
+                    if rename.ident != "self" {
+                        prefix.push(rename.ident.to_string());
+                    }
+                    self.aliases
+                        .insert(rename.rename.to_string(), prefix.clone());
+                    self.paths.push(prefix);
+                }
+                syn::UseTree::Glob(_) => self.paths.push(prefix),
+            }
+        }
+    }
+    impl<'ast> Visit<'ast> for Dependencies {
+        fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+            if !test_only(&item.attrs) {
+                syn::visit::visit_item_mod(self, item);
+            }
+        }
+        fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+            if !test_only(&item.attrs) {
+                syn::visit::visit_item_fn(self, item);
+            }
+        }
+        fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+            if !test_only(&item.attrs) {
+                self.use_tree(&item.tree, Vec::new());
+            }
+        }
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            self.paths.push(
+                path.segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect(),
+            );
+            syn::visit::visit_path(self, path);
+        }
+    }
+    let file = syn::parse_file(source).expect("valid Rust source");
+    let mut dependencies = Dependencies::default();
+    dependencies.visit_file(&file);
+    dependencies
+        .paths
+        .into_iter()
+        .map(|mut path| {
+            for _ in 0..dependencies.aliases.len() {
+                let Some(alias) = path
+                    .first()
+                    .and_then(|first| dependencies.aliases.get(first))
+                else {
+                    break;
+                };
+                if path.starts_with(alias) {
+                    break;
+                }
+                path = alias
+                    .iter()
+                    .cloned()
+                    .chain(path.into_iter().skip(1))
+                    .collect();
+            }
+            path.join("::")
+        })
+        .collect()
+}
+
+fn production_dependencies(path: &Path) -> String {
+    dependency_paths(&fs::read_to_string(path).expect("Rust source")).join("\n")
+}
+
+#[test]
+fn dependencies_parse_grouped_aliased_and_qualified_paths_without_text_false_positives() {
+    let paths = dependency_paths(
+        r#"
+        use crate::{features::{market_data as md, portfolio::Position}, ui::Theme};
+        use crate as root;
+        fn production(_: md::Quote) { let _ = root::features::risk::Risk::new(); }
+        // crate::features::ignored::Comment
+        const TEXT: &str = "crate::features::ignored::String";
+        #[cfg(test)] mod tests { use crate::features::ignored::Test; }
+        fn after_tests(_: crate::features::news::Headline) {}
+    "#,
+    );
+    assert!(paths
+        .iter()
+        .any(|p| p == "crate::features::market_data::Quote"));
+    assert!(paths
+        .iter()
+        .any(|p| p == "crate::features::risk::Risk::new"));
+    assert!(paths
+        .iter()
+        .any(|p| p == "crate::features::portfolio::Position"));
+    assert!(paths.iter().any(|p| p == "crate::features::news::Headline"));
+    assert!(!paths.iter().any(|p| p.contains("ignored")));
 }

@@ -1,3 +1,5 @@
+mod quotes;
+pub use quotes::*;
 mod domain;
 mod port;
 mod workspace;
@@ -5,7 +7,7 @@ mod workspace;
 pub use domain::{
     MonitorColumn, SortDirection, SortField, SortSpec, WatchlistDefinition, WatchlistItem,
 };
-pub use port::WatchlistCatalog;
+pub use port::{MarketDataQuery, QuoteSubscription, WatchlistCatalog};
 pub use workspace::WatchlistWorkspace;
 
 use crate::app::WorkspaceId;

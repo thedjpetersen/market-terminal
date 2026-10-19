@@ -161,7 +161,9 @@ fn build_app(providers: AppProviders) -> App {
     };
     let desk_workspace = DeskWorkspace::new(
         Box::new(WatchlistWorkspace::with_snapshot_refresh_interval(
-            market_data.clone(),
+            Arc::new(crate::infrastructure::WatchlistQuotes::new(
+                market_data.clone(),
+            )),
             watchlist_catalog.clone(),
             snapshot_refresh_interval,
         )),
@@ -213,7 +215,7 @@ fn build_app(providers: AppProviders) -> App {
         )),
         Box::new(InstrumentSearchWorkspace::new(instrument_search)),
         Box::new(WatchlistWorkspace::with_snapshot_refresh_interval(
-            market_data,
+            Arc::new(crate::infrastructure::WatchlistQuotes::new(market_data)),
             watchlist_catalog,
             snapshot_refresh_interval,
         )),

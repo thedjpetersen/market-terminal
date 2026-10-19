@@ -29,7 +29,7 @@ use crate::{
         AppIntent, CommandInvocation, ViewRestoreReport, ViewValue, Workspace, WorkspaceAction,
         WorkspaceDescriptor, WorkspaceViewState,
     },
-    features::market_data::{
+    features::watchlist::{
         DataQuality, MarketDataError, MarketDataQuery, Price, Quantity, QuoteSnapshot,
         QuoteSubscription, QuoteSubscriptionRequest, SubscriptionMetrics,
     },
@@ -1419,9 +1419,9 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     use super::*;
-    use crate::features::market_data::{
-        CacheStatus, CanonicalInstrumentId, DataProvenance, HistoryRequest, Percent, PriceBar,
-        PriceChange, ProviderId, UtcTimestamp,
+    use crate::features::watchlist::{
+        CacheStatus, CanonicalInstrumentId, DataProvenance, Percent, PriceChange, ProviderId,
+        UtcTimestamp,
     };
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
@@ -1469,13 +1469,6 @@ mod tests {
                     },
                 })
                 .collect())
-        }
-
-        fn price_history(
-            &self,
-            _request: &HistoryRequest,
-        ) -> Result<Vec<PriceBar>, MarketDataError> {
-            Ok(Vec::new())
         }
     }
 
@@ -1549,13 +1542,6 @@ mod tests {
             self.requests.fetch_add(1, AtomicOrdering::Relaxed);
             StubMarketData.quote_snapshots(instruments)
         }
-
-        fn price_history(
-            &self,
-            request: &HistoryRequest,
-        ) -> Result<Vec<PriceBar>, MarketDataError> {
-            StubMarketData.price_history(request)
-        }
     }
 
     struct SlowMarketData;
@@ -1567,13 +1553,6 @@ mod tests {
         ) -> Result<Vec<QuoteSnapshot>, MarketDataError> {
             std::thread::sleep(std::time::Duration::from_millis(100));
             StubMarketData.quote_snapshots(instruments)
-        }
-
-        fn price_history(
-            &self,
-            request: &HistoryRequest,
-        ) -> Result<Vec<PriceBar>, MarketDataError> {
-            StubMarketData.price_history(request)
         }
     }
 

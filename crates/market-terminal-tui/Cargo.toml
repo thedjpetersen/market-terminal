@@ -35,6 +35,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 [dev-dependencies]
+syn = { version = "2", features = ["full", "visit"] }
 ab_glyph = "0.2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 market-terminal-api = { path = "../market-terminal-api" }

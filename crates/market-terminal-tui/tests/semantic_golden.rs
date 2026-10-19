@@ -8,12 +8,11 @@ use market_terminal::{
         ID as OVERVIEW,
     },
     features::{
-        market_data::{
-            CanonicalInstrumentId, HistoryRequest, MarketDataError, MarketDataQuery, PriceBar,
-            QuoteSnapshot,
-        },
         news::{Headline, NewsFeed, NewsSnapshot, NewsWorkspace},
-        watchlist::{WatchlistCatalog, WatchlistDefinition, WatchlistItem, WatchlistWorkspace},
+        watchlist::{
+            CanonicalInstrumentId, MarketDataError, MarketDataQuery, QuoteSnapshot,
+            WatchlistCatalog, WatchlistDefinition, WatchlistItem, WatchlistWorkspace,
+        },
     },
     runtime, App,
 };
@@ -251,13 +250,9 @@ impl MarketDataQuery for GoldenMarketData {
         &self,
         _instruments: &[CanonicalInstrumentId],
     ) -> Result<Vec<QuoteSnapshot>, MarketDataError> {
-        Err(MarketDataError::TemporarilyUnavailable(
-            "deterministic golden".to_owned(),
+        Err(MarketDataError::Unavailable(
+            "market data temporarily unavailable: deterministic golden".to_owned(),
         ))
-    }
-
-    fn price_history(&self, _request: &HistoryRequest) -> Result<Vec<PriceBar>, MarketDataError> {
-        Ok(Vec::new())
     }
 }
 

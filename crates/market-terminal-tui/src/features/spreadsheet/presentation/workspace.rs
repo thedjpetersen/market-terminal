@@ -105,7 +105,7 @@ pub struct SpreadsheetWorkspace {
     refresh_receiver: Receiver<MarketDataRefreshResult>,
     next_refresh_generation: u64,
     applied_refresh_generation: u64,
-    external_cells: HashMap<CellAddress, Vec<MarketDataRequest>>,
+    external_cells: HashMap<(String, CellAddress), Vec<MarketDataRequest>>,
     external_states: HashMap<MarketDataRequest, ExternalCellState>,
     cursor: CellAddress,
     first_column: u8,
@@ -602,45 +602,55 @@ impl SpreadsheetWorkspace {
         }
     }
 
-    fn financial_formula_requests(&self) -> HashMap<CellAddress, Vec<MarketDataRequest>> {
-        self.spreadsheet
-            .workbook()
-            .active_sheet()
-            .populated_cells()
-            .filter_map(|(address, cell)| {
-                let expression = parse_formula(cell.raw()).ok()?;
+    fn financial_formula_requests(&self) -> HashMap<(String, CellAddress), Vec<MarketDataRequest>> {
+        let mut cells = HashMap::new();
+        for sheet in self.spreadsheet.workbook().sheets() {
+            for (address, cell) in sheet.populated_cells() {
+                let Ok(expression) = parse_formula(cell.raw()) else {
+                    continue;
+                };
                 let mut requests = Vec::new();
-                self.collect_financial_requests(&expression, &mut requests);
+                self.collect_financial_requests(&expression, sheet.name(), &mut requests);
                 requests.sort_by(|left, right| {
                     (&left.security, &left.field).cmp(&(&right.security, &right.field))
                 });
                 requests.dedup();
-                (!requests.is_empty()).then_some((address, requests))
-            })
-            .collect()
+                if !requests.is_empty() {
+                    cells.insert((sheet.name().to_owned(), address), requests);
+                }
+            }
+        }
+        cells
     }
 
-    fn collect_financial_requests(&self, expression: &Expr, requests: &mut Vec<MarketDataRequest>) {
-        if let Some(request) = self.financial_request(expression) {
+    fn collect_financial_requests(
+        &self,
+        expression: &Expr,
+        sheet: &str,
+        requests: &mut Vec<MarketDataRequest>,
+    ) {
+        if let Some(request) = self.financial_request(expression, sheet) {
             requests.push(request);
             return;
         }
         match expression {
-            Expr::Unary { operand, .. } => self.collect_financial_requests(operand, requests),
+            Expr::Unary { operand, .. } => {
+                self.collect_financial_requests(operand, sheet, requests)
+            }
             Expr::Binary { left, right, .. } => {
-                self.collect_financial_requests(left, requests);
-                self.collect_financial_requests(right, requests);
+                self.collect_financial_requests(left, sheet, requests);
+                self.collect_financial_requests(right, sheet, requests);
             }
             Expr::Function { arguments, .. } => {
                 for argument in arguments {
-                    self.collect_financial_requests(argument, requests);
+                    self.collect_financial_requests(argument, sheet, requests);
                 }
             }
             Expr::Number(_) | Expr::Text(_) | Expr::Reference(_) | Expr::Range(_) => {}
         }
     }
 
-    fn financial_request(&self, expression: &Expr) -> Option<MarketDataRequest> {
+    fn financial_request(&self, expression: &Expr, sheet: &str) -> Option<MarketDataRequest> {
         let Expr::Function {
             function,
             arguments,
@@ -648,30 +658,38 @@ impl SpreadsheetWorkspace {
         else {
             return None;
         };
-        let security = self.expression_text(arguments.first()?)?;
+        let security = self.expression_text(arguments.first()?, sheet)?;
         match function {
             AggregateFunction::PriceLast if arguments.len() == 1 => {
                 Some(MarketDataRequest::new(security, "PX_LAST"))
             }
             AggregateFunction::PriceChange if arguments.len() == 2 => {
-                let period = self.expression_text(&arguments[1])?.to_ascii_uppercase();
+                let period = self
+                    .expression_text(&arguments[1], sheet)?
+                    .to_ascii_uppercase();
                 Some(MarketDataRequest::new(
                     security,
                     format!("CHG_PCT_{period}"),
                 ))
             }
             AggregateFunction::History if arguments.len() == 4 => {
-                let field = self.expression_text(&arguments[1])?.to_ascii_uppercase();
-                let start = self.expression_text(&arguments[2])?;
-                let end = self.expression_text(&arguments[3])?;
+                let field = self
+                    .expression_text(&arguments[1], sheet)?
+                    .to_ascii_uppercase();
+                let start = self.expression_text(&arguments[2], sheet)?;
+                let end = self.expression_text(&arguments[3], sheet)?;
                 Some(MarketDataRequest::new(
                     security,
                     format!("HISTORY|{field}|{start}|{end}"),
                 ))
             }
             AggregateFunction::Fundamental if arguments.len() == 3 => {
-                let field = self.expression_text(&arguments[1])?.to_ascii_uppercase();
-                let period = self.expression_text(&arguments[2])?.to_ascii_uppercase();
+                let field = self
+                    .expression_text(&arguments[1], sheet)?
+                    .to_ascii_uppercase();
+                let period = self
+                    .expression_text(&arguments[2], sheet)?
+                    .to_ascii_uppercase();
                 Some(MarketDataRequest::new(
                     security,
                     format!("FUNDAMENTAL|{field}|{period}"),
@@ -681,16 +699,18 @@ impl SpreadsheetWorkspace {
         }
     }
 
-    fn expression_text(&self, expression: &Expr) -> Option<String> {
+    fn expression_text(&self, expression: &Expr, current_sheet: &str) -> Option<String> {
         match expression {
             Expr::Text(text) => Some(text.clone()),
             Expr::Reference(reference) => {
-                let sheet = match reference.sheet() {
-                    Some(name) => self.spreadsheet.workbook().sheet(name)?,
-                    None => self.spreadsheet.workbook().active_sheet(),
-                };
-                let raw = sheet.cell(reference.cell().address())?.raw().trim();
-                (!raw.is_empty() && !raw.starts_with('=')).then(|| raw.to_owned())
+                let sheet = reference.sheet().unwrap_or(current_sheet);
+                let mut workbook = self.spreadsheet.workbook().clone();
+                workbook.select_sheet(sheet).ok()?;
+                match workbook.active_value(reference.cell().address()) {
+                    CellValue::Text(text) if !text.is_empty() => Some(text),
+                    CellValue::Number(value) if value.is_finite() => Some(value.to_string()),
+                    _ => None,
+                }
             }
             _ => None,
         }
@@ -698,24 +718,32 @@ impl SpreadsheetWorkspace {
 
     fn evaluated_spreadsheet(&self) -> Spreadsheet {
         let mut evaluated = self.spreadsheet.clone();
-        for address in self.external_cells.keys() {
-            let Some(cell) = self.spreadsheet.workbook().active_sheet().cell(*address) else {
+        let active = evaluated.workbook().active_sheet().name().to_owned();
+        for (sheet, address) in self.external_cells.keys() {
+            let Some(cell) = self
+                .spreadsheet
+                .workbook()
+                .sheet(sheet)
+                .and_then(|sheet| sheet.cell(*address))
+            else {
                 continue;
             };
             let Some(expression) = parse_formula(cell.raw()).ok() else {
                 continue;
             };
-            let Some(expression) = self.substitute_external_values(&expression) else {
+            let Some(expression) = self.substitute_external_values(&expression, sheet) else {
                 continue;
             };
+            let _ = evaluated.select_sheet(sheet);
             let _ = evaluated.set_cell(&address.to_string(), format!("={expression}"));
         }
+        let _ = evaluated.select_sheet(&active);
         evaluated.clear_history();
         evaluated
     }
 
-    fn substitute_external_values(&self, expression: &Expr) -> Option<Expr> {
-        if let Some(request) = self.financial_request(expression) {
+    fn substitute_external_values(&self, expression: &Expr, sheet: &str) -> Option<Expr> {
+        if let Some(request) = self.financial_request(expression, sheet) {
             let ExternalCellState::Resolved(state) = self.external_states.get(&request)? else {
                 return None;
             };
@@ -731,16 +759,16 @@ impl SpreadsheetWorkspace {
         match expression {
             Expr::Unary { operator, operand } => Some(Expr::Unary {
                 operator: *operator,
-                operand: Box::new(self.substitute_external_values(operand)?),
+                operand: Box::new(self.substitute_external_values(operand, sheet)?),
             }),
             Expr::Binary {
                 left,
                 operator,
                 right,
             } => Some(Expr::Binary {
-                left: Box::new(self.substitute_external_values(left)?),
+                left: Box::new(self.substitute_external_values(left, sheet)?),
                 operator: *operator,
-                right: Box::new(self.substitute_external_values(right)?),
+                right: Box::new(self.substitute_external_values(right, sheet)?),
             }),
             Expr::Function {
                 function,
@@ -749,7 +777,7 @@ impl SpreadsheetWorkspace {
                 function: *function,
                 arguments: arguments
                     .iter()
-                    .map(|argument| self.substitute_external_values(argument))
+                    .map(|argument| self.substitute_external_values(argument, sheet))
                     .collect::<Option<Vec<_>>>()?,
             }),
             Expr::Number(_) | Expr::Text(_) | Expr::Reference(_) | Expr::Range(_) => {
@@ -1229,14 +1257,20 @@ impl SpreadsheetWorkspace {
     }
 
     fn external_display(&self, address: CellAddress) -> Option<String> {
-        let requests = self.external_cells.get(&address)?;
+        let requests = self.external_cells.get(&(
+            self.spreadsheet.workbook().active_sheet().name().to_owned(),
+            address,
+        ))?;
         let expression = self
             .spreadsheet
             .workbook()
             .active_sheet()
             .cell(address)
             .and_then(|cell| parse_formula(cell.raw()).ok())?;
-        let request = self.financial_request(&expression)?;
+        let request = self.financial_request(
+            &expression,
+            self.spreadsheet.workbook().active_sheet().name(),
+        )?;
         if requests.len() != 1 || requests.first() != Some(&request) {
             return None;
         }
@@ -1256,7 +1290,10 @@ impl SpreadsheetWorkspace {
     }
 
     fn selected_external_status(&self) -> Option<String> {
-        let requests = self.external_cells.get(&self.cursor)?;
+        let requests = self.external_cells.get(&(
+            self.spreadsheet.workbook().active_sheet().name().to_owned(),
+            self.cursor,
+        ))?;
         if requests.len() > 1 {
             let ready = requests
                 .iter()
@@ -2152,6 +2189,70 @@ mod tests {
             .lock()
             .expect("workbooks lock")
             .contains_key("default"));
+    }
+
+    #[test]
+    fn financial_overlays_follow_sheet_context_and_cross_sheet_dependencies() {
+        let mut workspace = workspace();
+        workspace.spreadsheet.select_sheet("Sheet1").unwrap();
+        workspace
+            .spreadsheet
+            .set_cell("A20", "IBM US Equity")
+            .unwrap();
+        workspace
+            .spreadsheet
+            .set_cell("B20", "=PX_LAST(A20)")
+            .unwrap();
+        workspace.spreadsheet.add_sheet("Other Model").unwrap();
+        workspace.spreadsheet.select_sheet("Other Model").unwrap();
+        workspace.spreadsheet.set_cell("A20", "UNKNOWN").unwrap();
+        workspace
+            .spreadsheet
+            .set_cell("B20", "=PX_LAST(A20)")
+            .unwrap();
+        workspace
+            .spreadsheet
+            .set_cell("C20", "=Sheet1!B20*2")
+            .unwrap();
+        workspace.spreadsheet.set_cell("D20", "=C20+1").unwrap();
+        workspace
+            .spreadsheet
+            .set_cell("E20", "=PX_LAST(Sheet1!A20)")
+            .unwrap();
+        workspace.spreadsheet.set_cell("F20", "=G20").unwrap();
+        workspace.spreadsheet.set_cell("G20", "=F20").unwrap();
+        workspace.refresh_market_data();
+        wait_for_data(&mut workspace);
+        let evaluated = workspace.evaluated_spreadsheet();
+        assert_eq!(
+            evaluated.cell("C20").unwrap().value,
+            CellValue::Number(468.38)
+        );
+        assert_eq!(
+            evaluated.cell("D20").unwrap().value,
+            CellValue::Number(469.38)
+        );
+        assert_eq!(
+            evaluated.cell("E20").unwrap().value,
+            CellValue::Number(234.19)
+        );
+        assert!(matches!(
+            evaluated.cell("B20").unwrap().value,
+            CellValue::Error(_)
+        ));
+        assert!(matches!(
+            evaluated.cell("F20").unwrap().value,
+            CellValue::Error(_)
+        ));
+        workspace.spreadsheet.select_sheet("Sheet1").unwrap();
+        workspace.spreadsheet.set_cell("A20", "UNKNOWN").unwrap();
+        workspace.refresh_market_data();
+        wait_for_data(&mut workspace);
+        workspace.spreadsheet.select_sheet("Other Model").unwrap();
+        assert!(matches!(
+            workspace.evaluated_spreadsheet().cell("C20").unwrap().value,
+            CellValue::Error(_)
+        ));
     }
 
     #[test]

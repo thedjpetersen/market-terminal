@@ -1784,6 +1784,22 @@ fn prepare_chart(
     specification: &ChartSpecification,
     series: &[HistorySeries],
 ) -> Result<PreparedChart, HistoryError> {
+    // Every plotted x is an index into the primary series' ordered timestamp grid.
+    let mut ordered = series.to_vec();
+    for current in &mut ordered {
+        current.bars.sort_by_key(|bar| bar.timestamp);
+        if current
+            .bars
+            .windows(2)
+            .any(|bars| bars[0].timestamp == bars[1].timestamp)
+        {
+            return Err(HistoryError::Unavailable(format!(
+                "{} contains duplicate timestamps",
+                current.instrument.symbol
+            )));
+        }
+    }
+    let series = ordered.as_slice();
     let Some(primary) = series.first() else {
         return Err(HistoryError::Unavailable("no series returned".to_owned()));
     };
@@ -1813,25 +1829,58 @@ fn prepare_chart(
     let primary_closes = primary.bars.iter().map(|bar| bar.close).collect::<Vec<_>>();
     let primary_bars = primary.bars.clone();
 
+    let grid = primary
+        .bars
+        .iter()
+        .enumerate()
+        .map(|(index, bar)| (bar.timestamp, index))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    if specification.normalization == Normalization::PercentChange
+        && series.iter().any(|current| {
+            current
+                .bars
+                .iter()
+                .find(|bar| grid.contains_key(&bar.timestamp))
+                .is_some_and(|bar| bar.close.abs() < f64::EPSILON)
+        })
+    {
+        return Err(HistoryError::Unavailable(
+            "percent change requires a nonzero first retained observation".to_owned(),
+        ));
+    }
+    let mut omitted = 0;
     let mut lines = series
         .iter()
         .enumerate()
-        .filter(|(_, current)| !current.bars.is_empty())
-        .map(|(index, current)| {
-            let closes = current.bars.iter().map(|bar| bar.close).collect::<Vec<_>>();
+        .filter_map(|(index, current)| {
+            let aligned = current
+                .bars
+                .iter()
+                .filter_map(|bar| match grid.get(&bar.timestamp) {
+                    Some(index) => Some((*index, bar.close)),
+                    None => {
+                        omitted += 1;
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            if aligned.is_empty() {
+                return None;
+            }
+            let closes = aligned.iter().map(|(_, close)| *close).collect::<Vec<_>>();
             let values = match specification.normalization {
                 Normalization::Price => closes,
                 Normalization::PercentChange => percent_change(&closes),
             };
-            PreparedLine {
+            Some(PreparedLine {
                 name: current.instrument.symbol.clone(),
-                points: values
-                    .into_iter()
-                    .enumerate()
-                    .map(|(point, value)| (point as f64, value))
+                points: aligned
+                    .iter()
+                    .zip(values)
+                    .map(|((x, _), value)| (*x as f64, value))
                     .collect(),
                 color: SERIES_COLORS[index % SERIES_COLORS.len()].into(),
-            }
+            })
         })
         .collect::<Vec<_>>();
 
@@ -1931,7 +1980,14 @@ fn prepare_chart(
         last,
         change_percent,
         quality: primary.quality.label(),
-        source: primary.source.clone(),
+        source: if omitted == 0 {
+            primary.source.clone()
+        } else {
+            format!(
+                "{} | {omitted} comparison observations omitted outside primary timestamp grid",
+                primary.source
+            )
+        },
     })
 }
 
@@ -2946,6 +3002,34 @@ mod tests {
         assert!(narrow
             .iter()
             .all(|action| { action.area.right() <= 42 && action.area.bottom() <= 18 }));
+    }
+
+    #[test]
+    fn comparison_positions_follow_primary_timestamps() {
+        let primary = dense_workspace().history.unwrap().remove(0);
+        let mut comparison = primary.clone();
+        comparison.instrument = ChartInstrument::from_terminal_subject("MSFT");
+        comparison.bars.drain(..2);
+        comparison.bars.reverse();
+        let mut specification = ChartSpecification::new(primary.instrument.clone());
+        specification.studies.clear();
+        let chart = prepare_chart(&specification, &[primary.clone(), comparison.clone()]).unwrap();
+        assert_eq!(chart.lines[1].points[0], (2.0, primary.bars[2].close));
+        assert_eq!(chart.lines[0].points[2].0, chart.lines[1].points[0].0);
+        specification.normalization = Normalization::PercentChange;
+        let chart = prepare_chart(&specification, &[primary.clone(), comparison.clone()]).unwrap();
+        assert_eq!(chart.lines[1].points[0], (2.0, 0.0));
+        for bar in &mut comparison.bars {
+            bar.timestamp += 365 * 86_400;
+        }
+        let chart = prepare_chart(&specification, &[primary.clone(), comparison.clone()]).unwrap();
+        assert_eq!(chart.lines.len(), 1);
+        assert!(chart.source.contains("62 comparison observations omitted"));
+        let mut zero_baseline = primary.clone();
+        zero_baseline.bars[0].close = 0.0;
+        assert!(prepare_chart(&specification, &[zero_baseline]).is_err());
+        comparison.bars.push(comparison.bars[0]);
+        assert!(prepare_chart(&specification, &[primary, comparison]).is_err());
     }
 
     #[test]

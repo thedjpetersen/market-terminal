@@ -1,3 +1,5 @@
+mod watchlist_quotes;
+pub use watchlist_quotes::WatchlistQuotes;
 mod ai_commands;
 mod alert_state;
 mod alerts_demo;
