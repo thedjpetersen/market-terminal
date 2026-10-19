@@ -350,7 +350,22 @@ endorsed by, or sponsored by Yahoo.
   reconcile independently by ISO currency with no invented FX conversion.
   Unpriced positions remain visible and excluded from an explicitly incomplete
   NAV. Each snapshot carries a deterministic input version, valuation time,
-  methodology, and missing-data disclosures. Overview does not infer returns,
+  methodology, and missing-data disclosures. `As Of`, `As Of Date`, and
+  `Valuation Date` preserve source dates (ISO `YYYY-MM-DD`, `MM/DD/YYYY`,
+  `MM/DD/YY`, or `YYYY/MM/DD`). Row evidence is retained before aggregation,
+  including anonymized account, symbol, unknown/unrecognized dates and basis
+  coverage. Mixed dates show a range; missing dates stay unknown. Import time
+  is separately labeled and file mtime is never used as valuation time. Reimport
+  cannot advance a source date. A source date older than seven calendar days
+  is labeled **STALE**; the warning is recalculated on repository reads.
+  No `price_as_of`, `fetched_at`, or current quote is inferred.
+  Portfolio, Mission Control, Risk and Assistant use the same source summary.
+  Cash/MM means the **imported cash/money-market balance**, included once in
+  NAV. Broker available-to-trade/withdraw, settlement, buying power and retirement
+  restrictions are unknown. Internal `available_cash` fields remain compatibility
+  names for this imported balance; assistant tool output uses the semantic name
+  `imported_cash_money_market_balance`.
+  Overview does not infer returns,
   attribution, movers, volatility, or drawdown from this point-in-time
   snapshot. Risk uses only explicit market values for per-currency
   concentration and a labeled parallel non-cash shock; it does not infer an FX
@@ -400,7 +415,11 @@ endorsed by, or sponsored by Yahoo.
   VaR/CVaR, and Sharpe/Sortino; beta, correlation, tracking error, and
   information ratio require complete benchmark coverage. Low sample counts are
   disclosed, loss VaR/CVaR use positive magnitudes, and no FX aggregation or
-  executable-price claim is introduced.
+  executable-price claim is introduced. Two valuations support Portfolio
+  performance but not historical Risk, which requires at least four valuations.
+  Optional historical calculation failure leaves valid concentration and stress
+  results available, with the diagnostic shown explicitly on both Risk views.
+  Invalid position inputs still fail the concentration calculation.
 
 ## User portfolio contribution CSV
 
@@ -467,8 +486,11 @@ endorsed by, or sponsored by Yahoo.
 - **Quality:** cost basis, priced basis, current value, and unrealized gain
   reconcile exactly in minor units by currency. Unpriced lots remain visible
   and excluded from value/gain, unknown provider holding periods remain
-  explicit, and no FX rate is invented. The displayed as-of is the local import
-  time because this schema has no provider valuation timestamp. This snapshot
+  explicit, and no FX rate is invented. Optional source valuation dates follow
+  the positions date aliases, formats and seven-day warning policy above.
+  Acquired dates are not valuation dates. Without source valuation dates the
+  valuation time remains unknown; local import time is separately disclosed.
+  This snapshot
   is not closed-trade history, a realized-gain ledger, tax advice, contribution,
   or attribution.
 

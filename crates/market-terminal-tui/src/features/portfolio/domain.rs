@@ -91,6 +91,7 @@ impl Position {
 pub struct PortfolioCurrencyTotal {
     pub currency: Currency,
     pub net_asset_value: Money,
+    /// Compatibility name: imported cash/money-market balance, not broker availability.
     pub available_cash: Money,
     pub priced_positions: usize,
     pub unpriced_positions: usize,
@@ -166,6 +167,7 @@ pub struct PortfolioTaxLotCurrencyTotal {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortfolioTaxLotSnapshot {
+    pub valuation: super::ValuationCoverage,
     pub lots: Vec<PortfolioTaxLot>,
     pub currency_totals: Vec<PortfolioTaxLotCurrencyTotal>,
     pub source: String,
@@ -393,6 +395,7 @@ fn one_currency_realized_total(
 impl PortfolioTaxLotSnapshot {
     pub fn empty(source: impl Into<String>) -> Self {
         Self {
+            valuation: super::ValuationCoverage::default(),
             lots: Vec::new(),
             currency_totals: Vec::new(),
             source: source.into(),
@@ -672,6 +675,7 @@ impl PortfolioActivityLedger {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortfolioSnapshot {
+    pub valuation: super::ValuationCoverage,
     pub positions: Vec<Position>,
     pub currency_totals: Vec<PortfolioCurrencyTotal>,
     pub ytd_return_bps: Option<i32>,
@@ -686,6 +690,7 @@ pub struct PortfolioSnapshot {
 impl PortfolioSnapshot {
     pub fn empty(source: impl Into<String>) -> Self {
         Self {
+            valuation: super::ValuationCoverage::default(),
             positions: Vec::new(),
             currency_totals: Vec::new(),
             ytd_return_bps: None,

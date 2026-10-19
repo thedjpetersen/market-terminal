@@ -636,7 +636,8 @@ fn portfolio_positions(arguments: &Value, request: &AssistantRequest) -> Dynamic
         "methodology": request.portfolio.methodology,
         "disclosures": request.portfolio.disclosures,
         "net_asset_value": request.portfolio.net_asset_value,
-        "available_cash": request.portfolio.available_cash,
+        "imported_cash_money_market_balance": request.portfolio.available_cash,
+        "broker_available_to_trade_or_withdraw": "UNKNOWN",
         "ytd_return": request.portfolio.ytd_return,
         "sharpe": request.portfolio.sharpe,
         "total_position_count": request.portfolio.positions.len(),
@@ -1200,6 +1201,10 @@ mod tests {
         );
         assert!(read.success);
         assert!(read.text.contains("AAPL"));
+        let payload: Value = serde_json::from_str(&read.text).unwrap();
+        assert_eq!(payload["imported_cash_money_market_balance"], "$1,000.00");
+        assert_eq!(payload["broker_available_to_trade_or_withdraw"], "UNKNOWN");
+        assert!(payload.get("available_cash").is_none());
         assert_eq!(read.action, None);
 
         let activity = execute_dynamic_tool(

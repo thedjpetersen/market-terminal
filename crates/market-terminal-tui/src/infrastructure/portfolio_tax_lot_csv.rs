@@ -6,18 +6,20 @@ use csv::StringRecord;
 use crate::{
     features::portfolio::{
         PortfolioAccountId, PortfolioError, PortfolioTaxLot, PortfolioTaxLotCurrencyTotal,
-        PortfolioTaxLotSnapshot, PositionQuantity, TaxLotHoldingPeriod,
+        PortfolioTaxLotSnapshot, PositionQuantity, TaxLotHoldingPeriod, ValuationCoverage,
+        ValuationRow,
     },
     foundation::{Currency, InstrumentId, Money},
 };
 
-use super::portfolio_csv::{csv_input_version, parse_currency, parse_scaled};
+use super::portfolio_csv::{csv_input_version, parse_currency, parse_scaled, parse_valuation_date};
 
 pub(super) const MAX_TAX_LOT_ROWS: usize = 100_000;
 pub(super) const MAX_TAX_LOT_COLUMNS: usize = 128;
 
 #[derive(Debug)]
 struct TaxLotColumns {
+    valuation_date: Option<usize>,
     account: Option<usize>,
     symbol: usize,
     acquired_date: usize,
@@ -82,6 +84,10 @@ pub(super) fn parse_portfolio_tax_lot_csv(
 
     let usd = Currency::new("USD").expect("USD is a valid currency");
     let mut lots = Vec::new();
+    let mut valuation = ValuationCoverage {
+        rows: Vec::new(),
+        imported_at: Some(Utc::now()),
+    };
     let mut account_aliases = BTreeMap::<String, PortfolioAccountId>::new();
     let mut rejected = Vec::new();
     let mut defaulted_currency = false;
@@ -172,6 +178,15 @@ pub(super) fn parse_portfolio_tax_lot_csv(
             .filter(|_| cost_basis > 0)
             .map(|gain| return_bps(gain, cost_basis))
             .transpose()?;
+        valuation.rows.push(ValuationRow {
+            row,
+            account: account_id.clone(),
+            symbol: symbol.clone(),
+            date: columns
+                .field(record, columns.valuation_date)
+                .and_then(parse_valuation_date),
+            has_basis: true,
+        });
         lots.push(PortfolioTaxLot {
             lot_id: format!("LOT-{row:06}"),
             account_id,
@@ -214,7 +229,6 @@ pub(super) fn parse_portfolio_tax_lot_csv(
         "OPEN LOTS ONLY · NOT A CLOSED-TRADE OR REALIZED-GAIN LEDGER".to_owned(),
         "BROKER ACCOUNT IDENTIFIERS REPLACED WITH IMPORT-LOCAL LABELS".to_owned(),
         "TICKERS REMAIN UNRESOLVED UNTIL INSTRUMENT-MASTER MATCHING".to_owned(),
-        "AS-OF IS LOCAL IMPORT TIME · PROVIDER EXPORT HAS NO VALUATION TIMESTAMP".to_owned(),
     ];
     if defaulted_currency {
         disclosures.push("MISSING CURRENCY DEFAULTED TO USD".to_owned());
@@ -237,11 +251,15 @@ pub(super) fn parse_portfolio_tax_lot_csv(
         ));
     }
 
+    let mut coverage = valuation.disclosures();
+    coverage.append(&mut disclosures);
+    disclosures = coverage;
     Ok(PortfolioTaxLotSnapshot {
         lots,
         currency_totals,
         source: format!("CSV · {source_name}"),
-        as_of: Utc::now().format("%Y-%m-%d %H:%M UTC").to_string(),
+        as_of: valuation.summary(Utc::now().date_naive()),
+        valuation,
         input_version: csv_input_version(bytes),
         methodology: "BROKER-REPORTED OPEN-LOT BASIS AND VALUE · EXACT PER-CURRENCY SUM · NO FX"
             .to_owned(),
@@ -364,6 +382,7 @@ impl TaxLotColumns {
     fn from_header(header: &StringRecord) -> Option<Self> {
         let names = header.iter().map(normalize_header).collect::<Vec<_>>();
         Some(Self {
+            valuation_date: find(&names, &["asof", "asofdate", "valuationdate"]),
             account: find(&names, &["account", "accountname", "accountnumber"]),
             symbol: find(
                 &names,
@@ -424,6 +443,16 @@ fn find(names: &[String], candidates: &[&str]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parity_lot_source_date_survives_parser() {
+        let snapshot = parse_portfolio_tax_lot_csv(
+            b"Symbol,Acquired Date,Quantity,Cost Basis,As Of\nTEST,2019-01-01,2,100,2020-01-02\n",
+            "synthetic".into(),
+        )
+        .unwrap();
+        assert!(snapshot.as_of.contains("2020-01-02"), "{}", snapshot.as_of);
+    }
 
     #[test]
     fn reconciles_open_lots_with_exact_gain_and_holding_periods() {

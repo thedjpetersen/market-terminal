@@ -690,7 +690,8 @@ aliases, including `Symbol`/`Ticker`, `Quantity`/`Qty`/`Shares`,
 `Current Value`/`Market Value`/`Mkt Val`, price, total or per-share cost basis,
 gain/loss percentage, description, and currency. It finds headers after broker
 preambles, combines duplicate rows only within the same account and currency,
-identifies cash and money market rows, preserves positions by anonymized
+identifies cash and money market rows (imported balances; broker
+available-to-trade/withdraw remains unknown), preserves positions by anonymized
 import-local account label, and reconciles exact-minor-unit totals separately by ISO
 currency. It never combines unlike currencies using an invented FX rate. Raw
 broker account identifiers and other unused columns are not retained.
@@ -702,6 +703,13 @@ valuation time, per-currency methodology, and missing-data disclosures. YTD
 return and Sharpe remain `N/A` because a positions snapshot does not contain
 enough transaction history to calculate them honestly. No broker password or
 API credential is required, and the CSV stays local.
+
+Portfolio CSV freshness preserves source valuation dates, including mixed and
+unknown rows, separately from import time. Dates older than seven calendar days
+are marked stale; reloading does not make an old export current. Imported cash/MM
+balances do not establish buying power or withdrawal availability. Optional
+historical-risk failures preserve valid concentration/stress results and show the
+reason. See [data-source semantics](docs/data-sources.md#user-portfolio-csv).
 
 Portfolio has eight clickable, keyboard-addressable views: `1` Positions, `2`
 Activity, `3` Performance, `4` Lots, `5` Realized, `6` Trades, and `7`

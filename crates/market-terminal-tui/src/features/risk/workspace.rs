@@ -277,8 +277,18 @@ impl RiskWorkspace {
                     snapshot.historical.as_ref(),
                     &self.status,
                 );
-                render_historical(frame, areas.table, snapshot.historical.as_ref());
-                render_historical_provenance(frame, areas.side, snapshot.historical.as_ref());
+                render_historical(
+                    frame,
+                    areas.table,
+                    snapshot.historical.as_ref(),
+                    snapshot.historical_unavailable_reason.as_deref(),
+                );
+                render_historical_provenance(
+                    frame,
+                    areas.side,
+                    snapshot.historical.as_ref(),
+                    snapshot.historical_unavailable_reason.as_deref(),
+                );
             }
         }
         frame.render_widget(
@@ -491,11 +501,16 @@ fn render_historical_header(
     }
 }
 
-fn render_historical(frame: &mut Frame, area: Rect, snapshot: Option<&HistoricalRiskSnapshot>) {
+fn render_historical(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: Option<&HistoricalRiskSnapshot>,
+    unavailable: Option<&str>,
+) {
     let Some(snapshot) = snapshot else {
         frame.render_widget(
             Paragraph::new(vec![
-                Line::styled("NO DATED VALUATION HISTORY", RED),
+                Line::styled(unavailable.unwrap_or("NO DATED VALUATION HISTORY"), RED),
                 Line::raw(""),
                 Line::styled("PORT IMPORT PERFORMANCE <FILE.CSV>", CYAN),
                 Line::raw(""),
@@ -641,18 +656,22 @@ fn render_historical_provenance(
     frame: &mut Frame,
     area: Rect,
     snapshot: Option<&HistoricalRiskSnapshot>,
+    unavailable: Option<&str>,
 ) {
     let Some(snapshot) = snapshot else {
         frame.render_widget(
             Paragraph::new(vec![
                 Line::styled("INPUT", AMBER),
-                Line::styled("NO PERFORMANCE HISTORY", RED),
+                Line::styled(unavailable.unwrap_or("NO PERFORMANCE HISTORY"), RED),
                 Line::raw(""),
                 Line::styled("REQUIRED", AMBER),
                 Line::styled("DATE · CCY · VALUE · FLOW", MUTED),
                 Line::styled("BENCHMARK VALUE OPTIONAL", MUTED),
             ])
-            .block(crate::ui::components::terminal_block("METHOD", "NO INPUT")),
+            .block(crate::ui::components::terminal_block(
+                "METHOD",
+                "UNAVAILABLE",
+            )),
             area,
         );
         return;
@@ -710,14 +729,19 @@ fn render_provenance(frame: &mut Frame, area: Rect, snapshot: &RiskSnapshot) {
         Line::styled("INPUT", AMBER),
         Line::styled(snapshot.source.clone(), INK),
         Line::styled(snapshot.as_of.clone(), MUTED),
+        Line::styled("IMPORTED CASH/MM BALANCE", MUTED),
+        Line::styled("UNKNOWN TRADE/WITHDRAW AVAILABILITY", MUTED),
         Line::styled(snapshot.input_version.clone(), CYAN),
         Line::raw(""),
         Line::styled("CURRENCY SCENARIOS", AMBER),
     ];
+    if let Some(reason) = &snapshot.historical_unavailable_reason {
+        lines.insert(0, Line::styled(reason.clone(), YELLOW));
+    }
     for currency in &snapshot.currencies {
         lines.push(Line::styled(
             format!(
-                "{} NAV {} · CASH {}",
+                "{} NAV {} · IMPORTED CASH/MM {}",
                 currency.currency,
                 domain::format_money(currency.priced_nav),
                 domain::format_money(currency.available_cash)

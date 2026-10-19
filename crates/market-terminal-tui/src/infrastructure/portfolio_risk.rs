@@ -87,9 +87,15 @@ impl RiskQuery for PortfolioRiskQuery {
                 ewma_lambda_millionths: 940_000,
                 annual_risk_free_rate_bps: 0,
                 disclosures: performance.disclosures,
-            })
-            .map_err(|error| RiskError::InvalidInput(error.to_string()))?;
-            snapshot.historical = Some(historical);
+            });
+            match historical {
+                Ok(historical) => snapshot.historical = Some(historical),
+                Err(error) => {
+                    let reason = format!("HISTORICAL RISK UNAVAILABLE · {error}");
+                    snapshot.historical_unavailable_reason = Some(reason.clone());
+                    snapshot.disclosures.insert(0, reason);
+                }
+            }
         }
         Ok(snapshot)
     }
@@ -102,6 +108,83 @@ mod tests {
     use crate::features::risk::RiskWorkspace;
     use crate::infrastructure::{CsvPortfolioRepository, DemoData};
     use ratatui::{backend::TestBackend, Terminal};
+
+    struct ShortHistory;
+    impl PortfolioRepository for ShortHistory {
+        fn load_portfolio(&self) -> crate::features::portfolio::PortfolioSnapshot {
+            DemoData.load_portfolio()
+        }
+        fn load_performance(&self) -> crate::features::portfolio::PortfolioPerformanceSnapshot {
+            crate::infrastructure::portfolio_performance_csv::parse_portfolio_performance_csv(
+                b"Date,Portfolio Value,External Flow,Currency\n2020-01-01,1000,0,USD\n2020-02-01,1100,0,USD\n",
+                "synthetic-performance".into(),
+            ).unwrap()
+        }
+    }
+
+    #[test]
+    fn parity_invalid_positions_still_fail_with_optional_history() {
+        struct Invalid;
+        impl PortfolioRepository for Invalid {
+            fn load_portfolio(&self) -> crate::features::portfolio::PortfolioSnapshot {
+                let mut snapshot = DemoData.load_portfolio();
+                snapshot.positions[0].market_value = Some(
+                    crate::foundation::Money::from_minor_units(1, snapshot.positions[0].currency),
+                );
+                snapshot
+            }
+            fn load_performance(&self) -> crate::features::portfolio::PortfolioPerformanceSnapshot {
+                ShortHistory.load_performance()
+            }
+        }
+        assert!(matches!(
+            PortfolioRiskQuery::new(Arc::new(Invalid)).load_risk(),
+            Err(RiskError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn parity_two_point_history_preserves_concentration() {
+        let performance = ShortHistory.load_performance();
+        assert_eq!(performance.point_count(), 2);
+        assert_eq!(performance.series[0].time_weighted_return_bps, 1_000);
+        let query: Arc<dyn RiskQuery> = Arc::new(PortfolioRiskQuery::new(Arc::new(ShortHistory)));
+        let snapshot = query.load_risk().unwrap();
+        assert!(!snapshot.positions.is_empty());
+        assert!(snapshot.historical.is_none());
+        assert!(snapshot
+            .disclosures
+            .iter()
+            .any(|s| s.contains("HISTORICAL RISK UNAVAILABLE")));
+        let mut workspace = RiskWorkspace::new(query);
+        let mut terminal = Terminal::new(TestBackend::new(160, 48)).unwrap();
+        terminal
+            .draw(|frame| workspace.render(frame, frame.area()))
+            .unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(rendered.contains("-10%"));
+        assert!(rendered.contains("HISTORICAL RISK UNAVAILABLE"));
+        workspace.handle_command(&crate::app::CommandInvocation::parse("RISK HISTORY").unwrap());
+        terminal
+            .draw(|frame| workspace.render(frame, frame.area()))
+            .unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(rendered.contains("HISTORICAL RISK UNAVAILABLE"));
+        assert!(rendered.contains("4–100000 valuations"));
+        assert!(!rendered.contains("NO DATED VALUATION HISTORY"));
+    }
 
     #[test]
     fn gallery_portfolio_reconciles_before_risk_is_rendered() {

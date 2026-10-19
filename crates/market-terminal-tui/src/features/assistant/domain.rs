@@ -72,6 +72,7 @@ pub struct AssistantPortfolioSnapshot {
     pub methodology: String,
     pub disclosures: Vec<String>,
     pub net_asset_value: String,
+    /// Compatibility name: imported cash/money-market balance, not broker availability.
     pub available_cash: String,
     pub ytd_return: String,
     pub sharpe: String,

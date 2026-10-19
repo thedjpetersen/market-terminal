@@ -2,6 +2,7 @@ mod attribution;
 mod contribution;
 mod domain;
 mod port;
+mod valuation;
 mod workspace;
 
 pub use attribution::{
@@ -24,6 +25,7 @@ pub use domain::{
     PortfolioValuationPoint, Position, PositionQuantity, TaxLotHoldingPeriod, TradeSide,
 };
 pub use port::{PortfolioError, PortfolioImportStateStore, PortfolioRepository};
+pub use valuation::{ValuationCoverage, ValuationRow};
 pub use workspace::PortfolioWorkspace;
 
 use crate::app::WorkspaceId;

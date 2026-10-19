@@ -96,7 +96,7 @@ const GOLDENS: &[Golden] = &[
     Golden {
         name: "risk",
         prepare: prepare_risk,
-        hashes: [0x4c5c0bfc0464b49a, 0x209b1dbfccefb00e, 0x9638fa4de3585cad],
+        hashes: [0x0a24bdd8f9038afb, 0x5d4709bb04d6e3ab, 0xa87dde88d4a9c26c],
     },
     Golden {
         name: "risk-history",
@@ -163,7 +163,7 @@ fn key_workspaces_match_semantic_goldens_at_standard_sizes() {
 
 #[test]
 fn offline_mission_control_matches_semantic_goldens_at_standard_sizes() {
-    let expected = [0x95ef8129ead0501d, 0x6d3f1f2325402473, 0x61e0560a59eb00c1];
+    let expected = [0x2b3cd5ed72fa7dcd, 0xad4d401b58e5ac56, 0xdd70c72b74ddbb36];
     let actual = SIZES.map(|(width, height)| {
         let app = offline_mission_app();
         render_app_hash(&app, width, height)

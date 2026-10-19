@@ -314,7 +314,11 @@ fn source_health(
     let unpriced = unpriced_positions(portfolio);
     let portfolio_state = if portfolio.positions.is_empty() {
         OverviewHealthState::NotConfigured
-    } else if unpriced > 0 {
+    } else if unpriced > 0
+        || portfolio
+            .valuation
+            .needs_attention(chrono::Utc::now().date_naive())
+    {
         OverviewHealthState::Partial
     } else {
         OverviewHealthState::Ready
@@ -334,8 +338,9 @@ fn source_health(
                 "NO POSITION SNAPSHOT".to_owned()
             } else {
                 format!(
-                    "{} POSITION(S) · {unpriced} UNPRICED",
-                    portfolio.positions.len()
+                    "{} POSITION(S) · {unpriced} UNPRICED · {}",
+                    portfolio.positions.len(),
+                    portfolio.valuation.basis_label()
                 )
             },
             &portfolio.as_of,

@@ -12,6 +12,7 @@ pub enum OverviewSnapshot {
 pub struct LiveOverviewSnapshot {
     pub net_asset_value: String,
     pub ytd_return: String,
+    /// Compatibility name: imported cash/money-market balance, not broker availability.
     pub available_cash: String,
     pub sharpe: String,
     pub portfolio_source: String,

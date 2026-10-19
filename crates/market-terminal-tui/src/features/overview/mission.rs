@@ -131,10 +131,7 @@ fn render_header(frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSnapshot)
                     format!(" {urgent} HIGH-PRIORITY "),
                     if urgent > 0 { RED } else { GREEN },
                 ),
-                Span::styled(
-                    "Scores are deterministic · select any row to inspect its owning context",
-                    MUTED,
-                ),
+                Span::styled("Cash/MM · broker trade/withdraw UNKNOWN", MUTED),
             ]),
         ]),
         area,
@@ -193,7 +190,7 @@ fn render_kpis(frame: &mut Frame, area: Rect, snapshot: &LiveOverviewSnapshot) {
     for (index, (label, value)) in [
         ("NET ASSET VALUE", snapshot.net_asset_value.as_str()),
         ("YTD RETURN", snapshot.ytd_return.as_str()),
-        ("AVAILABLE CASH", snapshot.available_cash.as_str()),
+        ("IMPORTED CASH/MM", snapshot.available_cash.as_str()),
         ("SHARPE", snapshot.sharpe.as_str()),
     ]
     .iter()

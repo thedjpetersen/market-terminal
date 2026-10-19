@@ -21,6 +21,7 @@ pub struct RiskPositionInput {
 pub struct RiskCurrencyInput {
     pub currency: Currency,
     pub priced_nav: Money,
+    /// Compatibility name: imported cash/money-market balance, not broker availability.
     pub available_cash: Money,
     pub priced_positions: usize,
     pub unpriced_positions: usize,
@@ -52,6 +53,7 @@ pub struct RiskPositionExposure {
 pub struct RiskCurrencySummary {
     pub currency: Currency,
     pub priced_nav: Money,
+    /// Compatibility name: imported cash/money-market balance, not broker availability.
     pub available_cash: Money,
     pub scenario_change: Money,
     pub largest_non_cash_weight_bps: Option<i32>,
@@ -69,6 +71,7 @@ pub struct RiskSnapshot {
     pub methodology: String,
     pub disclosures: Vec<String>,
     pub historical: Option<HistoricalRiskSnapshot>,
+    pub historical_unavailable_reason: Option<String>,
 }
 
 impl RiskSnapshot {
@@ -293,6 +296,7 @@ pub fn calculate_risk(input: RiskInput) -> Result<RiskSnapshot, RiskCalculationE
             .to_owned(),
         disclosures,
         historical: None,
+        historical_unavailable_reason: None,
     })
 }
 

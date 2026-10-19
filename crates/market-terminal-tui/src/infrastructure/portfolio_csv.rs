@@ -13,7 +13,7 @@ use crate::features::portfolio::{
     PortfolioContributionSnapshot, PortfolioCurrencyTotal, PortfolioError,
     PortfolioImportStateStore, PortfolioPerformanceSnapshot, PortfolioRealizedGainSnapshot,
     PortfolioRepository, PortfolioSnapshot, PortfolioTaxLotSnapshot, PortfolioTradeLedger,
-    Position, PositionQuantity,
+    Position, PositionQuantity, ValuationCoverage, ValuationRow,
 };
 use crate::foundation::{Currency, InstrumentId, Money};
 
@@ -663,10 +663,15 @@ impl CsvPortfolioRepository {
 
 impl PortfolioRepository for CsvPortfolioRepository {
     fn load_portfolio(&self) -> PortfolioSnapshot {
-        self.snapshot
+        let mut snapshot = self
+            .snapshot
             .read()
             .expect("portfolio snapshot lock")
-            .clone()
+            .clone();
+        if snapshot.valuation.imported_at.is_some() {
+            snapshot.as_of = snapshot.valuation.summary(Utc::now().date_naive());
+        }
+        snapshot
     }
 
     fn import_csv(&self, path: &Path) -> Result<PortfolioSnapshot, PortfolioError> {
@@ -699,10 +704,15 @@ impl PortfolioRepository for CsvPortfolioRepository {
     }
 
     fn load_tax_lots(&self) -> PortfolioTaxLotSnapshot {
-        self.tax_lots
+        let mut snapshot = self
+            .tax_lots
             .read()
             .expect("portfolio tax-lot lock")
-            .clone()
+            .clone();
+        if snapshot.valuation.imported_at.is_some() {
+            snapshot.as_of = snapshot.valuation.summary(Utc::now().date_naive());
+        }
+        snapshot
     }
 
     fn import_tax_lots_csv(&self, path: &Path) -> Result<PortfolioTaxLotSnapshot, PortfolioError> {
@@ -879,6 +889,7 @@ struct AggregatePosition {
     missing_market_value: bool,
     cost_basis_minor: i128,
     has_cost_basis: bool,
+    missing_cost_basis: bool,
     weighted_pnl_bps: i128,
     pnl_weight_minor: i128,
     cash: bool,
@@ -894,6 +905,7 @@ struct AggregateCurrency {
 
 #[derive(Debug)]
 struct Columns {
+    valuation_date: Option<usize>,
     account: Option<usize>,
     symbol: Option<usize>,
     description: Option<usize>,
@@ -951,7 +963,11 @@ fn parse_portfolio_csv(
     let mut rejected_row_count = 0;
     let mut rejected_symbols = Vec::new();
     let mut defaulted_currency = false;
-    for record in records.iter().skip(header_index + 1) {
+    let mut valuation = ValuationCoverage {
+        rows: Vec::new(),
+        imported_at: Some(Utc::now()),
+    };
+    for (record_index, record) in records.iter().enumerate().skip(header_index + 1) {
         if record.iter().all(|field| field.trim().is_empty()) {
             continue;
         }
@@ -1014,6 +1030,15 @@ fn parse_portfolio_csv(
             });
         let pnl_bps = parse_scaled(columns.field(record, columns.pnl_percent), 2)
             .and_then(|value| i32::try_from(value).ok());
+        valuation.rows.push(ValuationRow {
+            row: record_index + 1,
+            account: account_id.clone(),
+            symbol: symbol.clone(),
+            date: columns
+                .field(record, columns.valuation_date)
+                .and_then(parse_valuation_date),
+            has_basis: cost_basis_minor.is_some(),
+        });
         let aggregate = positions.entry((account_id, currency, symbol)).or_default();
         aggregate.quantity_scaled = aggregate
             .quantity_scaled
@@ -1035,6 +1060,8 @@ fn parse_portfolio_csv(
                     .checked_add(cost_basis_minor)
                     .ok_or_else(|| PortfolioError::InvalidCsv("COST BASIS OVERFLOW".to_owned()))?;
             aggregate.has_cost_basis = true;
+        } else {
+            aggregate.missing_cost_basis = true;
         }
         if let (Some(pnl_bps), Some(market_value_minor)) = (pnl_bps, market_value_minor) {
             let weight = market_value_minor.abs();
@@ -1104,7 +1131,10 @@ fn parse_portfolio_csv(
     let rows = aggregated
         .into_iter()
         .map(|((account_id, currency, symbol), position)| {
-            let average_cost_minor = if position.has_cost_basis && position.quantity_scaled != 0 {
+            let average_cost_minor = if position.has_cost_basis
+                && !position.missing_cost_basis
+                && position.quantity_scaled != 0
+            {
                 let numerator = position
                     .cost_basis_minor
                     .checked_mul(1_000_000)
@@ -1123,6 +1153,7 @@ fn parse_portfolio_csv(
                 .ok()
             } else if !position.missing_market_value
                 && position.has_cost_basis
+                && !position.missing_cost_basis
                 && position.cost_basis_minor != 0
             {
                 let numerator = position
@@ -1190,6 +1221,7 @@ fn parse_portfolio_csv(
         .map(|total| total.unpriced_positions)
         .sum::<usize>();
     let mut disclosures = vec![
+        "IMPORTED CASH/MONEY MARKET · BROKER AVAILABLE-TO-TRADE/WITHDRAW UNKNOWN".to_owned(),
         "POINT-IN-TIME POSITION SNAPSHOT · NO RETURN SERIES".to_owned(),
         "BROKER ACCOUNT IDENTIFIERS REPLACED WITH IMPORT-LOCAL LABELS".to_owned(),
         "TICKERS REMAIN UNRESOLVED UNTIL INSTRUMENT-MASTER MATCHING".to_owned(),
@@ -1206,13 +1238,18 @@ fn parse_portfolio_csv(
         ));
     }
 
+    let mut coverage = valuation.disclosures();
+    coverage.insert(1, disclosures.remove(0));
+    coverage.append(&mut disclosures);
+    disclosures = coverage;
     Ok(PortfolioSnapshot {
         positions: rows,
         currency_totals,
         ytd_return_bps: None,
         sharpe_hundredths: None,
         source: format!("CSV · {source_name}"),
-        as_of: Utc::now().format("%Y-%m-%d %H:%M UTC").to_string(),
+        as_of: valuation.summary(Utc::now().date_naive()),
+        valuation,
         input_version: csv_input_version(bytes),
         methodology: "BROKER-REPORTED VALUES · PER-CURRENCY SUM · NO FX CONVERSION".to_owned(),
         disclosures,
@@ -1250,6 +1287,7 @@ impl Columns {
             return None;
         }
         Some(Self {
+            valuation_date: find_column(&names, &["asof", "asofdate", "valuationdate"]),
             account: find_column(
                 &names,
                 &[
@@ -1554,6 +1592,14 @@ fn expand_home(path: PathBuf) -> PathBuf {
     path
 }
 
+/// Provider date aliases match the existing dated portfolio imports. Invalid or absent
+/// source dates stay unknown; neither file metadata nor import clocks substitute.
+pub(super) fn parse_valuation_date(value: &str) -> Option<chrono::NaiveDate> {
+    ["%Y-%m-%d", "%m/%d/%y", "%m/%d/%Y", "%Y/%m/%d"]
+        .into_iter()
+        .find_map(|format| chrono::NaiveDate::parse_from_str(value.trim(), format).ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1697,6 +1743,180 @@ mod tests {
                 .unwrap_or_else(|error| error.into_inner()) = Some(path.to_path_buf());
             Ok(())
         }
+    }
+
+    #[test]
+    fn parity_mixed_dates_cash_and_consumers() {
+        use crate::app::Workspace;
+        use crate::features::{
+            assistant::AssistantContextQuery,
+            overview::{OverviewHealthState, OverviewQuery, OverviewSnapshot, OverviewWorkspace},
+            portfolio::PortfolioWorkspace,
+            risk::{RiskQuery, RiskWorkspace},
+        };
+        use crate::infrastructure::{
+            DemoData, LiveOverviewQuery, PortfolioAssistantContextQuery, PortfolioRiskQuery,
+        };
+        use ratatui::{backend::TestBackend, Terminal};
+
+        // Three distinct account classes, one investment, and duplicate position rows
+        // with mixed/unknown dates. No broker identity survives the parser.
+        let bytes = b"Account,Symbol,Description,Quantity,Market Value,Cost Basis,As Of\nBank,CASH,Bank cash,1,100,,01/02/2020\nBroker,MMF,Money market,1,200,200,2020-01-03\nRetirement,CASH,Retirement cash,1,300,300,\nBroker,TEST,Equity,2,400,300,01/02/20\nBroker,TEST,Equity,1,200,,not-a-date\n";
+        let snapshot = parse_portfolio_csv(bytes, "synthetic".into()).unwrap();
+        let pinned = chrono::NaiveDate::from_ymd_opt(2020, 1, 20).unwrap();
+        assert!(snapshot.valuation.summary(pinned).contains("STALE"));
+        assert!(snapshot.as_of.contains("MIXED 2020-01-02..2020-01-03"));
+        assert!(snapshot.as_of.contains("2 UNKNOWN"));
+        assert_eq!(snapshot.valuation.rows.len(), 5);
+        assert_eq!(snapshot.positions.len(), 4);
+        let investment = snapshot
+            .positions
+            .iter()
+            .find(|p| p.symbol == "TEST")
+            .unwrap();
+        assert!(investment.average_cost.is_none());
+        assert!(investment.unrealized_return_bps.is_none());
+        assert_eq!(snapshot.valuation.rows[4].date, None);
+        assert_eq!(snapshot.valuation.rows[4].account.as_str(), "ACCOUNT 2");
+        assert_eq!(snapshot.available_cash_label(), "$600.00");
+        assert_eq!(snapshot.net_asset_value_label(), "$1,200.00");
+        assert!(snapshot.disclosures.iter().any(|s| s.contains("BASIS 3/5")));
+        assert!(snapshot
+            .disclosures
+            .iter()
+            .any(|s| s.contains("ACCOUNT 2 · 2/3 DATED")));
+
+        struct Fixture(PortfolioSnapshot);
+        impl PortfolioRepository for Fixture {
+            fn load_portfolio(&self) -> PortfolioSnapshot {
+                self.0.clone()
+            }
+        }
+        let repository: Arc<dyn PortfolioRepository> = Arc::new(Fixture(snapshot.clone()));
+        let assistant = PortfolioAssistantContextQuery::new(repository.clone()).load_context();
+        assert_eq!(assistant.portfolio.as_of, snapshot.as_of);
+        assert_eq!(assistant.portfolio.available_cash, "$600.00");
+        assert!(assistant
+            .portfolio
+            .disclosures
+            .iter()
+            .any(|s| s.contains("AVAILABLE-TO-TRADE/WITHDRAW UNKNOWN")));
+        let risk = Arc::new(PortfolioRiskQuery::new(repository.clone()));
+        let risk_snapshot = risk.load_risk().unwrap();
+        assert_eq!(risk_snapshot.as_of, snapshot.as_of);
+        assert_eq!(
+            risk_snapshot.currencies[0].scenario_change.minor_units(),
+            -6000
+        );
+        let overview = Arc::new(LiveOverviewQuery::new(
+            repository.clone(),
+            Arc::new(DemoData),
+        ));
+        let OverviewSnapshot::Live(live) = overview.load_overview() else {
+            panic!("expected live translation")
+        };
+        assert_eq!(live.portfolio_as_of, snapshot.as_of);
+        assert_eq!(live.source_health[0].state, OverviewHealthState::Partial);
+        assert!(live.source_health[0].detail.contains("BASIS 3/5"));
+        let surfaces: Vec<Box<dyn Workspace>> = vec![
+            Box::new(PortfolioWorkspace::new(repository)),
+            Box::new(RiskWorkspace::new(risk)),
+            Box::new(OverviewWorkspace::new(overview)),
+        ];
+        for workspace in surfaces {
+            let mut terminal = Terminal::new(TestBackend::new(200, 60)).unwrap();
+            terminal
+                .draw(|frame| workspace.render(frame, frame.area()))
+                .unwrap();
+            let rendered: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect();
+            assert!(
+                rendered.contains("2020-01-02"),
+                "missing source date: {rendered}"
+            );
+            assert!(rendered.contains("STALE"));
+            assert!(rendered.contains("IMPORTED CASH/MM") || rendered.contains("Imported cash/MM"));
+            assert!(rendered.contains("UNKNOWN"));
+            assert!(!rendered.contains("AVAILABLE CASH"));
+        }
+    }
+
+    #[test]
+    fn parity_source_date_formats_and_missing_lot_dates() {
+        for date in ["2020-01-02", "01/02/2020", "01/02/20", "2020/01/02"] {
+            assert_eq!(
+                parse_valuation_date(date).unwrap().to_string(),
+                "2020-01-02"
+            );
+        }
+        let lots = parse_portfolio_tax_lot_csv(
+            b"Symbol,Acquired Date,Quantity,Cost Basis\nTEST,2019-01-01,2,100\n",
+            "synthetic".into(),
+        )
+        .unwrap();
+        assert!(lots.as_of.contains("UNKNOWN"));
+        assert!(lots.valuation.rows[0].date.is_none());
+        assert!(lots.valuation.imported_at.is_some());
+    }
+
+    #[test]
+    fn parity_reload_does_not_replace_source_date() {
+        let repository = CsvPortfolioRepository {
+            snapshot: RwLock::new(PortfolioSnapshot::empty("TEST")),
+            path: RwLock::new(None),
+            activity: RwLock::new(PortfolioActivityLedger::empty("TEST")),
+            activity_path: RwLock::new(None),
+            performance: RwLock::new(PortfolioPerformanceSnapshot::empty("TEST")),
+            performance_path: RwLock::new(None),
+            tax_lots: RwLock::new(PortfolioTaxLotSnapshot::empty("TEST")),
+            tax_lot_path: RwLock::new(None),
+            realized_gains: RwLock::new(PortfolioRealizedGainSnapshot::empty("TEST")),
+            realized_gain_path: RwLock::new(None),
+            trades: RwLock::new(PortfolioTradeLedger::empty("TEST")),
+            trade_path: RwLock::new(None),
+            contribution: RwLock::new(PortfolioContributionSnapshot::empty("TEST")),
+            contribution_path: RwLock::new(None),
+            attribution: RwLock::new(PortfolioAttributionSnapshot::empty("TEST")),
+            attribution_path: RwLock::new(None),
+            state_store: None,
+        };
+        let path = env::temp_dir().join(format!("parity-reload-{}.csv", std::process::id()));
+        fs::write(
+            &path,
+            "Symbol,Quantity,Market Value,As Of\nTEST,2,400,2020-01-02\n",
+        )
+        .unwrap();
+        let imported = repository.import_csv(&path).unwrap();
+        let reloaded = repository.reload().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(reloaded.as_of.contains("2020-01-02"), "{}", reloaded.as_of);
+        assert_eq!(imported.as_of, reloaded.as_of);
+        assert_eq!(imported.input_version, reloaded.input_version);
+    }
+
+    #[test]
+    fn parity_source_date_survives_parser() {
+        let snapshot = parse_portfolio_csv(
+            b"Symbol,Quantity,Market Value,As Of\nTEST,2,400,01/02/2020\n",
+            "synthetic".into(),
+        )
+        .unwrap();
+        assert!(snapshot.as_of.contains("2020-01-02"), "{}", snapshot.as_of);
+    }
+
+    #[test]
+    fn parity_unknown_date_stays_unknown() {
+        let snapshot = parse_portfolio_csv(
+            b"Symbol,Quantity,Market Value\nTEST,2,400\n",
+            "synthetic".into(),
+        )
+        .unwrap();
+        assert!(snapshot.as_of.contains("UNKNOWN"), "{}", snapshot.as_of);
     }
 
     #[test]

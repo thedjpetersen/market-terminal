@@ -1530,7 +1530,7 @@ fn render_header(
         PortfolioView::Positions => [
             ("NET ASSET VALUE", data.positions.net_asset_value_label()),
             ("YTD RETURN", data.positions.ytd_return_label()),
-            ("AVAILABLE CASH", data.positions.available_cash_label()),
+            ("IMPORTED CASH/MM", data.positions.available_cash_label()),
             ("SHARPE", data.positions.sharpe_label()),
         ],
         PortfolioView::Activity => [
@@ -1762,6 +1762,8 @@ fn render_position_source(
         Line::styled("SOURCE", AMBER),
         Line::styled(snapshot.source.clone(), INK),
         Line::styled(snapshot.as_of.clone(), MUTED),
+        Line::styled("IMPORTED CASH/MM BALANCE", MUTED),
+        Line::styled("UNKNOWN TRADE/WITHDRAW AVAILABILITY", MUTED),
         Line::styled(snapshot.input_version.clone(), CYAN),
         Line::raw(""),
         Line::styled("CURRENCY TOTALS", AMBER),
@@ -1769,7 +1771,7 @@ fn render_position_source(
     for total in &snapshot.currency_totals {
         lines.push(Line::styled(
             format!(
-                "{} NAV {} · CASH {} · {} UNPRICED",
+                "{} NAV {} · IMPORTED CASH/MM {} · {} UNPRICED",
                 total.currency,
                 format_money(total.net_asset_value),
                 format_money(total.available_cash),

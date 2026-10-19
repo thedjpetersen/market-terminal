@@ -396,6 +396,7 @@ impl PortfolioRepository for DemoData {
         ]);
         let priced_positions = positions.len();
         PortfolioSnapshot {
+            valuation: Default::default(),
             positions,
             currency_totals: vec![PortfolioCurrencyTotal {
                 currency: usd,
@@ -574,6 +575,7 @@ impl PortfolioRepository for DemoData {
             unrealized_return_bps: Some(return_bps),
         };
         PortfolioTaxLotSnapshot {
+            valuation: Default::default(),
             lots: vec![
                 lot(
                     "DEMO-LOT-1",
