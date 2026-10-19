@@ -1,0 +1,20 @@
+[
+  {
+    "id": "L00373-modal-ownership",
+    "steps": [
+      "About, search and saved evidence share one active-modal owner",
+      "Cmd/Ctrl-K cannot stack search over another modal",
+      "Tab, Shift-Tab and Escape belong to the active dialog",
+      "Dismissal and unmount restore focus and the previous scroll lock"
+    ],
+    "passes": true
+  },
+  {
+    "id": "L00373-browser-acceptance",
+    "steps": [
+      "Run modal keyboard and scroll checks in permitted desktop and mobile Chromium",
+      "Capture and review screenshots in .factory/screenshots"
+    ],
+    "passes": false
+  }
+]

@@ -1,6 +1,6 @@
 import { useModal } from "../../ui/useModal";
 import { Bookmark, Download, Trash2, X } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import type { SavedItem } from "./contracts";
 export function Library({
   items,
@@ -10,8 +10,7 @@ export function Library({
   onRemove: (id: string) => void;
 }) {
   const [selected, setSelected] = useState<SavedItem>();
-  const close = useCallback(() => setSelected(undefined), []);
-  useModal(!!selected, close);
+  const evidence = useModal();
   function download(item: SavedItem) {
     const url = URL.createObjectURL(
       new Blob([item.content], { type: "application/json" }),
@@ -48,7 +47,13 @@ export function Library({
         {items.map((item) => (
           <div className="saved-item" key={item.id}>
             <Bookmark size={19} />
-            <button className="saved-title" onClick={() => setSelected(item)}>
+            <button
+              className="saved-title"
+              onClick={() => {
+                setSelected(item);
+                evidence.show();
+              }}
+            >
               <strong>{item.title}</strong>
               <small>{new Date(item.createdAt).toLocaleString()}</small>
             </button>
@@ -73,9 +78,11 @@ export function Library({
         Stored only on this device. Download snapshots to keep a backup.
         Clearing browser data removes this library.
       </p>
-      {selected && (
-        <div className="modal-backdrop" onClick={() => setSelected(undefined)}>
+      {evidence.open && selected && (
+        <div className="modal-backdrop" onClick={evidence.close}>
           <section
+            ref={evidence.ref}
+            tabIndex={-1}
             className="dialog evidence-dialog"
             role="dialog"
             aria-modal="true"
@@ -87,7 +94,7 @@ export function Library({
               <button
                 className="icon-button"
                 aria-label="Close evidence"
-                onClick={() => setSelected(undefined)}
+                onClick={evidence.close}
               >
                 <X size={20} />
               </button>
@@ -95,7 +102,9 @@ export function Library({
             <p className="muted">
               Original JSON evidence · Download preserves all integer digits.
             </p>
-            <pre>{selected.content}</pre>
+            <pre tabIndex={0} aria-label="Original JSON evidence">
+              {selected.content}
+            </pre>
             <button
               className="button primary"
               onClick={() => download(selected)}

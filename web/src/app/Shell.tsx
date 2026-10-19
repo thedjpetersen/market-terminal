@@ -1,5 +1,5 @@
 import { useModal } from "../ui/useModal";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowUpRight,
   Bookmark,
@@ -32,9 +32,7 @@ export function Shell({
   children: React.ReactNode;
 }) {
   const [clock, setClock] = useState(new Date());
-  const [help, setHelp] = useState(false);
-  const closeHelp = useCallback(() => setHelp(false), []);
-  useModal(help, closeHelp);
+  const help = useModal();
   useEffect(() => {
     const timer = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(timer);
@@ -92,7 +90,7 @@ export function Shell({
             <br />
             Anywhere you are.
           </p>
-          <button className="quiet" onClick={() => setHelp(true)}>
+          <button className="quiet" onClick={help.show}>
             <CircleHelp size={16} /> About this workspace{" "}
             <ArrowUpRight size={13} />
           </button>
@@ -122,7 +120,7 @@ export function Shell({
             Sign out
           </a>
         </header>
-        <main id="main-content" key={page}>
+        <main id="main-content" key={page} tabIndex={-1}>
           {children}
         </main>
         <footer className="app-footer">
@@ -145,9 +143,11 @@ export function Shell({
           </button>
         ))}
       </nav>
-      {help && (
-        <div className="modal-backdrop" onClick={() => setHelp(false)}>
+      {help.open && (
+        <div className="modal-backdrop" onClick={help.close}>
           <section
+            ref={help.ref}
+            tabIndex={-1}
             className="dialog"
             role="dialog"
             aria-modal="true"
@@ -169,7 +169,7 @@ export function Shell({
               On mobile, use your browser’s “Add to Home Screen” action for a
               standalone workspace.
             </p>
-            <button className="button primary" onClick={() => setHelp(false)}>
+            <button className="button primary" onClick={help.close}>
               Back to workspace
             </button>
           </section>

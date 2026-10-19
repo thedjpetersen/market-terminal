@@ -41,6 +41,29 @@ sessions, body caps, methods, cross-origin rejection and per-user rate limiting.
 Browser tests exercise both desktop and 390-pixel touch layouts, all three models, saving,
 downloads, search, watchlist persistence and provider failure states. The normal
 browser suite uses explicitly deterministic provider fixtures; the engine is real.
+
+Modal integration tests run with `npm test`: About, search and saved evidence
+share one active owner. Cmd/Ctrl-K preserves an already-open dialog. Tab and
+Shift-Tab stay within it, Escape dismisses it, and focus returns to its trigger
+(or the main workspace if navigation removed the trigger). The tests cover
+unmount cleanup and restoration of the previous body overflow setting in jsdom.
+Actual scroll geometry needs the browser suite.
+
+To run only modal browser acceptance without the Worker or live providers, start
+Vite on a permitted local port, then run the focused tests from a second terminal:
+
+```sh
+npm run dev --prefix web -- --port 41773 --strictPort
+# In web/:
+MARKET_WEB_URL=http://127.0.0.1:41773 npm run test:browser -- modals.browser.ts --workers=1
+```
+
+These tests seed disposable evidence in their isolated browser context and mock
+search results. They check focus wrapping, shortcuts, page scroll preservation
+and long-result scrolling at desktop/mobile sizes, saving screenshots under
+`.factory/screenshots/` for review. About is checked on desktop because its
+trigger is currently in the desktop sidebar. Stop the Vite process afterward.
+
 To exercise real providers after deployment:
 
 ```sh

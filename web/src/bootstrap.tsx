@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { ModalProvider, useModal } from "./ui/useModal";
 import { Shell, type Destination } from "./app/Shell";
 import { Markets, Research } from "./features/research/Workspace";
 import { Search as SearchDialog } from "./features/research/Search";
@@ -26,9 +27,16 @@ function route() {
   };
 }
 export function Application() {
+  return (
+    <ModalProvider>
+      <ApplicationWorkspace />
+    </ModalProvider>
+  );
+}
+function ApplicationWorkspace() {
   const [current, setCurrent] = useState(route),
-    [search, setSearch] = useState(false),
     [toast, setToast] = useState("");
+  const search = useModal();
   const { symbols, toggle } = useWatchlist(deviceWatchlist, setToast);
   const { items: saved, save, remove } = useLibrary(deviceLibrary, setToast);
   useEffect(() => {
@@ -50,15 +58,13 @@ export function Application() {
     setCurrent({ page, symbol });
     window.scrollTo(0, 0);
   }
-  const openSearch = useCallback(() => setSearch(true), []),
-    closeSearch = useCallback(() => setSearch(false), []);
   const select = (symbol: string) => {
-    setSearch(false);
+    search.close();
     navigate("research", symbol);
   };
   return (
     <>
-      <Shell page={current.page} onNavigate={navigate} onSearch={openSearch}>
+      <Shell page={current.page} onNavigate={navigate} onSearch={search.show}>
         {current.page === "markets" && (
           <Markets port={publicResearch} onSelect={select} />
         )}{" "}
@@ -79,7 +85,7 @@ export function Application() {
             symbols={symbols}
             onSelect={select}
             onRemove={toggle}
-            onSearch={openSearch}
+            onSearch={search.show}
           />
         )}{" "}
         {current.page === "models" && (
@@ -89,11 +95,12 @@ export function Application() {
           <Library items={saved} onRemove={remove} />
         )}
       </Shell>
-      {search && (
+      {search.open && (
         <SearchDialog
+          dialogRef={search.ref}
           port={publicResearch}
           onSelect={select}
-          onClose={closeSearch}
+          onClose={search.close}
         />
       )}{" "}
       {toast && (

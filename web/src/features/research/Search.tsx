@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import { Search as SearchIcon, ArrowUpRight, X } from "lucide-react";
 import type { Instrument, ResearchPort } from "./contracts";
 import { Loading, Notice } from "../../ui/primitives";
-import { useModal } from "../../ui/useModal";
 export function Search({
+  dialogRef,
   port,
   onSelect,
   onClose,
 }: {
+  dialogRef: RefObject<HTMLElement | null>;
   port: ResearchPort;
   onSelect: (symbol: string) => void;
   onClose: () => void;
@@ -17,16 +18,6 @@ export function Search({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selected, select] = useState(0);
-  const input = useRef<HTMLInputElement>(null);
-  useModal(true, onClose);
-  useEffect(() => {
-    input.current?.focus();
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
   useEffect(() => {
     const controller = new AbortController();
     const timer = setTimeout(() => {
@@ -55,6 +46,8 @@ export function Search({
   return (
     <div className="modal-backdrop search-backdrop" onClick={onClose}>
       <section
+        ref={dialogRef}
+        tabIndex={-1}
         className="search-dialog"
         role="dialog"
         aria-modal="true"
@@ -64,7 +57,6 @@ export function Search({
         <div className="search-field">
           <SearchIcon size={21} />
           <input
-            ref={input}
             aria-label="Ticker or company"
             placeholder="Search a ticker or company…"
             value={query}
