@@ -253,11 +253,14 @@ pub fn solve_yield_bps(
         return Err(BondModelError::InvalidTargetPrice);
     }
     let target = target_clean_price_micros as f64 / MONEY_SCALE;
-    let mut low = -5_000;
-    let mut high = 20_000;
+    let mut low = -4_800;
+    let mut high = 19_800;
     let low_price = value_at_yield(input, low)?.clean;
     let high_price = value_at_yield(input, high)?.clean;
-    if target > low_price || target < high_price {
+    // Prices are supplied in rounded micro-units; include exactly rounded endpoints.
+    if target_clean_price_micros > (low_price * MONEY_SCALE).round() as i64
+        || target_clean_price_micros < (high_price * MONEY_SCALE).round() as i64
+    {
         return Err(BondModelError::YieldNotBracketed);
     }
     while high - low > 1 {
@@ -458,6 +461,24 @@ mod tests {
             years_to_maturity: 5,
             frequency: CouponFrequency::SemiAnnual,
             accrued_period_bps: 0,
+        }
+    }
+
+    #[test]
+    fn inversion_respects_input_yield_boundaries() {
+        let mut input = reference();
+        input.coupon_bps = 0;
+        input.years_to_maturity = 1;
+        input.frequency = CouponFrequency::Annual;
+        input.face_micros = 100_000_000;
+        assert_eq!(
+            solve_yield_bps(&input, 200_000_000),
+            Err(BondModelError::YieldNotBracketed)
+        );
+        for yield_bps in [-4800, -100, 0, 400, 19800] {
+            input.yield_bps = yield_bps;
+            let price = analyze_bond(&input).unwrap().clean_price_micros;
+            assert_eq!(solve_yield_bps(&input, price).unwrap(), yield_bps);
         }
     }
 

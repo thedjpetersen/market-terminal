@@ -5,6 +5,7 @@
 //! engine crates remain host-neutral, while HTTP and future worker hosts can
 //! compose this implementation at their outermost boundary.
 
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fmt, fs, io,
@@ -93,7 +94,7 @@ impl LocalArtifactQuery {
     fn artifact_path(&self, tenant: &str, artifact_id: &str) -> PathBuf {
         self.tenant_directory(tenant).join(format!(
             "{ARTIFACT_PREFIX}{}{ARTIFACT_SUFFIX}",
-            hex_encode(artifact_id.as_bytes())
+            artifact_component(artifact_id)
         ))
     }
 
@@ -141,6 +142,13 @@ impl LocalArtifactQuery {
         }
         let document: ResearchArtifactDocument = serde_json::from_slice(&encoded)
             .map_err(|_| corrupt("artifact document is not valid schema JSON"))?;
+        market_terminal_application::validate_artifact_document(
+            &document,
+            &market_terminal_application::TenantId::new(tenant)
+                .map_err(|_| corrupt("invalid tenant"))?,
+            &document.summary.artifact_id,
+        )
+        .map_err(|_| corrupt("artifact envelope violates the application contract"))?;
         if document.summary.tenant_id.as_str() != tenant {
             return Err(corrupt(
                 "artifact ownership does not match its tenant directory",
@@ -241,6 +249,16 @@ fn map_read_error(error: io::Error) -> ArtifactQueryFailure {
         corrupt("artifact catalog changed during a read")
     } else {
         ArtifactQueryFailure::Unavailable
+    }
+}
+
+// Keep all existing portable filenames unchanged. IDs too long for the legacy
+// hex component use a versioned SHA-256 digest, still verified against the envelope.
+fn artifact_component(id: &str) -> String {
+    if ARTIFACT_PREFIX.len() + id.len() * 2 + ARTIFACT_SUFFIX.len() <= 255 {
+        hex_encode(id.as_bytes())
+    } else {
+        format!("sha256-{:x}", Sha256::digest(id.as_bytes()))
     }
 }
 
@@ -354,6 +372,70 @@ mod tests {
         );
         fs::write(&path, serde_json::to_vec(document).unwrap()).unwrap();
         path
+    }
+
+    #[test]
+    fn maximum_ids_round_trip_and_missing_is_not_unavailable() {
+        let root = TestRoot::new();
+        let service = ResearchArtifactApplicationService::new(std::sync::Arc::new(
+            LocalArtifactQuery::open(&root.0).unwrap(),
+        ));
+        for length in [120, 121, 128] {
+            let id = "x".repeat(length);
+            assert!(service.get(&context("tenant-a"), &id).unwrap().is_none());
+            let mut item = document("tenant-a", &id, ResearchArtifactKind::BacktestRun);
+            item.summary.content_digest = "sha256:1234567890abcdef".into();
+            let path = write_document(&root.0, &item);
+            assert!(path.file_name().unwrap().len() <= 255);
+            assert_eq!(
+                service.get(&context("tenant-a"), &id).unwrap().unwrap(),
+                item
+            );
+            assert_eq!(
+                service
+                    .list(
+                        &context("tenant-a"),
+                        ArtifactListRequest {
+                            kind: None,
+                            cursor: None,
+                            limit: Some(10)
+                        }
+                    )
+                    .unwrap()
+                    .items
+                    .len(),
+                1
+            );
+            fs::remove_file(path).unwrap();
+            assert!(service.get(&context("tenant-a"), &id).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn invalid_envelopes_fail_before_kind_or_cursor_filters() {
+        let root = TestRoot::new();
+        let mut item = document("tenant-a", "invalid", ResearchArtifactKind::BacktestRun);
+        item.summary.schema_version = 999;
+        write_document(&root.0, &item);
+        let service = ResearchArtifactApplicationService::new(std::sync::Arc::new(
+            LocalArtifactQuery::open(&root.0).unwrap(),
+        ));
+        for kind in [None, Some(ResearchArtifactKind::SecurityResearch)] {
+            assert_eq!(
+                service
+                    .list(
+                        &context("tenant-a"),
+                        ArtifactListRequest {
+                            kind,
+                            cursor: None,
+                            limit: Some(10)
+                        }
+                    )
+                    .unwrap_err()
+                    .code,
+                ApplicationErrorCode::ArtifactContractViolation
+            );
+        }
     }
 
     #[test]

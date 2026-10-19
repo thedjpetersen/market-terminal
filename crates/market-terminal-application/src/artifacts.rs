@@ -286,7 +286,7 @@ fn validate_artifact_page(
     Ok(())
 }
 
-fn validate_artifact_document(
+pub fn validate_artifact_document(
     document: &ResearchArtifactDocument,
     tenant_id: &TenantId,
     artifact_id: &str,

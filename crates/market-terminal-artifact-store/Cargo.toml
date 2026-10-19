@@ -9,3 +9,4 @@ repository = "https://github.com/thedjpetersen/market-terminal"
 [dependencies]
 market-terminal-application = { path = "../market-terminal-application" }
 serde_json = "1"
+sha2 = "0.10"
