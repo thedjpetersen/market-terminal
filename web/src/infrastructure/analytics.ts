@@ -1,4 +1,5 @@
 import type { AnalyticsPort } from "../features/models/contracts";
+import { getApiJson, readApiResponse } from "./apiResponse";
 export const cloudAnalytics: AnalyticsPort = {
   async execute(request) {
     const response = await fetch("/api/engine", {
@@ -16,30 +17,26 @@ export const cloudAnalytics: AnalyticsPort = {
         "The engine could not be reached. Reload to refresh your session, then retry.",
       );
     });
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403)
-        throw new Error("Your session has expired. Reload to sign in again.");
-      const error = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      throw new Error(
-        error.error ?? "The model could not complete. Try again.",
-      );
-    }
-    if (!response.headers.get("Content-Type")?.includes("application/json"))
-      throw new Error("Your session has expired. Reload to sign in again.");
-    return response.text();
+    return readApiResponse(
+      response,
+      "The model could not complete. Try again.",
+    );
   },
   async bars(symbol) {
-    const response = await fetch(
-      `/api/history?symbol=${encodeURIComponent(symbol)}&range=1y`,
-    );
-    const data = (await response.json()) as {
+    const fallback = "Historical prices are unavailable. Try again.";
+    const data = await getApiJson<{
       bars?: Awaited<ReturnType<AnalyticsPort["bars"]>>;
       error?: string;
-    };
-    if (!response.ok || !data.bars)
-      throw new Error(data.error ?? "Historical prices are unavailable.");
+    } | null>(
+      `/api/history?symbol=${encodeURIComponent(symbol)}&range=1y`,
+      fallback,
+    );
+    if (!Array.isArray(data?.bars))
+      throw new Error(
+        typeof data?.error === "string" && data.error.trim()
+          ? data.error
+          : fallback,
+      );
     return data.bars;
   },
 };

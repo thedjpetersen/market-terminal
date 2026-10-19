@@ -1,17 +1,11 @@
 import type { ResearchPort } from "../features/research/contracts";
-async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`/api/${path}`, { signal });
-  const data = await response.json();
-  if (!response.ok)
-    throw new Error(
-      data &&
-        typeof data === "object" &&
-        "error" in data &&
-        typeof data.error === "string"
-        ? data.error
-        : "Unable to load research",
-    );
-  return data as T;
+import { getApiJson } from "./apiResponse";
+function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return getApiJson(
+    `/api/${path}`,
+    "Unable to load research. Try again.",
+    signal,
+  );
 }
 export const publicResearch: ResearchPort = {
   quotes: (symbols, signal) =>

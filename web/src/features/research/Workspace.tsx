@@ -39,12 +39,27 @@ export function QuoteTile({
     </button>
   );
 }
-function Headlines({ port, symbol }: { port: ResearchPort; symbol: string }) {
-  const result = useQuery((s) => port.news(symbol, s), `news:${symbol}`);
+function Headlines({
+  port,
+  symbol,
+  refresh = 0,
+}: {
+  port: ResearchPort;
+  symbol: string;
+  refresh?: number;
+}) {
+  const [retry, setRetry] = useState(0);
+  const result = useQuery(
+    (s) => port.news(symbol, s),
+    `news:${symbol}`,
+    refresh + retry,
+  );
   return (
     <>
       {result.loading && <Loading label="Loading headlines" />}
-      {result.error && <Notice>{result.error}</Notice>}
+      {result.error && (
+        <Notice retry={() => setRetry((v) => v + 1)}>{result.error}</Notice>
+      )}
       {result.data?.length === 0 && (
         <Notice>No headlines are available for this ticker.</Notice>
       )}
@@ -149,7 +164,11 @@ export function Markets({
             </select>
           </div>
           {history.loading && <Loading />}
-          {history.error && <Notice>{history.error}</Notice>}
+          {history.error && (
+            <Notice retry={() => setRefresh((v) => v + 1)}>
+              {history.error}
+            </Notice>
+          )}
           {history.data && (
             <SeriesChart
               points={history.data.bars.map((b) => ({
@@ -171,7 +190,11 @@ export function Markets({
             <span className="tag">8 assets</span>
           </div>
           {leaders.loading && <Loading />}
-          {leaders.error && <Notice>{leaders.error}</Notice>}
+          {leaders.error && (
+            <Notice retry={() => setRefresh((v) => v + 1)}>
+              {leaders.error}
+            </Notice>
+          )}
           <div className="quote-list">
             {leaders.data?.quotes.map((q) => (
               <button key={q.symbol} onClick={() => onSelect(q.symbol)}>
@@ -205,7 +228,7 @@ export function Markets({
           </div>
           <span className="tag">SPY</span>
         </div>
-        <Headlines port={port} symbol="SPY" />
+        <Headlines port={port} symbol="SPY" refresh={refresh} />
       </section>
       <p className="source-note">
         Public, unofficial Yahoo Finance data. Prices may be delayed. Open an
@@ -338,7 +361,11 @@ export function Research({
               </div>
             </div>
             {history.loading && <Loading />}
-            {history.error && <Notice>{history.error}</Notice>}
+            {history.error && (
+              <Notice retry={() => setRefresh((v) => v + 1)}>
+                {history.error}
+              </Notice>
+            )}
             {history.data && (
               <SeriesChart
                 points={history.data.bars.map((b) => ({
@@ -381,13 +408,17 @@ export function Research({
       )}
       {tab === "news" && (
         <section className="panel">
-          <Headlines port={port} symbol={symbol} />
+          <Headlines port={port} symbol={symbol} refresh={refresh} />
         </section>
       )}
       {(tab === "financials" || tab === "filings") && (
         <section className="panel">
           {company.loading && <Loading label="Loading SEC research" />}
-          {company.error && <Notice>{company.error}</Notice>}
+          {company.error && (
+            <Notice retry={() => setRefresh((v) => v + 1)}>
+              {company.error}
+            </Notice>
+          )}
           {company.data && (
             <>
               <div className="panel-heading">
@@ -439,6 +470,11 @@ export function Research({
                 </div>
               ) : (
                 <div className="headlines">
+                  {!company.data.filings.length && (
+                    <Notice>
+                      No recent SEC filings were returned for this company.
+                    </Notice>
+                  )}
                   {company.data.filings.map((f) => (
                     <a
                       className="headline"

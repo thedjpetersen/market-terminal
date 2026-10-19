@@ -8,7 +8,7 @@
     "build:wasm": "wasm-pack build ../crates/market-terminal-wasm --target web --out-dir ../../web/public/engine --out-name research_engine",
     "build": "npm run build:wasm && tsc --noEmit && vite build",
     "check": "tsc --noEmit",
-    "test": "vitest run tests/research.test.ts tests/auth.test.ts",
+    "test": "vitest run tests/research.test.ts tests/auth.test.ts tests/recovery.test.ts",
     "preview": "wrangler dev --port 8799",
     "deploy": "npm run build && wrangler deploy",
     "types": "wrangler types",
