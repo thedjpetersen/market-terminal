@@ -1,3 +1,4 @@
+use super::formula::EvaluationStack;
 use std::{
     cell::RefCell,
     cmp::Ordering,
@@ -92,7 +93,7 @@ impl Worksheet {
 
     pub fn value(&self, address: CellAddress) -> CellValue {
         let mut cache = std::mem::take(&mut self.evaluation.borrow_mut().cache);
-        let value = self.evaluate_cell(address, &mut Vec::new(), &mut cache);
+        let value = self.evaluate_cell(address, &mut EvaluationStack::default(), &mut cache);
         self.evaluation.borrow_mut().cache = cache;
         value
     }
@@ -100,7 +101,7 @@ impl Worksheet {
     pub fn values(&self) -> HashMap<CellAddress, CellValue> {
         let mut cache = std::mem::take(&mut self.evaluation.borrow_mut().cache);
         for address in self.cells.keys() {
-            self.evaluate_cell(*address, &mut Vec::new(), &mut cache);
+            self.evaluate_cell(*address, &mut EvaluationStack::default(), &mut cache);
         }
         self.evaluation.borrow_mut().cache = cache.clone();
         cache
@@ -159,9 +160,12 @@ impl Worksheet {
     fn evaluate_cell(
         &self,
         address: CellAddress,
-        stack: &mut Vec<CellAddress>,
+        stack: &mut EvaluationStack<CellAddress>,
         cache: &mut HashMap<CellAddress, CellValue>,
     ) -> CellValue {
+        if stack.len() >= 32 || !stack.step() {
+            return CellValue::Error(CellError::Parse);
+        }
         if let Some(value) = cache.get(&address) {
             return value.clone();
         }
@@ -199,7 +203,21 @@ impl Worksheet {
     fn evaluate_expression(
         &self,
         expression: &Expr,
-        stack: &mut Vec<CellAddress>,
+        stack: &mut EvaluationStack<CellAddress>,
+        cache: &mut HashMap<CellAddress, CellValue>,
+    ) -> Result<CellValue, CellError> {
+        if !stack.enter() {
+            return Err(CellError::Parse);
+        }
+        let result = self.evaluate_expression_inner(expression, stack, cache);
+        stack.leave();
+        result
+    }
+
+    fn evaluate_expression_inner(
+        &self,
+        expression: &Expr,
+        stack: &mut EvaluationStack<CellAddress>,
         cache: &mut HashMap<CellAddress, CellValue>,
     ) -> Result<CellValue, CellError> {
         match expression {
@@ -281,7 +299,7 @@ impl Worksheet {
         &self,
         function: AggregateFunction,
         arguments: &[Expr],
-        stack: &mut Vec<CellAddress>,
+        stack: &mut EvaluationStack<CellAddress>,
         cache: &mut HashMap<CellAddress, CellValue>,
     ) -> Result<CellValue, CellError> {
         match function {
@@ -458,7 +476,7 @@ impl Worksheet {
     fn evaluate_arguments(
         &self,
         arguments: &[Expr],
-        stack: &mut Vec<CellAddress>,
+        stack: &mut EvaluationStack<CellAddress>,
         cache: &mut HashMap<CellAddress, CellValue>,
     ) -> Result<Vec<CellValue>, CellError> {
         let mut values = Vec::new();
@@ -482,7 +500,7 @@ impl Worksheet {
     fn evaluate_xlookup(
         &self,
         arguments: &[Expr],
-        stack: &mut Vec<CellAddress>,
+        stack: &mut EvaluationStack<CellAddress>,
         cache: &mut HashMap<CellAddress, CellValue>,
     ) -> Result<CellValue, CellError> {
         expect_arity(arguments, 3, 4)?;

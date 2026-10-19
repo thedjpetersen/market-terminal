@@ -349,6 +349,7 @@ fn write_sheet_name(formatter: &mut fmt::Formatter<'_>, sheet: &str) -> fmt::Res
 pub fn parse_formula(input: &str) -> Result<Expr, FormulaError> {
     let input = input.trim();
     let input = input.strip_prefix('=').unwrap_or(input);
+    validate_complexity(input)?;
     let mut parser = Parser::new(input);
     let expression = parser.parse_expression()?;
     parser.skip_whitespace();
@@ -356,6 +357,85 @@ pub fn parse_formula(input: &str) -> Result<Expr, FormulaError> {
         Ok(expression)
     } else {
         Err(parser.error("unexpected trailing input"))
+    }
+}
+
+// Check before constructing any recursive AST: this also bounds clone, formatting,
+// dependency traversal and drop, including left-deep flat binary expressions.
+fn validate_complexity(input: &str) -> Result<(), FormulaError> {
+    let reject = || FormulaError {
+        position: 0,
+        message: "formula complexity limit exceeded".into(),
+    };
+    if input.len() > 8192 {
+        return Err(reject());
+    }
+    let mut quote = None;
+    let mut nesting = 0usize;
+    let mut operators = 0usize;
+    for c in input.chars() {
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' => quote = Some(c),
+            '(' => {
+                nesting += 1;
+                operators += 1;
+            }
+            ')' => nesting = nesting.saturating_sub(1),
+            '+' | '-' | '*' | '/' | '=' | '<' | '>' | ',' | ':' => operators += 1,
+            _ => {}
+        }
+        if nesting > 16 || operators > 128 {
+            return Err(reject());
+        }
+    }
+    Ok(())
+}
+
+pub(super) struct EvaluationStack<K> {
+    cells: Vec<K>,
+    depth: usize,
+    work: usize,
+}
+impl<K> Default for EvaluationStack<K> {
+    fn default() -> Self {
+        Self {
+            cells: Vec::new(),
+            depth: 0,
+            work: 0,
+        }
+    }
+}
+impl<K> std::ops::Deref for EvaluationStack<K> {
+    type Target = Vec<K>;
+    fn deref(&self) -> &Self::Target {
+        &self.cells
+    }
+}
+impl<K> std::ops::DerefMut for EvaluationStack<K> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.cells
+    }
+}
+impl<K> EvaluationStack<K> {
+    pub fn step(&mut self) -> bool {
+        self.work += 1;
+        self.work <= 20_000
+    }
+    pub fn enter(&mut self) -> bool {
+        if self.depth >= 64 || !self.step() {
+            return false;
+        }
+        self.depth += 1;
+        true
+    }
+    pub fn leave(&mut self) {
+        self.depth -= 1;
     }
 }
 

@@ -1,3 +1,4 @@
+use super::formula::EvaluationStack;
 use std::{cmp::Ordering, collections::HashMap, fmt};
 
 use chrono::{Datelike, NaiveDate};
@@ -170,14 +171,14 @@ impl Workbook {
                 sheet: self.active_sheet,
                 address,
             },
-            &mut Vec::new(),
+            &mut EvaluationStack::default(),
             &mut cache,
         )
     }
 
     pub fn active_values(&self) -> HashMap<CellAddress, CellValue> {
         let mut cache = HashMap::new();
-        let mut stack = Vec::new();
+        let mut stack = EvaluationStack::default();
         for address in self
             .active_sheet()
             .populated_cells()
@@ -203,9 +204,12 @@ impl Workbook {
     fn evaluate_cell(
         &self,
         key: CellKey,
-        stack: &mut Vec<CellKey>,
+        stack: &mut EvaluationStack<CellKey>,
         cache: &mut HashMap<CellKey, CellValue>,
     ) -> CellValue {
+        if stack.len() >= 32 || !stack.step() {
+            return CellValue::Error(CellError::Parse);
+        }
         if let Some(value) = cache.get(&key) {
             return value.clone();
         }
@@ -246,7 +250,22 @@ impl Workbook {
         &self,
         expression: &Expr,
         current_sheet: usize,
-        stack: &mut Vec<CellKey>,
+        stack: &mut EvaluationStack<CellKey>,
+        cache: &mut HashMap<CellKey, CellValue>,
+    ) -> Result<CellValue, CellError> {
+        if !stack.enter() {
+            return Err(CellError::Parse);
+        }
+        let result = self.evaluate_expression_inner(expression, current_sheet, stack, cache);
+        stack.leave();
+        result
+    }
+
+    fn evaluate_expression_inner(
+        &self,
+        expression: &Expr,
+        current_sheet: usize,
+        stack: &mut EvaluationStack<CellKey>,
         cache: &mut HashMap<CellKey, CellValue>,
     ) -> Result<CellValue, CellError> {
         match expression {
@@ -328,7 +347,7 @@ impl Workbook {
         function: AggregateFunction,
         arguments: &[Expr],
         current_sheet: usize,
-        stack: &mut Vec<CellKey>,
+        stack: &mut EvaluationStack<CellKey>,
         cache: &mut HashMap<CellKey, CellValue>,
     ) -> Result<CellValue, CellError> {
         match function {
@@ -509,7 +528,7 @@ impl Workbook {
         &self,
         arguments: &[Expr],
         current_sheet: usize,
-        stack: &mut Vec<CellKey>,
+        stack: &mut EvaluationStack<CellKey>,
         cache: &mut HashMap<CellKey, CellValue>,
     ) -> Result<Vec<CellValue>, CellError> {
         let mut values = Vec::new();
@@ -532,7 +551,7 @@ impl Workbook {
         &self,
         arguments: &[Expr],
         current_sheet: usize,
-        stack: &mut Vec<CellKey>,
+        stack: &mut EvaluationStack<CellKey>,
         cache: &mut HashMap<CellKey, CellValue>,
     ) -> Result<CellValue, CellError> {
         expect_arity(arguments, 3, 4)?;

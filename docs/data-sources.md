@@ -608,3 +608,11 @@ endorsed by, or sponsored by Yahoo.
 SEC/Federal Reserve RSS entries use the publisher URLs above. Structured EDGAR
 institutional ownership forms and official economic series remain planned
 adapters and are not current market-price substitutes.
+
+### Formula resource bounds
+
+Spreadsheet formulas are limited to 8 KiB, 16 nested groups and 128 operators
+or argument/range separators before an AST is allocated. Evaluation additionally
+bounds expression depth, reference chains and work per evaluation. Over-limit
+formulas remain stored as source text and display a normal formula error; import,
+copy, dependency traversal and AST destruction cannot recurse without a bound.
