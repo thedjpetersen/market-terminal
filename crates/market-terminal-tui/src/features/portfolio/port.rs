@@ -35,6 +35,12 @@ pub trait PortfolioRepository: Send + Sync {
         PortfolioActivityLedger::empty("NO ACTIVITY IMPORTED · USE PORT IMPORT ACTIVITY <FILE.CSV>")
     }
 
+    fn preview_csv(&self, _path: &Path) -> Result<PortfolioSnapshot, PortfolioError> {
+        Err(PortfolioError::Unsupported(
+            "POSITIONS PREVIEW NOT SUPPORTED".to_owned(),
+        ))
+    }
+
     fn import_csv(&self, _path: &Path) -> Result<PortfolioSnapshot, PortfolioError> {
         Err(PortfolioError::Unsupported(
             "THIS PORTFOLIO PROVIDER DOES NOT SUPPORT CSV IMPORT".to_owned(),

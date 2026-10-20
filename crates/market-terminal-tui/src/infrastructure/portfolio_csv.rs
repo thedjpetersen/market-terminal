@@ -401,19 +401,12 @@ impl CsvPortfolioRepository {
     }
 
     fn import_path(&self, path: &Path) -> Result<PortfolioSnapshot, PortfolioError> {
-        let metadata = fs::metadata(path).map_err(|error| {
-            PortfolioError::Io(format!("CANNOT READ {} · {error}", display_name(path)))
-        })?;
-        if metadata.len() > MAX_PORTFOLIO_BYTES {
-            return Err(PortfolioError::InvalidCsv(format!(
-                "{} IS TOO LARGE · LIMIT IS 10 MB",
-                display_name(path)
-            )));
-        }
-        let bytes = fs::read(path).map_err(|error| {
-            PortfolioError::Io(format!("CANNOT READ {} · {error}", display_name(path)))
-        })?;
-        let snapshot = parse_portfolio_csv(&bytes, display_name(path))?;
+        let mut snapshot = self.preview_csv(path)?;
+        let imported_at = Utc::now();
+        snapshot.valuation.imported_at = Some(imported_at);
+        snapshot
+            .disclosures
+            .push(format!("IMPORTED AT {imported_at} · NOT VALUATION TIME"));
         if let Some(store) = &self.state_store {
             store.save_import_path(path)?;
         }
@@ -674,6 +667,39 @@ impl PortfolioRepository for CsvPortfolioRepository {
         snapshot
     }
 
+    fn preview_csv(&self, path: &Path) -> Result<PortfolioSnapshot, PortfolioError> {
+        let metadata = fs::metadata(path).map_err(|error| {
+            PortfolioError::Io(format!("CANNOT READ {} · {error}", display_name(path)))
+        })?;
+        if metadata.len() > MAX_PORTFOLIO_BYTES {
+            return Err(PortfolioError::InvalidCsv(format!(
+                "{} IS TOO LARGE · LIMIT IS 10 MB",
+                display_name(path)
+            )));
+        }
+        use std::io::Read;
+        let file = fs::File::open(path).map_err(|error| {
+            PortfolioError::Io(format!("CANNOT READ {} · {error}", display_name(path)))
+        })?;
+        let mut bytes = Vec::new();
+        file.take(MAX_PORTFOLIO_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| {
+                PortfolioError::Io(format!("CANNOT READ {} · {error}", display_name(path)))
+            })?;
+        if bytes.len() as u64 > MAX_PORTFOLIO_BYTES {
+            return Err(PortfolioError::InvalidCsv(
+                "POSITIONS INPUT EXCEEDS 10 MB".to_owned(),
+            ));
+        }
+        let mut snapshot = parse_portfolio_csv(&bytes, display_name(path))?;
+        snapshot.valuation.imported_at = None;
+        snapshot
+            .disclosures
+            .retain(|line| !line.starts_with("IMPORTED AT "));
+        Ok(snapshot)
+    }
+
     fn import_csv(&self, path: &Path) -> Result<PortfolioSnapshot, PortfolioError> {
         self.import_path(path)
     }
@@ -884,6 +910,7 @@ impl PortfolioRepository for CsvPortfolioRepository {
 
 #[derive(Debug, Default)]
 struct AggregatePosition {
+    row_count: usize,
     quantity_scaled: i128,
     market_value_minor: i128,
     missing_market_value: bool,
@@ -907,6 +934,7 @@ struct AggregateCurrency {
 struct Columns {
     valuation_date: Option<usize>,
     account: Option<usize>,
+    account_key: Option<usize>,
     symbol: Option<usize>,
     description: Option<usize>,
     quantity: usize,
@@ -959,7 +987,7 @@ fn parse_portfolio_csv(
 
     let mut positions =
         BTreeMap::<(PortfolioAccountId, Currency, String), AggregatePosition>::new();
-    let mut account_aliases = BTreeMap::<String, PortfolioAccountId>::new();
+    let mut account_aliases = super::portfolio_account_csv::AccountAliases::new();
     let mut rejected_row_count = 0;
     let mut rejected_symbols = Vec::new();
     let mut defaulted_currency = false;
@@ -995,11 +1023,8 @@ fn parse_portfolio_csv(
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
             .unwrap_or_else(|| "UNALLOCATED".to_owned());
-        let next_account = account_aliases.len() + 1;
-        let account_id = account_aliases
-            .entry(account)
-            .or_insert_with(|| PortfolioAccountId::new(format!("ACCOUNT {next_account}")))
-            .clone();
+        let account_id =
+            account_aliases.resolve(&account, columns.field(record, columns.account_key))?;
         let position_candidate = cash || looks_like_position_symbol(raw_symbol);
         let quantity_scaled =
             parse_scaled(record.get(columns.quantity), 6).or_else(|| cash.then_some(1_000_000));
@@ -1040,6 +1065,7 @@ fn parse_portfolio_csv(
             has_basis: cost_basis_minor.is_some(),
         });
         let aggregate = positions.entry((account_id, currency, symbol)).or_default();
+        aggregate.row_count += 1;
         aggregate.quantity_scaled = aggregate
             .quantity_scaled
             .checked_add(quantity_scaled)
@@ -1145,13 +1171,7 @@ fn parse_portfolio_csv(
             } else {
                 None
             };
-            let pnl_bps = if position.pnl_weight_minor > 0 {
-                i32::try_from(rounded_division(
-                    position.weighted_pnl_bps,
-                    position.pnl_weight_minor,
-                ))
-                .ok()
-            } else if !position.missing_market_value
+            let pnl_bps = if !position.missing_market_value
                 && position.has_cost_basis
                 && !position.missing_cost_basis
                 && position.cost_basis_minor != 0
@@ -1162,6 +1182,12 @@ fn parse_portfolio_csv(
                     .and_then(|difference| difference.checked_mul(10_000))
                     .ok_or_else(|| PortfolioError::InvalidCsv("P&L OVERFLOW".to_owned()))?;
                 i32::try_from(rounded_division(numerator, position.cost_basis_minor.abs())).ok()
+            } else if position.row_count == 1 && position.pnl_weight_minor > 0 {
+                i32::try_from(rounded_division(
+                    position.weighted_pnl_bps,
+                    position.pnl_weight_minor,
+                ))
+                .ok()
             } else {
                 None
             };
@@ -1223,7 +1249,7 @@ fn parse_portfolio_csv(
     let mut disclosures = vec![
         "IMPORTED CASH/MONEY MARKET · BROKER AVAILABLE-TO-TRADE/WITHDRAW UNKNOWN".to_owned(),
         "POINT-IN-TIME POSITION SNAPSHOT · NO RETURN SERIES".to_owned(),
-        "BROKER ACCOUNT IDENTIFIERS REPLACED WITH IMPORT-LOCAL LABELS".to_owned(),
+        "ACCOUNT KEY = EXPLICIT CANONICAL ID; ACCOUNT N = IMPORT-LOCAL / UNMATCHED; NEVER JOIN DISPLAY LABELS".to_owned(),
         "TICKERS REMAIN UNRESOLVED UNTIL INSTRUMENT-MASTER MATCHING".to_owned(),
     ];
     if defaulted_currency {
@@ -1288,6 +1314,7 @@ impl Columns {
         }
         Some(Self {
             valuation_date: find_column(&names, &["asof", "asofdate", "valuationdate"]),
+            account_key: names.iter().position(|value| value == "accountkey"),
             account: find_column(
                 &names,
                 &[
@@ -1743,6 +1770,237 @@ mod tests {
                 .unwrap_or_else(|error| error.into_inner()) = Some(path.to_path_buf());
             Ok(())
         }
+    }
+
+    fn isolated_repository(
+        state_store: Option<Arc<dyn PortfolioImportStateStore>>,
+    ) -> CsvPortfolioRepository {
+        CsvPortfolioRepository {
+            snapshot: RwLock::new(PortfolioSnapshot::empty("TEST")),
+            path: RwLock::new(None),
+            activity: RwLock::new(PortfolioActivityLedger::empty("TEST")),
+            activity_path: RwLock::new(None),
+            performance: RwLock::new(PortfolioPerformanceSnapshot::empty("TEST")),
+            performance_path: RwLock::new(None),
+            tax_lots: RwLock::new(PortfolioTaxLotSnapshot::empty("TEST")),
+            tax_lot_path: RwLock::new(None),
+            realized_gains: RwLock::new(PortfolioRealizedGainSnapshot::empty("TEST")),
+            realized_gain_path: RwLock::new(None),
+            trades: RwLock::new(PortfolioTradeLedger::empty("TEST")),
+            trade_path: RwLock::new(None),
+            contribution: RwLock::new(PortfolioContributionSnapshot::empty("TEST")),
+            contribution_path: RwLock::new(None),
+            attribution: RwLock::new(PortfolioAttributionSnapshot::empty("TEST")),
+            attribution_path: RwLock::new(None),
+            state_store,
+        }
+    }
+
+    #[test]
+    fn canonical_account_keys_survive_reorder_subsets_and_legacy_never_joins() {
+        let parse = |rows: &str| {
+            parse_portfolio_csv(
+                format!("Account,Account Key,Symbol,Quantity,Market Value,Currency\n{rows}")
+                    .as_bytes(),
+                "synthetic".into(),
+            )
+            .unwrap()
+        };
+        let full = parse("raw-one,Checking,AAA,1,100,USD\nraw-two,Retirement,BBB,2,200,EUR\n");
+        let reordered = parse("raw-two,Retirement,BBB,2,200,EUR\nraw-one,Checking,AAA,1,100,USD\n");
+        assert_eq!(full.positions, reordered.positions);
+        let subset = parse("raw-two,Retirement,BBB,2,200,EUR\n");
+        assert_eq!(
+            full.positions
+                .iter()
+                .find(|p| p.symbol == "BBB")
+                .unwrap()
+                .account_id,
+            subset.positions[0].account_id
+        );
+        let first = parse("raw-one,,AAA,1,100,USD\n");
+        let second = parse("raw-two,,AAA,1,100,USD\n");
+        assert_eq!(
+            first.positions[0].account_id.as_str(),
+            second.positions[0].account_id.as_str()
+        );
+        assert_ne!(
+            first.positions[0].account_id,
+            second.positions[0].account_id
+        );
+        assert!(first.positions[0].account_id.canonical_key().is_none());
+        for rows in [
+            "raw-one,KeyA,AAA,1,1,USD\nraw-one,KeyB,BBB,1,1,USD",
+            "raw-one,KeyA,AAA,1,1,USD\nraw-two,KeyA,BBB,1,1,USD",
+            "raw-one,12345678,AAA,1,1,USD",
+        ] {
+            assert!(parse_portfolio_csv(
+                format!("Account,Account Key,Symbol,Quantity,Market Value,Currency\n{rows}")
+                    .as_bytes(),
+                "synthetic".into()
+            )
+            .is_err());
+        }
+        assert!(!format!("{full:?}").contains("raw-one"));
+    }
+
+    #[test]
+    fn preview_discloses_unmatched_legacy_and_unknown_totals_without_false_pairs() {
+        use crate::{
+            app::{CommandInvocation, Workspace},
+            features::portfolio::PortfolioWorkspace,
+        };
+        use ratatui::{backend::TestBackend, Terminal};
+        let state = Arc::new(MemoryImportState::default());
+        let repository = Arc::new(isolated_repository(Some(state.clone())));
+        let path = env::temp_dir().join(format!(
+            "synthetic-preview-unmatched-{}.csv",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            "Account,Symbol,Quantity,Market Value,Currency\nold-private,AAA,1,100,USD\n",
+        )
+        .unwrap();
+        let old = repository.import_csv(&path).unwrap();
+        fs::write(&path, "Account,Symbol,Quantity,Market Value,Currency\nnew-private,AAA,2,,USD\nnew-private,CASH,1,50,EUR\n").unwrap();
+        let preview = repository.preview_csv(&path).unwrap();
+        assert!(preview.valuation.imported_at.is_none());
+        assert!(!preview
+            .disclosures
+            .iter()
+            .any(|line| line.starts_with("IMPORTED AT")));
+        let mut workspace = PortfolioWorkspace::new(repository.clone());
+        workspace.handle_command(&CommandInvocation {
+            function: "PORT".into(),
+            args: vec!["PREVIEW".into(), path.to_string_lossy().into_owned()],
+        });
+        let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+        terminal
+            .draw(|frame| workspace.render(frame, frame.area()))
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("UNMATCHED IMPORT-LOCAL ROWS: OLD 1 · NEW 2"));
+        assert!(text.contains("UNKNOWN (UNPRICED)"));
+        assert!(text.contains("EUR CASH/MONEY MARKET"));
+        assert!(!text.contains("CHANGED ACCOUNT"));
+        assert!(!text.contains("ADDED CANONICAL"));
+        assert_eq!(repository.load_portfolio().positions, old.positions);
+        assert_eq!(
+            state.load_import_path().unwrap().as_deref(),
+            Some(path.as_path())
+        );
+        fs::write(
+            &path,
+            "Account Key,Symbol,Quantity,Market Value,Currency\nExplicit,AAA,2,200,USD\n",
+        )
+        .unwrap();
+        workspace.handle_command(&CommandInvocation {
+            function: "PORT".into(),
+            args: vec!["PREVIEW".into(), path.to_string_lossy().into_owned()],
+        });
+        terminal
+            .draw(|frame| workspace.render(frame, frame.area()))
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("UNMATCHED NEW CANONICAL Explicit AAA USD"));
+        assert!(!text.contains("ADDED CANONICAL"));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn preview_command_renders_without_persistence_and_fresh_import_reads_modified_bytes() {
+        use crate::{
+            app::{CommandInvocation, Workspace},
+            features::portfolio::PortfolioWorkspace,
+        };
+        use ratatui::{backend::TestBackend, Terminal};
+        let state = Arc::new(MemoryImportState::default());
+        let repository = Arc::new(isolated_repository(Some(state.clone())));
+        let path = env::temp_dir().join(format!("synthetic-preview-{}.csv", std::process::id()));
+        let original = b"Account Key,Symbol,Quantity,Market Value,Currency,As Of\nBrokerage,AAA,1,100,USD,2020-01-01\nSavings,CASH,1,50,EUR,\n";
+        fs::write(&path, original).unwrap();
+        let mut workspace = PortfolioWorkspace::new(repository.clone());
+        let command = |operation: &str| CommandInvocation {
+            function: "PORT".to_owned(),
+            args: vec![operation.to_owned(), path.to_string_lossy().into_owned()],
+        };
+        assert!(workspace.handle_command(&command("PREVIEW")));
+        assert!(repository.load_portfolio().positions.is_empty());
+        assert!(repository.path.read().unwrap().is_none());
+        assert!(state.load_import_path().unwrap().is_none());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+        terminal
+            .draw(|frame| workspace.render(frame, frame.area()))
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        for expected in [
+            "READ-ONLY",
+            "2020-01-01",
+            "UNKNOWN",
+            "USD NAV",
+            "EUR CASH/MONEY MARKET",
+            "ADDED CANONICAL",
+        ] {
+            assert!(text.contains(expected), "missing {expected}: {text}");
+        }
+        fs::write(&path, b"Account Key,Symbol,Quantity,Market Value,Currency,As Of\nBrokerage,AAA,2,200,USD,2020-01-01\n").unwrap();
+        assert!(workspace.handle_command(&command("IMPORT")));
+        assert_eq!(
+            repository.load_portfolio().positions[0]
+                .market_value
+                .unwrap()
+                .minor_units(),
+            20000
+        );
+        assert_eq!(
+            state.load_import_path().unwrap().as_deref(),
+            Some(path.as_path())
+        );
+        let before = repository.load_portfolio();
+        let reloaded = repository.reload().unwrap();
+        assert_eq!(before.positions, reloaded.positions);
+        assert_eq!(before.as_of, reloaded.as_of);
+        fs::write(&path, "invalid").unwrap();
+        assert!(repository.preview_csv(&path).is_err());
+        assert_eq!(repository.load_portfolio().positions, before.positions);
+        fs::remove_file(&path).unwrap();
+        assert!(repository.preview_csv(&path).is_err());
+    }
+
+    #[test]
+    fn duplicate_returns_use_complete_basis_not_weighted_provider_percentages() {
+        for (bases, expected) in [("100,100", Some(5000)), ("100,", None), (",", None)] {
+            let bases: Vec<_> = bases.split(',').collect();
+            let csv = format!("Symbol,Quantity,Market Value,Cost Basis,Gain Loss Percent\nTEST,1,200,{},100\nTEST,1,100,{},0\n", bases[0], bases[1]);
+            let snapshot = parse_portfolio_csv(csv.as_bytes(), "synthetic".into()).unwrap();
+            assert_eq!(snapshot.positions[0].unrealized_return_bps, expected);
+        }
+        let snapshot = parse_portfolio_csv(
+            b"Symbol,Quantity,Market Value,Gain Loss Percent\nTEST,1,200,100\n",
+            "synthetic".into(),
+        )
+        .unwrap();
+        assert_eq!(snapshot.positions[0].unrealized_return_bps, Some(10000));
     }
 
     #[test]

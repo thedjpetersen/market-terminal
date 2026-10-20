@@ -1,3 +1,4 @@
+mod portfolio_account_csv;
 mod watchlist_quotes;
 pub use watchlist_quotes::WatchlistQuotes;
 mod ai_commands;

@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 use chrono::NaiveDate;
@@ -5,7 +6,7 @@ use csv::StringRecord;
 
 use crate::{
     features::portfolio::{
-        PortfolioAccountId, PortfolioActivityCurrencyTotal, PortfolioActivityEntry,
+        PortfolioActivityCurrencyTotal, PortfolioActivityDetails, PortfolioActivityEntry,
         PortfolioActivityKind, PortfolioActivityLedger, PortfolioError, PositionQuantity,
     },
     foundation::{Currency, Money},
@@ -20,6 +21,7 @@ pub(super) const MAX_ACTIVITY_COLUMNS: usize = 256;
 struct ActivityColumns {
     date: usize,
     account: Option<usize>,
+    account_key: Option<usize>,
     description: Option<usize>,
     category: Option<usize>,
     action: Option<usize>,
@@ -28,6 +30,11 @@ struct ActivityColumns {
     amount: Option<usize>,
     fees: Option<usize>,
     currency: Option<usize>,
+    merchant: Option<usize>,
+    original_statement: Option<usize>,
+    notes: Option<usize>,
+    tags: Option<usize>,
+    source_id: Option<usize>,
     cash_export: bool,
 }
 
@@ -85,9 +92,16 @@ pub(super) fn parse_portfolio_activity_csv(
             )
         })?;
 
+    let raw_accounts = records
+        .iter()
+        .skip(header_index + 1)
+        .filter_map(|record| columns.field(record, columns.account))
+        .filter(|value| !value.is_empty())
+        .collect::<std::collections::BTreeSet<_>>();
     let usd = Currency::new("USD").expect("USD is a valid currency");
     let mut entries = Vec::new();
-    let mut account_aliases = BTreeMap::<String, PortfolioAccountId>::new();
+    let mut source_occurrences = BTreeMap::<String, usize>::new();
+    let mut account_aliases = super::portfolio_account_csv::AccountAliases::new();
     let mut rejected_rows = Vec::new();
     let mut defaulted_currency = false;
     let mut unclassified_count = 0_usize;
@@ -141,11 +155,8 @@ pub(super) fn parse_portfolio_activity_csv(
             .field(record, columns.account)
             .filter(|value| !value.is_empty())
             .unwrap_or("DEFAULT");
-        let next_account = account_aliases.len() + 1;
-        let account_id = account_aliases
-            .entry(raw_account.to_owned())
-            .or_insert_with(|| PortfolioAccountId::new(format!("ACCOUNT {next_account}")))
-            .clone();
+        let account_id =
+            account_aliases.resolve(raw_account, columns.field(record, columns.account_key))?;
         let symbol = columns
             .field(record, columns.symbol)
             .and_then(normalize_symbol);
@@ -155,12 +166,49 @@ pub(super) fn parse_portfolio_activity_csv(
             .map(i128::abs)
             .filter(|value| *value != 0)
             .map(|value| Money::from_minor_units(value, currency));
-        let description = display_description(description, category, action, kind);
+        let redact = |text: &str| {
+            raw_accounts.iter().fold(text.to_owned(), |value, account| {
+                value.replace(account, "[ACCOUNT]")
+            })
+        };
+        let retained = |column| {
+            columns
+                .field(record, column)
+                .filter(|value| !value.is_empty())
+                .map(redact)
+        };
+        let details = PortfolioActivityDetails {
+            merchant: retained(columns.merchant),
+            category: retained(columns.category),
+            original_statement: retained(columns.original_statement),
+            notes: retained(columns.notes),
+            tags: retained(columns.tags),
+            source_id: columns
+                .field(record, columns.source_id)
+                .filter(|value| !value.is_empty())
+                .map(|value| {
+                    let mut hash = Sha256::new();
+                    hash.update(b"market-terminal:activity-source-id:v1\0");
+                    hash.update(account_id.canonical_key().unwrap_or("").as_bytes());
+                    hash.update(b"\0");
+                    hash.update(value.as_bytes());
+                    format!("SRC-{:x}", hash.finalize())
+                }),
+        };
+        let description = redact(&display_description(description, category, action, kind));
 
         first_date = Some(first_date.map_or_else(|| date.clone(), |value| value.min(date.clone())));
         last_date = Some(last_date.map_or_else(|| date.clone(), |value| value.max(date.clone())));
+        let activity_id = if let Some(source_id) = &details.source_id {
+            let occurrence = source_occurrences.entry(source_id.clone()).or_default();
+            *occurrence += 1;
+            format!("{source_id}-{occurrence}")
+        } else {
+            format!("ACT-{row_number:06}")
+        };
         entries.push(PortfolioActivityEntry {
-            activity_id: format!("ACT-{row_number:06}"),
+            details,
+            activity_id,
             account_id,
             date,
             kind,
@@ -192,8 +240,11 @@ pub(super) fn parse_portfolio_activity_csv(
     });
     let currency_totals = reconcile_activity(&entries)?;
     let mut disclosures = vec![
+        "ACCOUNT KEY = EXPLICIT CANONICAL ID; ACCOUNT N = IMPORT-LOCAL / UNMATCHED; NEVER JOIN DISPLAY LABELS".to_owned(),
+        "NO SOURCE ID = IMPORT-LOCAL ROW ID; SOURCE ID = PSEUDONYMOUS + OCCURRENCE; NO CROSS-EXPORT DEDUPLICATION".to_owned(),
+        "MERCHANT/CATEGORY/ORIGINAL STATEMENT/NOTES/TAGS: PORT DETAIL OR D ON SELECTED ACTIVITY · RAW ACCOUNT TEXT REDACTED".to_owned(),
         "PROVIDER CASH SIGN PRESERVED · POSITIVE IN / NEGATIVE OUT".to_owned(),
-        "ACCOUNT IDENTIFIERS REPLACED WITH IMPORT-LOCAL LABELS".to_owned(),
+        "RAW ACCOUNT IDENTIFIERS NOT RETAINED".to_owned(),
         "ACTIVITY ALONE CANNOT PRODUCE TIME-WEIGHTED RETURN".to_owned(),
     ];
     if columns.cash_export {
@@ -348,7 +399,13 @@ impl ActivityColumns {
             )
         });
         Some(Self {
+            merchant: find_preferred(&names, &["merchant"]),
+            original_statement: find_preferred(&names, &["originalstatement"]),
+            notes: find_preferred(&names, &["notes", "note"]),
+            tags: find_preferred(&names, &["tags", "tag"]),
+            source_id: find_preferred(&names, &["transactionid", "sourceid"]),
             date,
+            account_key: names.iter().position(|value| value == "accountkey"),
             account: find_preferred(
                 &names,
                 &[
@@ -515,6 +572,97 @@ fn contains_word(value: &str, word: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cash_details_preserve_source_fields_signs_duplicates_and_render() {
+        use crate::{
+            app::{CommandInvocation, Workspace},
+            features::portfolio::{PortfolioRepository, PortfolioSnapshot, PortfolioWorkspace},
+        };
+        use std::sync::Arc;
+        use ratatui::{backend::TestBackend, Terminal};
+        let csv = b"Date,Merchant,Category,Account,Account Key,Original Statement,Notes,Amount,Tags,Transaction ID\n2020-01-01,Buy Grocer,Groceries,RAW-987,Checking,POS RAW-987,weekly,-25,food,tx-one\n2020-01-01,Buy Grocer,Groceries,RAW-987,Checking,POS RAW-987,weekly,-25,food,tx-two\n2020-01-02,Move,Transfer,RAW-987,Checking,TRANSFER,move,10,internal,\n2020-01-03,Card,Credit Card Payment,RAW-987,Checking,PAYMENT,card,-10,internal,\n2020-01-04,Broker,Investment,RAW-987,Checking,INVEST,funding,0,investing,\n";
+        let ledger = parse_portfolio_activity_csv(csv, "synthetic".into()).unwrap();
+        let repeated = parse_portfolio_activity_csv(csv, "synthetic".into()).unwrap();
+        assert_eq!(ledger.entries.len(), 5);
+        let groceries = ledger
+            .entries
+            .iter()
+            .filter(|e| e.details.category.as_deref() == Some("Groceries"))
+            .collect::<Vec<_>>();
+        assert_eq!(groceries.len(), 2);
+        assert_ne!(groceries[0].activity_id, groceries[1].activity_id);
+        for entry in &ledger.entries {
+            assert_ne!(entry.kind, PortfolioActivityKind::Buy);
+            assert_eq!(
+                entry,
+                repeated
+                    .entries
+                    .iter()
+                    .find(|other| other.activity_id == entry.activity_id)
+                    .unwrap()
+            );
+        }
+        assert_eq!(groceries[0].cash_effect.unwrap().minor_units(), -2500);
+        assert!(ledger
+            .entries
+            .iter()
+            .any(|e| e.cash_effect.unwrap().minor_units() == 1000));
+        assert!(ledger
+            .entries
+            .iter()
+            .any(|e| e.cash_effect.unwrap().minor_units() == 0));
+        assert_eq!(
+            ledger
+                .entries
+                .iter()
+                .filter(|e| e.kind == PortfolioActivityKind::Transfer)
+                .count(),
+            2
+        );
+        assert!(!format!("{ledger:?}").contains("RAW-987"));
+        assert!(!format!("{ledger:?}").contains("tx-one"));
+        struct Fixture(super::PortfolioActivityLedger);
+        impl PortfolioRepository for Fixture {
+            fn load_portfolio(&self) -> PortfolioSnapshot {
+                PortfolioSnapshot::empty("synthetic")
+            }
+            fn load_activity(&self) -> super::PortfolioActivityLedger {
+                self.0.clone()
+            }
+        }
+        let only = PortfolioActivityLedger {
+            entries: vec![groceries[0].clone()],
+            ..ledger.clone()
+        };
+        let mut workspace = PortfolioWorkspace::new(Arc::new(Fixture(only)));
+        workspace.handle_command(&CommandInvocation {
+            function: "PORT".into(),
+            args: vec!["DETAIL".into()],
+        });
+        let mut terminal = Terminal::new(TestBackend::new(160, 32)).unwrap();
+        terminal
+            .draw(|frame| workspace.render(frame, frame.area()))
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        for expected in [
+            "MERCHANT: Buy Grocer",
+            "CATEGORY: Groceries",
+            "ORIGINAL STATEMENT: POS [ACCOUNT]",
+            "NOTES: weekly",
+            "TAGS: food",
+            "PSEUDONYMOUS",
+            "-$25.00",
+        ] {
+            assert!(text.contains(expected), "missing {expected}: {text}");
+        }
+    }
 
     #[test]
     fn broker_activity_reconciles_multicurrency_dividends_fees_and_split() {

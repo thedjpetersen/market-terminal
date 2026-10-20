@@ -5,8 +5,8 @@ use csv::StringRecord;
 
 use crate::{
     features::portfolio::{
-        calculate_contribution, PortfolioAccountId, PortfolioContributionInput,
-        PortfolioContributionInputRow, PortfolioContributionSnapshot, PortfolioError,
+        calculate_contribution, PortfolioContributionInput, PortfolioContributionInputRow,
+        PortfolioContributionSnapshot, PortfolioError,
     },
     foundation::{Currency, InstrumentId, Money},
 };
@@ -26,6 +26,7 @@ pub(super) struct ParsedContributionHistory {
 #[derive(Debug)]
 struct ContributionColumns {
     account: Option<usize>,
+    account_key: Option<usize>,
     symbol: usize,
     period_start: usize,
     period_end: usize,
@@ -102,7 +103,7 @@ pub(super) fn parse_portfolio_contribution_history_csv(
 
     let usd = Currency::new("USD").expect("USD is a valid currency");
     let benchmark_present = columns.benchmark_beginning_value.is_some();
-    let mut account_aliases = BTreeMap::<String, PortfolioAccountId>::new();
+    let mut account_aliases = super::portfolio_account_csv::AccountAliases::new();
     let mut periods = BTreeMap::<(String, String), Vec<PortfolioContributionInputRow>>::new();
     let mut rejected = Vec::new();
     let mut last_period = None::<(String, String)>;
@@ -202,11 +203,8 @@ pub(super) fn parse_portfolio_contribution_history_csv(
             .field(record, columns.account)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("DEFAULT");
-        let next_account = account_aliases.len() + 1;
-        let account_id = account_aliases
-            .entry(raw_account.to_owned())
-            .or_insert_with(|| PortfolioAccountId::new(format!("ACCOUNT {next_account}")))
-            .clone();
+        let account_id =
+            account_aliases.resolve(raw_account, columns.field(record, columns.account_key))?;
         periods
             .entry(current_period)
             .or_default()
@@ -240,7 +238,7 @@ pub(super) fn parse_portfolio_contribution_history_csv(
         ));
     }
     let mut disclosures = vec![
-        "BROKER ACCOUNT IDENTIFIERS REPLACED WITH IMPORT-LOCAL LABELS".to_owned(),
+        "ACCOUNT KEY = EXPLICIT CANONICAL ID; ACCOUNT N = IMPORT-LOCAL / UNMATCHED; NEVER JOIN DISPLAY LABELS".to_owned(),
         "TICKERS REMAIN UNRESOLVED UNTIL INSTRUMENT-MASTER MATCHING".to_owned(),
         "CSV ROWS ARE VERIFIED POSITION PERIODS · NOT JOINED FROM UNRELATED SNAPSHOTS".to_owned(),
     ];
@@ -283,6 +281,7 @@ impl ContributionColumns {
     fn from_header(header: &StringRecord) -> Option<Self> {
         let names = header.iter().map(normalize_header).collect::<Vec<_>>();
         Some(Self {
+            account_key: names.iter().position(|value| value == "accountkey"),
             account: find(&names, &["account", "accountname", "accountnumber"]),
             symbol: find(
                 &names,

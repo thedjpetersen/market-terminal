@@ -5,9 +5,8 @@ use csv::StringRecord;
 
 use crate::{
     features::portfolio::{
-        PortfolioAccountId, PortfolioError, PortfolioTaxLot, PortfolioTaxLotCurrencyTotal,
-        PortfolioTaxLotSnapshot, PositionQuantity, TaxLotHoldingPeriod, ValuationCoverage,
-        ValuationRow,
+        PortfolioError, PortfolioTaxLot, PortfolioTaxLotCurrencyTotal, PortfolioTaxLotSnapshot,
+        PositionQuantity, TaxLotHoldingPeriod, ValuationCoverage, ValuationRow,
     },
     foundation::{Currency, InstrumentId, Money},
 };
@@ -21,6 +20,7 @@ pub(super) const MAX_TAX_LOT_COLUMNS: usize = 128;
 struct TaxLotColumns {
     valuation_date: Option<usize>,
     account: Option<usize>,
+    account_key: Option<usize>,
     symbol: usize,
     acquired_date: usize,
     holding_period: Option<usize>,
@@ -88,7 +88,7 @@ pub(super) fn parse_portfolio_tax_lot_csv(
         rows: Vec::new(),
         imported_at: Some(Utc::now()),
     };
-    let mut account_aliases = BTreeMap::<String, PortfolioAccountId>::new();
+    let mut account_aliases = super::portfolio_account_csv::AccountAliases::new();
     let mut rejected = Vec::new();
     let mut defaulted_currency = false;
     let mut unknown_holding_periods = 0_usize;
@@ -162,11 +162,8 @@ pub(super) fn parse_portfolio_tax_lot_csv(
             .field(record, columns.account)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("DEFAULT");
-        let next_account = account_aliases.len() + 1;
-        let account_id = account_aliases
-            .entry(raw_account.to_owned())
-            .or_insert_with(|| PortfolioAccountId::new(format!("ACCOUNT {next_account}")))
-            .clone();
+        let account_id =
+            account_aliases.resolve(raw_account, columns.field(record, columns.account_key))?;
         let unrealized_gain = current_value
             .map(|value| {
                 value
@@ -227,7 +224,7 @@ pub(super) fn parse_portfolio_tax_lot_csv(
     let currency_totals = reconcile(&lots)?;
     let mut disclosures = vec![
         "OPEN LOTS ONLY · NOT A CLOSED-TRADE OR REALIZED-GAIN LEDGER".to_owned(),
-        "BROKER ACCOUNT IDENTIFIERS REPLACED WITH IMPORT-LOCAL LABELS".to_owned(),
+        "ACCOUNT KEY = EXPLICIT CANONICAL ID; ACCOUNT N = IMPORT-LOCAL / UNMATCHED; NEVER JOIN DISPLAY LABELS".to_owned(),
         "TICKERS REMAIN UNRESOLVED UNTIL INSTRUMENT-MASTER MATCHING".to_owned(),
     ];
     if defaulted_currency {
@@ -383,6 +380,7 @@ impl TaxLotColumns {
         let names = header.iter().map(normalize_header).collect::<Vec<_>>();
         Some(Self {
             valuation_date: find(&names, &["asof", "asofdate", "valuationdate"]),
+            account_key: names.iter().position(|value| value == "accountkey"),
             account: find(&names, &["account", "accountname", "accountnumber"]),
             symbol: find(
                 &names,

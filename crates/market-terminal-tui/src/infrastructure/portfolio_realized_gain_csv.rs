@@ -5,7 +5,7 @@ use csv::StringRecord;
 
 use crate::{
     features::portfolio::{
-        PortfolioAccountId, PortfolioClosedLot, PortfolioError, PortfolioRealizedGainCurrencyTotal,
+        PortfolioClosedLot, PortfolioError, PortfolioRealizedGainCurrencyTotal,
         PortfolioRealizedGainSnapshot, PositionQuantity, TaxLotHoldingPeriod,
     },
     foundation::{Currency, InstrumentId, Money},
@@ -19,6 +19,7 @@ pub(super) const MAX_REALIZED_GAIN_COLUMNS: usize = 128;
 #[derive(Debug)]
 struct ClosedLotColumns {
     account: Option<usize>,
+    account_key: Option<usize>,
     symbol: usize,
     acquired_date: usize,
     disposed_date: usize,
@@ -85,7 +86,7 @@ pub(super) fn parse_portfolio_realized_gain_csv(
 
     let usd = Currency::new("USD").expect("USD is a valid currency");
     let mut lots = Vec::new();
-    let mut account_aliases = BTreeMap::<String, PortfolioAccountId>::new();
+    let mut account_aliases = super::portfolio_account_csv::AccountAliases::new();
     let mut rejected = Vec::new();
     let mut defaulted_currency = false;
     let mut unknown_holding_periods = 0_usize;
@@ -175,11 +176,8 @@ pub(super) fn parse_portfolio_realized_gain_csv(
             .field(record, columns.account)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("DEFAULT");
-        let next_account = account_aliases.len() + 1;
-        let account_id = account_aliases
-            .entry(raw_account.to_owned())
-            .or_insert_with(|| PortfolioAccountId::new(format!("ACCOUNT {next_account}")))
-            .clone();
+        let account_id =
+            account_aliases.resolve(raw_account, columns.field(record, columns.account_key))?;
         let realized_return_bps = (cost_basis > 0)
             .then(|| return_bps(realized_gain, cost_basis))
             .transpose()?;
@@ -237,7 +235,7 @@ pub(super) fn parse_portfolio_realized_gain_csv(
     let mut disclosures = vec![
         "BROKER CLOSED LOTS ONLY · NO LOT-MATCHING INFERENCE FROM CASH ACTIVITY".to_owned(),
         "PROCEEDS LESS COST BASIS MUST EQUAL EACH REPORTED GAIN OR LOSS".to_owned(),
-        "BROKER ACCOUNT IDENTIFIERS REPLACED WITH IMPORT-LOCAL LABELS".to_owned(),
+        "ACCOUNT KEY = EXPLICIT CANONICAL ID; ACCOUNT N = IMPORT-LOCAL / UNMATCHED; NEVER JOIN DISPLAY LABELS".to_owned(),
         "TICKERS REMAIN UNRESOLVED UNTIL INSTRUMENT-MASTER MATCHING".to_owned(),
         "REALIZED GAINS ARE PROVIDER DATA · NOT TAX ADVICE".to_owned(),
     ];
@@ -359,6 +357,7 @@ impl ClosedLotColumns {
     fn from_header(header: &StringRecord) -> Option<Self> {
         let names = header.iter().map(normalize_header).collect::<Vec<_>>();
         Some(Self {
+            account_key: names.iter().position(|value| value == "accountkey"),
             account: find(&names, &["account", "accountname", "accountnumber"]),
             symbol: find(
                 &names,

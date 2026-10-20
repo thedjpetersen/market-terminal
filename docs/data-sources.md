@@ -616,3 +616,97 @@ or argument/range separators before an AST is allocated. Evaluation additionally
 bounds expression depth, reference chains and work per evaluation. Over-limit
 formulas remain stored as source text and display a normal formula error; import,
 copy, dependency traversal and AST destruction cannot recurse without a bound.
+
+### Explicit account identity and read-only positions review
+
+User-normalized positions, cash activity, open/closed lots, executions, contribution
+and multi-period attribution CSVs may include `Account Key`. Supply the same
+nonsecret, case-sensitive alias in each input (for example `Brokerage_Main` or
+`Retirement`); keys must start with a letter and contain at most 64 ASCII letters,
+digits, hyphens or underscores. Never put broker account numbers or credentials
+in this column. A key can be supplied without an Account column. Within an input,
+one source account cannot have conflicting keys, and one key cannot identify two
+source accounts. Such conflicts reject the import. There is no institution
+registry or automatic cross-institution matching.
+
+Without keys, existing inputs still load with `ACCOUNT N` display aliases. These
+are **import-local and unmatched**: their internal identity is scoped to the
+parser invocation, and equal labels across imports do not establish an account
+join. Raw provider account identifiers remain inside the parser. Canonical keys
+are intentional user-provided identity evidence, not hashes of broker numbers.
+
+`PORT PREVIEW <FILE.CSV>` displays source-date/basis coverage, old/new NAV and
+imported cash/money-market balances separately for each currency, and canonical
+position additions, removals and quantity/value changes. Legacy rows contribute
+to aggregate comparisons and unmatched counts only. An unpriced row makes the
+corresponding full total/change unknown rather than a partial amount masquerading
+as complete NAV. Empty first-import previews are supported. Use Up/Down to scroll
+and Escape to close. Preview does not change the active snapshot, saved path or
+source file and is not persisted as an import. To apply, issue a fresh explicit
+`PORT IMPORT <FILE.CSV>`: it reads the file again, including any intervening edits.
+There is no command that silently commits cached preview bytes. Direct imports
+retain their existing behavior and replace the current snapshot, without adding
+duplicate holdings. Reloading unchanged source dates never advances valuation time.
+
+Source dates later than the injected/current UTC date are preserved and flagged
+`FUTURE`/attention; they are not relabeled as current. For duplicate position rows,
+a return is derived from aggregate market value and complete cost basis. Missing
+or partial basis yields an unknown aggregate return, even when some provider
+percentages exist. A single row may retain its explicit provider percentage.
+
+### Cash-activity source details
+
+Monarch-shaped inputs preserve optional `Merchant`, `Category`, `Original
+Statement`, `Notes` and `Tags` independently. In Activity, select a row and press
+`D`, or issue `PORT DETAIL`; Up/Down scroll and Escape closes the read-only detail.
+Source signs, zero amounts and legitimately identical transactions are retained.
+Merchant text such as “Buy Grocer” is not interpreted as a securities purchase.
+Transfer and credit-card-payment categories retain transfer classification;
+investment categories remain visible source evidence, not inferred holdings or
+household expense totals. Exact source account text is redacted from displayed
+fields to preserve the account-number privacy boundary.
+
+Optional `Transaction ID`/`Source ID` values become domain-separated SHA-256
+pseudonymous identifiers, scoped by the explicit canonical key when supplied.
+Repeated source IDs retain separate occurrence suffixes; identical rows are never
+collapsed. Without a source ID, row identifiers remain import-local. These IDs
+are not proof of global uniqueness, account matching, or cross-export
+deduplication. There is no incremental household ledger or budget calculation.
+
+### Chart and spreadsheet source alignment
+
+Native chart x positions use the primary series' sorted, exact timestamp grid.
+Comparison observations without a primary timestamp are omitted and counted in
+the source disclosure; missing sessions are not forward-filled. Duplicate
+timestamps reject the chart with a diagnostic rather than selecting an arbitrary
+price. Every comparison, study, candle, volume bar, axis label and cursor uses
+that same grid. Percentage comparisons start at each series' first retained
+observation, so different starts can have different baseline dates. A zero
+baseline rejects percentage normalization explicitly. No calendar
+days or quote values are synthesized.
+
+Spreadsheet financial requests are resolved across the workbook in the formula's
+own sheet context. Overlays are keyed by sheet and cell; local addresses on
+another sheet cannot overwrite them. Cross-sheet references use the same normal
+formula evaluation and error behavior, including unavailable data and cycles.
+
+### Artifact compatibility and dependency audit
+
+Artifact filenames retain the existing hex encoding whenever it fits the
+portable 255-byte component limit. Longer valid IDs use a bounded `sha256-` name;
+the embedded ID is still validated on read. Existing portable artifacts need no
+migration. Full envelope/schema validation occurs before list-kind filtering, so
+an unsupported schema cannot disappear behind a filter. The local adapter is a
+read-only catalog: writers/deleters use its public `artifact_path` convention.
+Yield inversion now uses the same inclusive -4800..19800 bps contract as yield
+inputs and reports unattainable prices explicitly.
+
+Registry-confirmed patch updates on 2026-10-19: h2 0.4.16
+([RUSTSEC-2026-0258](https://rustsec.org/advisories/RUSTSEC-2026-0258.html)),
+rustls 0.23.46
+([RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285.html)),
+and quinn-proto 0.11.18
+([RUSTSEC-2026-0343](https://rustsec.org/advisories/RUSTSEC-2026-0343.html)).
+`cargo tree -p market-terminal-tui -i quinn-proto` reports no active native
+reverse dependencies; the lockfile update is not a claim that disabled HTTP/3
+paths were exposed.

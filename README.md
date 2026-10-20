@@ -711,6 +711,16 @@ balances do not establish buying power or withdrawal availability. Optional
 historical-risk failures preserve valid concentration/stress results and show the
 reason. See [data-source semantics](docs/data-sources.md#user-portfolio-csv).
 
+Positions can be reviewed without replacing the active import using
+`PORT PREVIEW <FILE.CSV>`; apply with a fresh `PORT IMPORT <FILE.CSV>`.
+Optional nonsecret `Account Key` columns establish explicit identity across
+normalized imports. Legacy `ACCOUNT N` aliases remain import-local/unmatched.
+`PORT DETAIL` (or `D` in Activity) exposes retained merchant/category/statement
+notes and tags. See [data-source semantics](docs/data-sources.md) for source versus
+import time, future/mixed/unknown/stale coverage, imported cash semantics,
+partial historical risk, timestamp alignment and matching limitations. These
+changes do not add connectors, real exports, household budgeting or account web UI.
+
 Portfolio has eight clickable, keyboard-addressable views: `1` Positions, `2`
 Activity, `3` Performance, `4` Lots, `5` Realized, `6` Trades, and `7`
 Contribution, and `8` Attribution. `Tab`, `Shift+Tab`, `h/l`, and the

@@ -29,9 +29,9 @@ impl ValuationCoverage {
         self.rows.iter().any(|row| {
             row.date.is_none()
                 || row.date != first
-                || row
-                    .date
-                    .is_some_and(|date| (today - date).num_days() > Self::STALE_AFTER_DAYS)
+                || row.date.is_some_and(|date| {
+                    date > today || (today - date).num_days() > Self::STALE_AFTER_DAYS
+                })
         })
     }
 
@@ -55,6 +55,12 @@ impl ValuationCoverage {
             format!("STALE {stale} (>7D) · ")
         } else {
             String::new()
+        };
+        let future = dates.iter().filter(|date| **date > today).count();
+        let warning = if future > 0 {
+            format!("FUTURE {future} · {warning}")
+        } else {
+            warning
         };
         let coverage = if unknown > 0 {
             format!("{unknown} UNKNOWN")
@@ -126,6 +132,11 @@ mod tests {
             .contains("STALE"));
         assert!(!coverage.needs_attention(day + chrono::Duration::days(7)));
         assert!(coverage.needs_attention(day + chrono::Duration::days(8)));
+        assert!(coverage.needs_attention(day - chrono::Duration::days(1)));
+        assert!(coverage
+            .summary(day - chrono::Duration::days(1))
+            .contains("FUTURE 1"));
+        assert_eq!(coverage.rows[0].date, Some(day));
         coverage.rows[0].date = None;
         assert!(coverage.needs_attention(day));
         assert!(coverage.summary(day).contains("UNKNOWN"));

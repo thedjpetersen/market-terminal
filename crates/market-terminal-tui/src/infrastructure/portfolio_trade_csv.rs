@@ -5,8 +5,8 @@ use csv::StringRecord;
 
 use crate::{
     features::portfolio::{
-        ExecutionPrice, PortfolioAccountId, PortfolioError, PortfolioTradeCurrencyTotal,
-        PortfolioTradeExecution, PortfolioTradeLedger, PositionQuantity, TradeSide,
+        ExecutionPrice, PortfolioError, PortfolioTradeCurrencyTotal, PortfolioTradeExecution,
+        PortfolioTradeLedger, PositionQuantity, TradeSide,
     },
     foundation::{Currency, InstrumentId, Money},
 };
@@ -20,6 +20,7 @@ const EXECUTION_SCALE: i128 = 1_000_000;
 #[derive(Debug)]
 struct TradeColumns {
     account: Option<usize>,
+    account_key: Option<usize>,
     order_id: Option<usize>,
     executed_at: usize,
     side: usize,
@@ -87,7 +88,7 @@ pub(super) fn parse_portfolio_trade_csv(
 
     let usd = Currency::new("USD").expect("USD is a valid currency");
     let mut executions = Vec::new();
-    let mut account_aliases = BTreeMap::<String, PortfolioAccountId>::new();
+    let mut account_aliases = super::portfolio_account_csv::AccountAliases::new();
     let mut order_aliases = BTreeMap::<String, String>::new();
     let mut rejected = Vec::new();
     let mut defaulted_currency = false;
@@ -213,11 +214,8 @@ pub(super) fn parse_portfolio_trade_csv(
             .field(record, columns.account)
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("DEFAULT");
-        let next_account = account_aliases.len() + 1;
-        let account_id = account_aliases
-            .entry(raw_account.to_owned())
-            .or_insert_with(|| PortfolioAccountId::new(format!("ACCOUNT {next_account}")))
-            .clone();
+        let account_id =
+            account_aliases.resolve(raw_account, columns.field(record, columns.account_key))?;
         let raw_order = columns
             .field(record, columns.order_id)
             .filter(|value| !value.trim().is_empty())
@@ -284,9 +282,10 @@ pub(super) fn parse_portfolio_trade_csv(
     };
     let currency_totals = reconcile(&executions)?;
     let mut disclosures = vec![
+        "ACCOUNT KEY = EXPLICIT CANONICAL ID; ACCOUNT N = IMPORT-LOCAL / UNMATCHED; NEVER JOIN DISPLAY LABELS".to_owned(),
         "READ-ONLY BROKER EXECUTIONS · NO ORDER ROUTING OR SUBMISSION".to_owned(),
         "BUY NET CASH IS −(GROSS + FEES); SELL NET CASH IS GROSS − FEES".to_owned(),
-        "BROKER ACCOUNT AND ORDER IDENTIFIERS REPLACED WITH IMPORT-LOCAL LABELS".to_owned(),
+        "RAW BROKER ACCOUNTS NOT RETAINED · ORDER LABELS ARE IMPORT-LOCAL".to_owned(),
         "CASH ACTIVITY IS NOT PROMOTED INTO EXECUTION EVIDENCE".to_owned(),
         "TICKERS REMAIN UNRESOLVED UNTIL INSTRUMENT-MASTER MATCHING".to_owned(),
     ];
@@ -468,6 +467,7 @@ impl TradeColumns {
     fn from_header(header: &StringRecord) -> Option<Self> {
         let names = header.iter().map(normalize_header).collect::<Vec<_>>();
         Some(Self {
+            account_key: names.iter().position(|value| value == "accountkey"),
             account: find(&names, &["account", "accountname", "accountnumber"]),
             order_id: find(&names, &["orderid", "ordernumber", "order", "tradeid"]),
             executed_at: find(

@@ -117,6 +117,8 @@ pub struct PortfolioWorkspace {
     viewport_top: StateCell<usize>,
     viewport_rows: StateCell<usize>,
     pending_intents: Vec<AppIntent>,
+    preview: Option<Vec<String>>,
+    preview_scroll: u16,
     status: String,
 }
 
@@ -130,11 +132,14 @@ impl PortfolioWorkspace {
             viewport_top: StateCell::new(0),
             viewport_rows: StateCell::new(0),
             pending_intents: Vec::new(),
+            preview: None,
+            preview_scroll: 0,
             status,
         }
     }
 
     fn select_view(&mut self, view: PortfolioView) {
+        self.preview = None;
         self.view = view;
         self.viewport_top.set(0);
         self.clamp_selection();
@@ -544,7 +549,64 @@ impl PortfolioWorkspace {
         self.clamp_selection();
     }
 
+    fn activity_detail(&mut self) {
+        let activity = self.query.load_activity();
+        self.preview_scroll = 0;
+        self.preview = Some(match activity.entries.get(self.selected) {
+            None => vec!["NO SELECTED ACTIVITY · ESC TO CLOSE".to_owned()],
+            Some(entry) => {
+                let details = &entry.details;
+                let mut lines = vec![
+                    format!(
+                        "ACTIVITY DETAIL · {} · {} · ESC TO CLOSE",
+                        entry.date,
+                        entry.account_id.as_str()
+                    ),
+                    format!(
+                        "{} · {} · {}",
+                        entry.kind.label(),
+                        entry.description,
+                        entry.cash_effect_label()
+                    ),
+                    format!(
+                        "ROW ID {} · {}",
+                        entry.activity_id,
+                        if details.source_id.is_some() {
+                            "SOURCE ID + IMPORT OCCURRENCE"
+                        } else {
+                            "IMPORT-LOCAL"
+                        }
+                    ),
+                    format!(
+                        "ACCOUNT IDENTITY: {}",
+                        if entry.account_id.canonical_key().is_some() {
+                            "EXPLICIT CANONICAL KEY"
+                        } else {
+                            "IMPORT-LOCAL / UNMATCHED"
+                        }
+                    ),
+                ];
+                for (label, value) in [
+                    ("MERCHANT", &details.merchant),
+                    ("CATEGORY", &details.category),
+                    ("ORIGINAL STATEMENT", &details.original_statement),
+                    ("NOTES", &details.notes),
+                    ("TAGS", &details.tags),
+                    ("SOURCE ID (PSEUDONYMOUS)", &details.source_id),
+                ] {
+                    lines.push(format!(
+                        "{label}: {}",
+                        value.as_deref().unwrap_or("NOT SUPPLIED")
+                    ));
+                }
+                lines.push("PROVIDER SIGNS PRESERVED · NO HOUSEHOLD EXPENSE TOTAL OR CROSS-EXPORT DEDUPLICATION".to_owned());
+                lines
+            }
+        });
+    }
+
     fn import_positions(&mut self, args: &[String]) {
+        self.preview = None;
         let raw_path = args.join(" ");
         if raw_path.is_empty() {
             self.status = "IMPORT REQUIRES A CSV PATH · PORT IMPORT <FILE.CSV>".to_owned();
@@ -882,6 +944,23 @@ impl Workspace for PortfolioWorkspace {
             "TRADES" | "FILLS" | "EXECUTIONS" => self.select_view(PortfolioView::Trades),
             "CONTRIBUTION" | "CONTRIB" => self.select_view(PortfolioView::Contribution),
             "ATTRIBUTION" | "ATTRIB" | "LINKED" => self.select_view(PortfolioView::Attribution),
+            "DETAIL" => self.activity_detail(),
+            "PREVIEW" => {
+                let path = invocation.args[1..].join(" ");
+                self.preview_scroll = 0;
+                self.preview = Some(if path.trim().is_empty() {
+                    vec!["PREVIEW REQUIRES A CSV PATH · PORT PREVIEW <FILE.CSV>".to_owned()]
+                } else {
+                    match self.query.preview_csv(&expand_home(&path)) {
+                        Ok(new) => {
+                            super::preview::reconciliation(&self.query.load_portfolio(), &new)
+                        }
+                        Err(error) => vec![format!(
+                            "PREVIEW FAILED · {error} · ACTIVE IMPORT UNCHANGED · ESC TO CLOSE"
+                        )],
+                    }
+                });
+            }
             "IMPORT" => {
                 let target = invocation
                     .args
@@ -974,6 +1053,20 @@ impl Workspace for PortfolioWorkspace {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
+        if self.preview.is_some() {
+            match key.code {
+                KeyCode::Esc => self.preview = None,
+                KeyCode::Down | KeyCode::PageDown => {
+                    self.preview_scroll = self.preview_scroll.saturating_add(1)
+                }
+                KeyCode::Up | KeyCode::PageUp => {
+                    self.preview_scroll = self.preview_scroll.saturating_sub(1)
+                }
+                _ => return false,
+            }
+            return true;
+        }
+
         match key.code {
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
                 self.select_view(self.view.offset(1));
@@ -1021,6 +1114,10 @@ impl Workspace for PortfolioWorkspace {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.move_selection(1);
+                true
+            }
+            KeyCode::Char('d') if self.view == PortfolioView::Activity => {
+                self.activity_detail();
                 true
             }
             KeyCode::Enter | KeyCode::Char('o') => self.open_selected(),
@@ -1226,6 +1323,17 @@ impl Workspace for PortfolioWorkspace {
     }
 
     fn render(&self, frame: &mut Frame, area: Rect) {
+        if let Some(lines) = &self.preview {
+            frame.render_widget(
+                Paragraph::new(lines.join("\n"))
+                    .wrap(Wrap { trim: false })
+                    .scroll((self.preview_scroll, 0))
+                    .block(terminal_block("REVIEW", "READ-ONLY IMPORT REVIEW")),
+                area,
+            );
+            return;
+        }
+
         let positions = self.query.load_portfolio();
         let activity = self.query.load_activity();
         let performance = self.query.load_performance();
@@ -1837,7 +1945,10 @@ fn render_activity_source(
         Line::styled(activity.methodology.clone(), MUTED),
         Line::raw(""),
         Line::styled(status, YELLOW),
-        Line::styled("PORT IMPORT ACTIVITY <CSV>", CYAN),
+        Line::styled(
+            "PORT IMPORT ACTIVITY <CSV> · D / PORT DETAIL: SELECTED ROW",
+            CYAN,
+        ),
     ]);
     for disclosure in activity.disclosures.iter().take(6) {
         lines.push(Line::styled(format!("• {disclosure}"), MUTED));

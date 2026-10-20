@@ -2,9 +2,13 @@ use crate::foundation::{Currency, InstrumentId, Money};
 
 const QUANTITY_SCALE: i128 = 1_000_000;
 
-/// Import-local account identity that never retains a broker account number.
+/// Explicit canonical alias or import-local identity; never a raw broker account number.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PortfolioAccountId(String);
+pub struct PortfolioAccountId {
+    label: String,
+    canonical: bool,
+    import_scope: u64,
+}
 
 impl PortfolioAccountId {
     pub fn new(value: impl Into<String>) -> Self {
@@ -13,11 +17,47 @@ impl PortfolioAccountId {
             !value.trim().is_empty(),
             "portfolio account ID cannot be empty"
         );
-        Self(value)
+        Self {
+            label: value,
+            canonical: false,
+            import_scope: 0,
+        }
+    }
+
+    /// Explicit user-normalized nonsecret account key, never a broker identifier.
+    pub fn canonical(key: &str) -> Result<Self, &'static str> {
+        if key.is_empty()
+            || key.len() > 64
+            || !key.as_bytes()[0].is_ascii_alphabetic()
+            || !key
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+        {
+            return Err(
+                "ACCOUNT KEY MUST BE A NONSECRET LETTER-LED ALIAS (1–64 LETTERS, DIGITS, - OR _)",
+            );
+        }
+        Ok(Self {
+            label: key.to_owned(),
+            canonical: true,
+            import_scope: 0,
+        })
+    }
+
+    pub fn import_local(label: String, import_scope: u64) -> Self {
+        Self {
+            label,
+            canonical: false,
+            import_scope,
+        }
+    }
+
+    pub fn canonical_key(&self) -> Option<&str> {
+        self.canonical.then_some(self.label.as_str())
     }
 
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.label
     }
 }
 
@@ -479,8 +519,20 @@ impl PortfolioActivityKind {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PortfolioActivityDetails {
+    pub merchant: Option<String>,
+    pub category: Option<String>,
+    pub original_statement: Option<String>,
+    pub notes: Option<String>,
+    pub tags: Option<String>,
+    /// Pseudonymous source transaction identifier; not a deduplication guarantee.
+    pub source_id: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortfolioActivityEntry {
+    pub details: PortfolioActivityDetails,
     pub activity_id: String,
     pub account_id: PortfolioAccountId,
     pub date: String,
