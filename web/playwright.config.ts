@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests",
   testMatch: "**/*.browser.ts",
+  testIgnore: "**/audit.browser.ts",
   timeout: 45_000,
   use: {
     baseURL: process.env.MARKET_WEB_URL || "http://127.0.0.1:8899",

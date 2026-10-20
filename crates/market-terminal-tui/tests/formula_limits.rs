@@ -68,3 +68,18 @@ fn pathological_formulas_are_errors_in_a_bounded_subprocess() {
         thread::sleep(Duration::from_millis(20));
     }
 }
+
+#[test]
+fn independent_cells_each_receive_an_evaluation_budget() {
+    use market_terminal::features::spreadsheet::domain::CellAddress;
+    let mut sheet = Worksheet::new("Independent").unwrap();
+    for column in 1..=26 {
+        for row in 1..=100 {
+            sheet.set(CellAddress::new(column, row).unwrap(), "=1+2+3+4+5");
+        }
+    }
+    let workbook = Workbook::from_sheets(vec![sheet], 0).unwrap();
+    let values = workbook.active_values();
+    assert_eq!(values.len(), 2600);
+    assert!(values.values().all(|value| *value == CellValue::Number(15.0)));
+}

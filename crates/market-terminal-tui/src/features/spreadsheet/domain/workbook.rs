@@ -178,7 +178,6 @@ impl Workbook {
 
     pub fn active_values(&self) -> HashMap<CellAddress, CellValue> {
         let mut cache = HashMap::new();
-        let mut stack = EvaluationStack::default();
         for address in self
             .active_sheet()
             .populated_cells()
@@ -189,7 +188,7 @@ impl Workbook {
                     sheet: self.active_sheet,
                     address,
                 },
-                &mut stack,
+                &mut EvaluationStack::default(),
                 &mut cache,
             );
         }
